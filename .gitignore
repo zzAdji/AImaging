@@ -1,0 +1,11 @@
+# Ignore dataset files and raw data folders
+/data/
+/data/**
+/docs/litterature/**
+/docs/litterature/
+
+# Optional common Python/IDE artifacts
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.vscode/
