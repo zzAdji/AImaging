@@ -1,4 +1,4 @@
-# Pipeline de prétraitement — imagerie médicale
+# Pipeline de prétraitement - imagerie médicale
 
 Pipeline de prétraitement déterministe, reproductible et backbone-agnostique,
 préparant un dataset d'images médicales nettoyé (`dataset_clean/`) pour
@@ -16,7 +16,7 @@ PNG affichable sans perte).
 dataset_clean/       ← jamais modifié
 dataset_processed/    ← grayscale, resize+padding, contraste optionnel (déterministe)
 reports/manifest.csv   ← assignation train/val/test (ne duplique pas les fichiers)
-[à l'entraînement]      ← canal x3, normalisation, augmentation — appliqués en mémoire
+[à l'entraînement]      ← canal x3, normalisation, augmentation - appliqués en mémoire
 ```
 
 ## Conçu pour être réutilisé au-delà de la radiographie thoracique
@@ -25,11 +25,11 @@ reports/manifest.csv   ← assignation train/val/test (ne duplique pas les fichi
   torchvision supporté (DenseNet121/169/201, EfficientNet-B0/B1/B2,
   ResNet18/50, ConvNeXt-Tiny). La taille d'entrée et la normalisation sont
   dérivées automatiquement des poids pré-entraînés officiels
-  (`model_registry.py`) — changer de modèle ne demande aucune modification de code.
+  (`model_registry.py`) - changer de modèle ne demande aucune modification de code.
 - **Profils de modalité** (`--modality chest_xray` / `ultrasound`) :
   regroupent les plages d'augmentation et l'activation du contraste par
   type d'imagerie plutôt que codées en dur. Le profil `ultrasound` est
-  fourni à titre indicatif seulement — à recalibrer une fois un vrai
+  fourni à titre indicatif seulement - à recalibrer une fois un vrai
   dataset échographique disponible (bruit de speckle, cône de scan et
   artefacts d'interface très différents d'une radiographie).
 - **Classes détectées dynamiquement** depuis les noms de sous-dossiers,
@@ -43,7 +43,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Python 3.12 requis. `torch`/`torchvision` sont volumineux à installer — prévoir du temps/bande passante.
+Python 3.12 requis. `torch`/`torchvision` sont volumineux à installer - prévoir du temps/bande passante.
 
 ## Utilisation
 
@@ -112,7 +112,7 @@ Le split `train` utilise un `WeightedRandomSampler` (rééquilibrage des
 classes sans suppression de données ni duplication de fichiers) ; `val`
 et `test` n'ont ni sampler pondéré ni augmentation.
 
-## Décisions techniques (résumé — voir l'analyse complète dans la conversation)
+## Décisions techniques (résumé - voir l'analyse complète dans la conversation)
 
 - **Grayscale 1 canal sur disque, 3 canaux à la volée** : évite de tripler
   le stockage pour des pixels identiques.
@@ -137,7 +137,7 @@ python -m unittest discover -s tests
 ## Limites connues
 
 - Le profil `ultrasound` est un point de départ, pas une solution
-  validée — recalibrer une fois un dataset réel disponible (spéculairement,
+  validée - recalibrer une fois un dataset réel disponible (spéculairement,
   ajouter un module de crop du cône de scan / suppression des annotations
   d'interface serait la première étape naturelle pour cette modalité).
 - Pas de support DICOM natif (formats supportés : JPG, JPEG, PNG).

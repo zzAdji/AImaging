@@ -67,12 +67,13 @@ def build_dataloaders(
     normalization: NormalizationStats,
     config: PreprocessConfig,
     batch_size: int = 32,
+    use_weighted_sampler: bool = True,
 ) -> Dict[str, DataLoader]:
     """Construit les DataLoaders train/val/test à partir du manifeste.
 
-    Le split "train" utilise un WeightedRandomSampler (voir balancing.py)
-    et les transformations d'augmentation ; val/test utilisent un shuffle
-    désactivé et aucune augmentation.
+    Le split "train" utilise un WeightedRandomSampler par défaut (voir
+    balancing.py) et les transformations d'augmentation ; val/test
+    utilisent un shuffle désactivé et aucune augmentation.
 
     Args:
         manifest_df: DataFrame produit par split.build_manifest.
@@ -80,6 +81,11 @@ def build_dataloaders(
             normalization.resolve_normalization).
         config: Configuration du run (profil d'augmentation, workers...).
         batch_size: Taille de batch, identique pour les trois splits.
+        use_weighted_sampler: Si False, désactive le WeightedRandomSampler
+            (shuffle standard à la place) — à utiliser si le rééquilibrage
+            est géré autrement en aval (ex. loss pondérée dans le module
+            d'entraînement). Ne jamais activer les deux mécanismes en même
+            temps : l'effet se cumulerait et sur-corrigerait le déséquilibre.
 
     Returns:
         Dictionnaire {"train": DataLoader, "val": DataLoader, "test": DataLoader}.
@@ -96,11 +102,11 @@ def build_dataloaders(
     test_ds = MedicalImageDataset(manifest_df, "test", eval_transform, class_to_idx)
 
     train_labels = [class_to_idx[c] for c in manifest_df[manifest_df["split"] == "train"]["class"]]
-    sampler = build_weighted_sampler(train_labels) if train_labels else None
+    sampler = build_weighted_sampler(train_labels) if (use_weighted_sampler and train_labels) else None
 
     loaders = {
         "train": DataLoader(
-            train_ds, batch_size=batch_size, sampler=sampler,
+            train_ds, batch_size=batch_size, sampler=sampler, shuffle=(sampler is None),
             num_workers=config.num_workers, pin_memory=torch.cuda.is_available(),
         ),
         "val": DataLoader(

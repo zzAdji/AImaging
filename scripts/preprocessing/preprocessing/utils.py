@@ -46,7 +46,7 @@ def unique_destination(dest_dir: Path, filename: str) -> Path:
 
     Utile si deux fichiers sources de même nom mais d'extensions
     différentes (ex. image1.jpg et image1.png) coexistaient dans le même
-    dossier de classe source — cas rare mais possible lors de la fusion
+    dossier de classe source - cas rare mais possible lors de la fusion
     de plusieurs sources.
     """
     dest = dest_dir / filename

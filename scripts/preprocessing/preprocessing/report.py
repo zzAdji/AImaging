@@ -122,7 +122,7 @@ def generate_html(report: PreprocessingReport, output_path: Path) -> Path:
 </style>
 </head>
 <body>
-  <h1>Rapport de prétraitement — {report.input_dir.name}</h1>
+  <h1>Rapport de prétraitement - {report.input_dir.name}</h1>
   <p><b>Images totales :</b> {report.total_images}
      &nbsp;|&nbsp; <b>Réussies :</b> {len(report.successful_entries)}
      &nbsp;|&nbsp; <b>Échecs :</b> {len(report.failed_entries)}

@@ -1,4 +1,4 @@
-"""Amélioration de contraste — optionnelle, désactivée par défaut.
+"""Amélioration de contraste - optionnelle, désactivée par défaut.
 
 Aucune de ces transformations n'est appliquée automatiquement. Le choix
 est délibéré (voir l'analyse de stratégie) : la littérature sur la
@@ -30,7 +30,7 @@ def apply_clahe(image: np.ndarray, clip_limit: float, tile_grid_size: tuple) -> 
 
 def apply_histogram_equalization(image: np.ndarray) -> np.ndarray:
     """Égalisation d'histogramme globale. Risque d'amplification du bruit
-    non contrôlée — préférer CLAHE dans la plupart des cas."""
+    non contrôlée - préférer CLAHE dans la plupart des cas."""
     return cv2.equalizeHist(image)
 
 
@@ -48,7 +48,7 @@ def enhance(image: np.ndarray, profile: EnhancementProfile) -> np.ndarray:
 
     Args:
         image: Tableau 2D uint8 (niveaux de gris).
-        profile: EnhancementProfile — si `enabled` est False, `image` est
+        profile: EnhancementProfile - si `enabled` est False, `image` est
             retourné inchangé.
 
     Returns:
@@ -64,5 +64,5 @@ def enhance(image: np.ndarray, profile: EnhancementProfile) -> np.ndarray:
     if profile.method == "gamma":
         return apply_gamma_correction(image, profile.gamma_value)
 
-    logger.warning("Méthode d'enhancement inconnue '%s' — image inchangée.", profile.method)
+    logger.warning("Méthode d'enhancement inconnue '%s' - image inchangée.", profile.method)
     return image

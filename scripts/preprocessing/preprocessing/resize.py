@@ -1,7 +1,7 @@
 """Redimensionnement préservant le ratio d'aspect (letterbox / padding).
 
 Un resize direct (sans préservation du ratio) déforme les proportions
-anatomiques dès que l'image source n'est pas déjà carrée — inacceptable
+anatomiques dès que l'image source n'est pas déjà carrée - inacceptable
 pour de l'imagerie médicale où les proportions ont un sens. Ce module
 redimensionne pour tenir dans la taille cible sans dépasser, puis
 complète (pad) avec une valeur constante (noir par défaut, cohérent avec
@@ -38,7 +38,7 @@ def resize_with_padding(
 
     # INTER_AREA est recommandé pour la réduction (moins d'aliasing),
     # INTER_LINEAR pour l'agrandissement (plus rapide, qualité suffisante
-    # pour ce cas d'usage — pas de sur-interprétation de détails inexistants).
+    # pour ce cas d'usage - pas de sur-interprétation de détails inexistants).
     interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
     resized = cv2.resize(image, (new_w, new_h), interpolation=interpolation)
 

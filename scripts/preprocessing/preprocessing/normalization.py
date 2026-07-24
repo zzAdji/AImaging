@@ -3,7 +3,7 @@ tensor (jamais gravées sur disque, voir le rationnel dans grayscale.py).
 
 Ce module fait deux choses distinctes :
 1. Résout les mean/std à utiliser pour l'entraînement, en délégant au
-   backbone choisi (model_registry) — c'est la valeur réellement utilisée.
+   backbone choisi (model_registry) - c'est la valeur réellement utilisée.
 2. Calcule, à titre purement informatif pour le rapport, les statistiques
    mean/std réelles du dataset (niveaux de gris, échelle [0,1]). Cette
    valeur n'est PAS utilisée pour la normalisation par défaut (voir
@@ -55,7 +55,7 @@ def compute_dataset_mean_std(
 ) -> Tuple[float, float]:
     """Calcule mean/std réels du dataset (niveaux de gris, échelle [0,1]).
 
-    Purement informatif (voir docstring du module) — n'échantillonne
+    Purement informatif (voir docstring du module) - n'échantillonne
     qu'un sous-ensemble pour rester rapide sur de gros datasets plutôt que
     de tout charger en mémoire.
 

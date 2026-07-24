@@ -86,7 +86,7 @@ analysis_output/
 ```
 dataset_analyzer/
 ├── __init__.py
-├── config.py               # AnalyzerConfig — tous les seuils réglables
+├── config.py               # AnalyzerConfig - tous les seuils réglables
 ├── schemas.py               # ImageRecord, DuplicateGroup, ClassStatistics, AnalysisReport
 ├── utils.py                  # logging, SHA-256, scan récursif, timer
 ├── metadata.py                # extraction métadonnées + détection corruption (threads)

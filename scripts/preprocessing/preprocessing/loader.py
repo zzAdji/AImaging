@@ -62,7 +62,7 @@ def load_image_array(path: Path) -> Tuple[Optional[np.ndarray], Optional[str]]:
             img.load()
             return np.array(img), None
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as pil_exc:
-        logger.debug("Échec Pillow pour %s : %s — tentative OpenCV", path, pil_exc)
+        logger.debug("Échec Pillow pour %s : %s - tentative OpenCV", path, pil_exc)
 
     try:
         array = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)

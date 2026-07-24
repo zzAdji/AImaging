@@ -17,7 +17,7 @@ def to_grayscale(image: np.ndarray) -> np.ndarray:
 
     Args:
         image: Tableau numpy, soit déjà 2D (niveaux de gris), soit 3D
-            (RGB ou RGBA — le canal alpha est ignoré s'il est présent).
+            (RGB ou RGBA - le canal alpha est ignoré s'il est présent).
 
     Returns:
         Tableau 2D uint8.

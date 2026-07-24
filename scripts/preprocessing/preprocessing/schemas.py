@@ -21,7 +21,7 @@ class ImageEntry:
             (toujours égales à la taille cible si load_success est True).
         processed_path: Chemin de l'image traitée dans dataset_processed/,
             None si le traitement a échoué.
-        patient_id: Identifiant patient si disponible (None sinon — le
+        patient_id: Identifiant patient si disponible (None sinon - le
             split retombe alors sur un split stratifié au niveau image).
         split: "train" | "val" | "test", assigné par split.py.
     """

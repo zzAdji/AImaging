@@ -3,7 +3,7 @@
 Associe un nom d'architecture aux poids pré-entraînés torchvision et à la
 recette de prétraitement officielle qu'ils attendent (taille d'entrée,
 moyenne/écart-type de normalisation). Plutôt que de recopier ces valeurs
-à la main pour chaque backbone — source d'erreurs et non extensible —
+à la main pour chaque backbone - source d'erreurs et non extensible -
 ce module s'appuie sur l'API `torchvision.models`, qui expose pour
 chaque jeu de poids la transformation exacte utilisée lors de
 l'entraînement original (`weights.transforms()`).
@@ -45,7 +45,7 @@ class BackboneSpec:
 
     Attributes:
         architecture: Nom reconnu (clé de SUPPORTED_ARCHITECTURES, ou nom
-            libre si non reconnu — un fallback ImageNet générique s'applique).
+            libre si non reconnu - un fallback ImageNet générique s'applique).
         input_size: (H, W) attendue en entrée du modèle.
         mean: Moyenne de normalisation par canal (ordre RGB).
         std: Écart-type de normalisation par canal (ordre RGB).
@@ -81,7 +81,7 @@ def get_backbone_spec(
     """
     if architecture not in SUPPORTED_ARCHITECTURES:
         logger.warning(
-            "Architecture '%s' non répertoriée dans model_registry — "
+            "Architecture '%s' non répertoriée dans model_registry - "
             "utilisation des valeurs ImageNet génériques (taille %s). "
             "Ajoutez-la à SUPPORTED_ARCHITECTURES pour une résolution automatique.",
             architecture, fallback_size,
@@ -117,7 +117,7 @@ def get_backbone_spec(
         )
     except Exception as exc:  # noqa: BLE001 - robustesse : ne bloque jamais le pipeline
         logger.warning(
-            "Impossible de dériver la spec pré-entraînée pour '%s' (%s) — "
+            "Impossible de dériver la spec pré-entraînée pour '%s' (%s) - "
             "fallback ImageNet générique.", architecture, exc,
         )
         return BackboneSpec(architecture, fallback_size, _IMAGENET_MEAN, _IMAGENET_STD, "imagenet_fallback")

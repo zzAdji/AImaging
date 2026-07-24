@@ -16,7 +16,7 @@ def build_train_transforms(
 
     Suppose une entrée PIL Image déjà en mode "RGB" (3 canaux dupliqués,
     voir torch_dataset.py) et déjà à la taille cible (le resize+padding a
-    déjà été gravé sur disque par pipeline.py) — l'augmentation ne fait
+    déjà été gravé sur disque par pipeline.py) - l'augmentation ne fait
     donc que des perturbations géométriques/photométriques légères autour
     de cette taille, pas un second redimensionnement.
 

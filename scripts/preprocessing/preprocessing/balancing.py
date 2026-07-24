@@ -1,4 +1,4 @@
-"""Équilibrage des classes — sans suppression de données.
+"""Équilibrage des classes - sans suppression de données.
 
 Deux mécanismes équivalents mais à ne PAS cumuler (l'effet se
 combinerait et sur-corrigerait le déséquilibre) :
@@ -6,7 +6,7 @@ combinerait et sur-corrigerait le déséquilibre) :
 - `compute_class_weights` : pondération de la fonction de perte
   (`nn.CrossEntropyLoss(weight=...)`).
 - `build_weighted_sampler` : rééchantillonnage au niveau du DataLoader
-  (`WeightedRandomSampler`), qui ne duplique aucun fichier — seule la
+  (`WeightedRandomSampler`), qui ne duplique aucun fichier - seule la
   probabilité de tirage change.
 
 Recommandation par défaut de ce pipeline : `WeightedRandomSampler` seul,
@@ -48,7 +48,7 @@ def build_weighted_sampler(labels: Sequence[int]) -> WeightedRandomSampler:
 
     Args:
         labels: Labels entiers (un par échantillon du split d'entraînement
-            uniquement — ne jamais appliquer ceci au split de validation/test).
+            uniquement - ne jamais appliquer ceci au split de validation/test).
 
     Returns:
         WeightedRandomSampler prêt à être passé à un DataLoader

@@ -4,7 +4,7 @@ Ne fait volontairement AUCUNE augmentation ni normalisation mean/std :
 ces étapes sont appliquées à la volée au moment de l'entraînement (voir
 torch_dataset.py). Ce module se contente de matérialiser sur disque une
 version propre, uniforme, en niveaux de gris, redimensionnée avec
-préservation du ratio — jamais les images originales.
+préservation du ratio - jamais les images originales.
 """
 
 from __future__ import annotations

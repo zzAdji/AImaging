@@ -88,7 +88,7 @@ def main(argv: list | None = None) -> int:
     )
 
     print("=" * 60)
-    print(" Dataset Analyzer & Cleaner — Radiographies thoraciques")
+    print(" Dataset Analyzer & Cleaner - Radiographies thoraciques")
     print("=" * 60)
     print(f"Dataset      : {config.dataset_path}")
     print(f"Sortie       : {config.output_dir}")

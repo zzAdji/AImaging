@@ -116,7 +116,7 @@ def create_image_grid(
     for ax in flat_axes[len(sample):]:
         ax.axis("off")
 
-    fig.suptitle(f"Échantillon aléatoire — {class_name}")
+    fig.suptitle(f"Échantillon aléatoire - {class_name}")
     return _save(fig, output_path)
 
 

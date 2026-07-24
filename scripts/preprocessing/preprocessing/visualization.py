@@ -80,7 +80,7 @@ def create_before_after_grid(
         axes[row_pair, col].axis("off")
         axes[row_pair + 1, col].axis("off")
 
-    fig.suptitle(f"Avant / après prétraitement — {class_name}")
+    fig.suptitle(f"Avant / après prétraitement - {class_name}")
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, dpi=130, bbox_inches="tight")

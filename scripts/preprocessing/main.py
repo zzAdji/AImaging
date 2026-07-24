@@ -73,7 +73,7 @@ def main(argv: list | None = None) -> int:
     logger = setup_logging(config.log_path, level=logging.DEBUG if args.verbose else logging.INFO)
 
     print("=" * 60)
-    print(" Pipeline de prétraitement — imagerie médicale")
+    print(" Pipeline de prétraitement - imagerie médicale")
     print("=" * 60)
     print(f"Entrée         : {config.input_dir}")
     print(f"Sortie         : {config.output_dir}")

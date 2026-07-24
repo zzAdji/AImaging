@@ -1,4 +1,4 @@
-"""Séparation Train / Validation / Test — avant toute augmentation.
+"""Séparation Train / Validation / Test - avant toute augmentation.
 
 Deux stratégies, choisies automatiquement selon la disponibilité d'un
 identifiant patient :
@@ -9,12 +9,12 @@ identifiant patient :
 2. **Split stratifié au niveau image** (fallback, utilisé par défaut tant
    qu'aucun identifiant patient n'est disponible) : préserve les
    proportions de classes dans chaque split, mais ne peut pas détecter un
-   chevauchement patient — limitation documentée dans le rapport.
+   chevauchement patient - limitation documentée dans le rapport.
 
 Pour un dataset combinant plusieurs sources (ex. NIH ChestX-ray14 +
 Kaggle), le split officiel d'une source qui en fournit un (comme les
 listes train_val_list.txt / test_list.txt de NIH) doit être respecté tel
-quel plutôt que refondu avec les autres sources — ce module l'accepte en
+quel plutôt que refondu avec les autres sources - ce module l'accepte en
 pré-assignant `entry.split` avant l'appel si une telle information existe.
 """
 
@@ -44,7 +44,7 @@ def _load_patient_ids(entries: List[ImageEntry], patient_id_csv: Path) -> None:
         mapping = dict(zip(mapping_df["filename"], mapping_df["patient_id"].astype(str)))
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "Impossible de lire patient_id_csv (%s) : %s — fallback split image-level.",
+            "Impossible de lire patient_id_csv (%s) : %s - fallback split image-level.",
             patient_id_csv, exc,
         )
         return
@@ -88,7 +88,7 @@ def assign_splits(entries: List[ImageEntry], config: PreprocessConfig) -> List[I
         logger.warning(
             "Aucun patient_id disponible : split stratifié au niveau image. "
             "Un même patient pourrait apparaître dans plusieurs splits si "
-            "vos sources contiennent plusieurs images par patient — "
+            "vos sources contiennent plusieurs images par patient - "
             "limitation documentée dans le rapport."
         )
         _assign_splits_image_level(valid, config)
@@ -159,7 +159,7 @@ def build_manifest(entries: List[ImageEntry]) -> pd.DataFrame:
     """Construit le DataFrame manifeste (une ligne par image traitée avec succès).
 
     Colonnes : path, class, patient_id, split. `patient_id` reste vide
-    tant qu'aucune source ne le fournit — la colonne existe déjà pour
+    tant qu'aucune source ne le fournit - la colonne existe déjà pour
     éviter une migration de schéma le jour où elle devient disponible.
     """
     rows = [

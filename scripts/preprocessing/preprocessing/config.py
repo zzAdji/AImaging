@@ -3,7 +3,7 @@
 Toutes les valeurs "métier" (plages d'augmentation, activation du
 contraste) sont rassemblées dans des profils de modalité nommés
 (MODALITY_PRESETS) plutôt que codées en dur dans la logique de
-traitement — c'est ce qui permet de réutiliser le même pipeline pour une
+traitement - c'est ce qui permet de réutiliser le même pipeline pour une
 autre modalité d'imagerie (ex. échographie) en ajoutant simplement un
 nouveau profil, sans toucher au reste du code.
 """
@@ -52,7 +52,7 @@ class EnhancementProfile:
 
     Attributes:
         enabled: Si False (défaut), aucune transformation de contraste
-            n'est appliquée — le pipeline se contente du redimensionnement.
+            n'est appliquée - le pipeline se contente du redimensionnement.
         method: "clahe" | "hist_eq" | "gamma".
         clahe_clip_limit: Limite de clipping CLAHE (plus haut = plus de contraste,
             plus haut risque d'amplification du bruit).
@@ -74,7 +74,7 @@ class EnhancementProfile:
 # future : le bruit de speckle, le cône de scan et les artefacts
 # d'interface (calipers, annotations) propres à l'échographie sont très
 # différents d'une radiographie et n'ont volontairement PAS été modélisés
-# ici. Ne pas utiliser ce profil tel quel en production — le recalibrer
+# ici. Ne pas utiliser ce profil tel quel en production - le recalibrer
 # une fois qu'un vrai dataset échographique est disponible.
 MODALITY_PRESETS: Dict[str, Dict[str, object]] = {
     "chest_xray": {
@@ -142,7 +142,7 @@ class PreprocessConfig:
             chaque split.
         patient_id_csv: Chemin optionnel vers un CSV externe
             (colonnes: filename, patient_id) permettant un split au
-            niveau patient. Laisser None si non disponible — le split
+            niveau patient. Laisser None si non disponible - le split
             retombe alors sur un split stratifié au niveau image.
         grid_sample_size: Nombre d'images (avant/après) affichées par
             classe dans la grille de vérification visuelle.
@@ -159,7 +159,7 @@ class PreprocessConfig:
     valid_extensions: FrozenSet[str] = frozenset({".jpg", ".jpeg", ".png"})
     num_workers: int = field(default_factory=lambda: max(1, os.cpu_count() or 1))
 
-    split_ratios: Tuple[float, float, float] = (0.70, 0.15, 0.15)
+    split_ratios: Tuple[float, float, float] = (0.80, 0.10, 0.10)
     stratify_split: bool = True
     patient_id_csv: Optional[Path] = None
 
