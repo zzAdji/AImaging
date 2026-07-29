@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Comparaison modèles individuels vs ensemble</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; margin: 2rem; }
+  table { border-collapse: collapse; margin-top: 1rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 12px; text-align: left; }
+  th { background: #2b2b2b; color: white; }
+</style>
+</head>
+<body>
+  <h1>Comparaison des modèles — accuracy test</h1>
+  <table><thead><tr><th>Modèle</th><th>Accuracy test</th></tr></thead>
+  <tbody><tr><td>densenet121 (densenet121_best)</td><td>0.9783</td></tr><tr><td>efficientnet_b0 (efficientnet_b0_best)</td><td>0.9815</td></tr><tr><td>efficientnet_b2 (efficientnet_b2_best)</td><td>0.9764</td></tr><tr><td>resnet101 (resnet101_best)</td><td>0.9834</td></tr><tr><td>resnet50 (resnet50_best)</td><td>0.9764</td></tr><tr><td><b>Ensemble (soft voting)</b></td><td><b>0.9853</b></td></tr></tbody></table>
+  <h2>Détail par classe — ensemble</h2>
+  <table class="report-table"><thead><tr><th>Classe</th><th>Précision</th><th>Rappel</th><th>F1</th><th>Support</th><th>AUC</th></tr></thead><tbody><tr><td>Emphysema</td><td>1.000</td><td>0.992</td><td>0.996</td><td>255</td><td>1.000</td></tr><tr><td>Normal</td><td>0.968</td><td>0.987</td><td>0.977</td><td>454</td><td>0.999</td></tr><tr><td>Pneumonia</td><td>0.989</td><td>0.972</td><td>0.980</td><td>540</td><td>0.999</td></tr><tr><td>Tuberculosis</td><td>0.994</td><td>1.000</td><td>0.997</td><td>317</td><td>1.000</td></tr></tbody></table>
+</body>
+</html>

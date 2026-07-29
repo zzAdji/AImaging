@@ -17,9 +17,9 @@ bootstrap_preprocessing_import(_early_args.preprocessing_path)
 
 import pandas as pd  # noqa: E402
 
-from preprocessing.preprocessing.config import ModelConfig as PPModelConfig, PreprocessConfig  # noqa: E402
-from preprocessing.preprocessing.normalization import resolve_normalization  # noqa: E402
-from preprocessing.preprocessing.torch_dataset import build_dataloaders  # noqa: E402
+from preprocessing.config import ModelConfig as PPModelConfig, PreprocessConfig  # noqa: E402
+from preprocessing.normalization import resolve_normalization  # noqa: E402
+from preprocessing.torch_dataset import build_dataloaders  # noqa: E402
 
 from training.ensemble import evaluate_ensemble, load_model_from_checkpoint  # noqa: E402
 from training.evaluator import evaluate  # noqa: E402

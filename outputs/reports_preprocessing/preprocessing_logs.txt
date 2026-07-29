@@ -1,0 +1,13 @@
+2026-07-25 13:30:34 | INFO     | preprocessing.loader | 20285 fichier(s) candidat(s) trouvé(s) sous C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\data\chest-xray
+2026-07-25 13:32:12 | WARNING  | preprocessing.split | Aucun patient_id disponible : split stratifié au niveau image. Un même patient pourrait apparaître dans plusieurs splits si vos sources contiennent plusieurs images par patient - limitation documentée dans le rapport.
+2026-07-25 13:32:13 | INFO     | preprocessing.pipeline | Manifeste écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\reports\manifest.csv (20285 lignes)
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | === Résumé du prétraitement ===
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Images totales    : 20285
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Réussies          : 20285
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Échecs            : 0
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Classes           : {'Emphysema': 2547, 'Normal': 4538, 'Pneumonia-Bacterial': 5707, 'Pneumonia-Viral': 4324, 'Tuberculosis': 3169}
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Répartition split : {'train': {'Emphysema': 2038, 'Normal': 3630, 'Pneumonia-Bacterial': 4566, 'Pneumonia-Viral': 3459, 'Tuberculosis': 2535}, 'val': {'Emphysema': 255, 'Normal': 454, 'Pneumonia-Bacterial': 570, 'Pneumonia-Viral': 432, 'Tuberculosis': 317}, 'test': {'Emphysema': 254, 'Normal': 454, 'Pneumonia-Bacterial': 571, 'Pneumonia-Viral': 433, 'Tuberculosis': 317}}
+2026-07-25 13:32:35 | INFO     | preprocessing.pipeline | Temps d'exécution : 122.63 s
+2026-07-25 13:32:52 | INFO     | preprocessing.report | Rapport CSV écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\reports\preprocessing_report.csv (20285 lignes)
+2026-07-25 13:32:52 | INFO     | preprocessing.report | Rapport JSON écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\reports\preprocessing_report.json
+2026-07-25 13:32:52 | INFO     | preprocessing.report | Rapport HTML écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\reports\preprocessing_report.html

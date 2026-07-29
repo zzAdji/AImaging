@@ -1,0 +1,15 @@
+2026-07-25 13:17:55 | INFO     | dataset_analyzer.analyzer | 20285 fichier(s) trouvé(s) sous C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\data\chest-xray
+2026-07-25 13:18:24 | INFO     | dataset_analyzer.metadata | Métadonnées extraites pour 20285 fichier(s)
+2026-07-25 13:19:33 | INFO     | dataset_analyzer.quality_checker | 0 image(s) atypique(s) détectée(s) sur 20285
+2026-07-25 13:20:02 | INFO     | dataset_analyzer.duplicate_detector | 0 doublon(s) exact(s) détecté(s)
+2026-07-25 13:20:14 | INFO     | dataset_analyzer.duplicate_detector | 18724 quasi-doublon(s) candidat(s) (pré-SSIM)
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.duplicate_detector | 0 quasi-doublon(s) confirmé(s) après SSIM
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | === Résumé de l'analyse ===
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Images totales         : 20285
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Images corrompues      : 0
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Images atypiques       : 0
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Groupes de doublons    : 0
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Classes déséquilibrées : True (ratio=2.24)
+2026-07-25 13:23:11 | INFO     | dataset_analyzer.analyzer | Temps d'exécution      : 318.19 s
+2026-07-25 13:23:27 | INFO     | dataset_analyzer.report | Rapport CSV écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\analysis\dataset_report.csv (20285 lignes)
+2026-07-25 13:23:30 | INFO     | dataset_analyzer.report | Rapport PDF écrit : C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\outputs\analysis\dataset_report.pdf

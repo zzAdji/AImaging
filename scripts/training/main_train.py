@@ -17,10 +17,10 @@ bootstrap_preprocessing_import(_early_args.preprocessing_path)
 
 import pandas as pd  # noqa: E402
 
-from preprocessing.preprocessing.balancing import compute_class_weights  # noqa: E402
-from preprocessing.preprocessing.config import ModelConfig as PPModelConfig, PreprocessConfig  # noqa: E402
-from preprocessing.preprocessing.normalization import resolve_normalization  # noqa: E402
-from preprocessing.preprocessing.torch_dataset import build_dataloaders  # noqa: E402
+from preprocessing.balancing import compute_class_weights  # noqa: E402
+from preprocessing.config import ModelConfig as PPModelConfig, PreprocessConfig  # noqa: E402
+from preprocessing.normalization import resolve_normalization  # noqa: E402
+from preprocessing.torch_dataset import build_dataloaders  # noqa: E402
 
 from training.config import TrainConfig  # noqa: E402
 from training.evaluator import evaluate  # noqa: E402
@@ -52,7 +52,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--modality", default="chest_xray", choices=["chest_xray", "ultrasound"])
     parser.add_argument("--architecture", default="densenet121")
     parser.add_argument("--no-pretrained", action="store_true")
-    parser.add_argument("--num-classes", type=int, default=3)
+    parser.add_argument("--num-classes", type=int, default=5)
     parser.add_argument("--hidden-dims", type=int, nargs="+", default=[512, 128, 32])
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--no-freeze-backbone", action="store_true", help="Fine-tuning complet au lieu de geler le backbone.")
@@ -169,7 +169,7 @@ def main(argv=None) -> int:
             gradcam_samples += [(Path(p), cls) for p in cls_rows["path"]]
 
         if gradcam_samples:
-            from preprocessing.preprocessing.augmentation import build_eval_transforms
+            from preprocessing.augmentation import build_eval_transforms
 
             eval_transform = build_eval_transforms(normalization.mean, normalization.std)
             generate_gradcam_grid(

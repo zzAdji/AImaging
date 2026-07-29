@@ -1,0 +1,22 @@
+2026-07-29 00:19:08 | INFO     | training.model_builder | Fine-tuning complet activé pour 'densenet121'.
+2026-07-29 00:19:09 | INFO     | training.model_builder | Fine-tuning complet activé pour 'densenet121'.
+2026-07-29 00:19:14 | INFO     | training | densenet121 (densenet121_best) — accuracy test : 0.9783
+2026-07-29 00:19:15 | INFO     | training.model_builder | Fine-tuning complet activé pour 'efficientnet_b0'.
+2026-07-29 00:19:19 | INFO     | training | efficientnet_b0 (efficientnet_b0_best) — accuracy test : 0.9815
+2026-07-29 00:19:20 | INFO     | training.model_builder | Fine-tuning complet activé pour 'efficientnet_b2'.
+2026-07-29 00:19:24 | INFO     | training | efficientnet_b2 (efficientnet_b2_best) — accuracy test : 0.9764
+2026-07-29 00:19:27 | INFO     | training.model_builder | Fine-tuning complet activé pour 'resnet101'.
+2026-07-29 00:19:34 | INFO     | training | resnet101 (resnet101_best) — accuracy test : 0.9834
+2026-07-29 00:19:36 | INFO     | training.model_builder | Fine-tuning complet activé pour 'resnet50'.
+2026-07-29 00:19:41 | INFO     | training | resnet50 (resnet50_best) — accuracy test : 0.9764
+2026-07-29 00:19:41 | INFO     | training.model_builder | Fine-tuning complet activé pour 'densenet121'.
+2026-07-29 00:19:41 | INFO     | training.ensemble | Checkpoint chargé : /kaggle/input/datasets/alimoumate/medical-imaging-pipeline/results_finetuned/training_results/finetuned/densenet121_best.pt (densenet121_best, entrée (224, 224))
+2026-07-29 00:19:41 | INFO     | training.model_builder | Fine-tuning complet activé pour 'efficientnet_b0'.
+2026-07-29 00:19:41 | INFO     | training.ensemble | Checkpoint chargé : /kaggle/input/datasets/alimoumate/medical-imaging-pipeline/results_finetuned/training_results/finetuned/efficientnet_b0_best.pt (efficientnet_b0_best, entrée (224, 224))
+2026-07-29 00:19:41 | INFO     | training.model_builder | Fine-tuning complet activé pour 'efficientnet_b2'.
+2026-07-29 00:19:41 | INFO     | training.ensemble | Checkpoint chargé : /kaggle/input/datasets/alimoumate/medical-imaging-pipeline/results_finetuned/training_results/finetuned/efficientnet_b2_best.pt (efficientnet_b2_best, entrée (288, 288))
+2026-07-29 00:19:42 | INFO     | training.model_builder | Fine-tuning complet activé pour 'resnet101'.
+2026-07-29 00:19:42 | INFO     | training.ensemble | Checkpoint chargé : /kaggle/input/datasets/alimoumate/medical-imaging-pipeline/results_finetuned/training_results/finetuned/resnet101_best.pt (resnet101_best, entrée (224, 224))
+2026-07-29 00:19:43 | INFO     | training.model_builder | Fine-tuning complet activé pour 'resnet50'.
+2026-07-29 00:19:43 | INFO     | training.ensemble | Checkpoint chargé : /kaggle/input/datasets/alimoumate/medical-imaging-pipeline/results_finetuned/training_results/finetuned/resnet50_best.pt (resnet50_best, entrée (224, 224))
+2026-07-29 00:20:06 | INFO     | training.report | Rapport comparatif écrit : ensemble_results/comparison_report.html

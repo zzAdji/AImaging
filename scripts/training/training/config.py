@@ -54,7 +54,7 @@ class TrainConfig:
 
     architecture: str = "densenet121"
     pretrained: bool = True
-    num_classes: int = 3
+    num_classes: int = 5
     classifier_hidden_dims: Tuple[int, ...] = (512, 128, 32)
     classifier_dropout: float = 0.2
     freeze_backbone: bool = True

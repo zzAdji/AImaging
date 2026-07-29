@@ -3,6 +3,7 @@
 /data/**
 /docs/litterature/**
 /docs/litterature/
+/models/
 
 # Optional common Python/IDE artifacts
 __pycache__/
