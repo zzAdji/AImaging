@@ -1,16 +1,18 @@
 """Évaluation complète d'un modèle sur un split donné : accuracy,
 précision/rappel/F1 par classe, matrice de confusion, courbes ROC et
-Precision-Recall (approche one-vs-rest).
+Precision-Recall (approche one-vs-rest, comme dans les deux articles de
+référence).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
@@ -28,9 +30,18 @@ logger = logging.getLogger("training.evaluator")
 
 @torch.no_grad()
 def collect_predictions(
-    model: nn.Module, loader: DataLoader, device: torch.device
+    model: nn.Module, loader: DataLoader, device: torch.device,
+    target_size: Optional[Tuple[int, int]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fait l'inférence sur tout un DataLoader.
+
+    Args:
+        target_size: Si fourni et différent de la taille réelle des
+            images du loader, chaque batch est ré-échantillonné avant
+            l'inférence. Nécessaire quand le loader a été construit pour
+            un autre modèle de l'ensemble (taille de référence partagée)
+            que celui évalué ici — sans ce paramètre, un modèle attendant
+            380×380 recevrait silencieusement du 224×224.
 
     Returns:
         (y_true, y_pred, y_proba) où y_proba a la forme (N, num_classes).
@@ -40,6 +51,8 @@ def collect_predictions(
 
     for images, labels in loader:
         images = images.to(device)
+        if target_size is not None and tuple(images.shape[-2:]) != tuple(target_size):
+            images = F.interpolate(images, size=target_size, mode="bilinear", align_corners=False)
         logits = model(images)
         probs = torch.softmax(logits, dim=1).cpu().numpy()
         preds = probs.argmax(axis=1)
@@ -90,6 +103,9 @@ def compute_eval_metrics(
         y_true_binary = (y_true == i).astype(int)
         roc_auc, ap = None, None
 
+        # AUC/PR nécessitent les deux classes présentes dans y_true_binary ;
+        # sur un tout petit échantillon de test (ex. smoke test), ce n'est
+        # pas garanti — on dégrade proprement plutôt que de lever une exception.
         if len(np.unique(y_true_binary)) == 2:
             roc_auc = float(roc_auc_score(y_true_binary, y_proba[:, i]))
             ap = float(average_precision_score(y_true_binary, y_proba[:, i]))
@@ -99,7 +115,7 @@ def compute_eval_metrics(
             pr_curves[cls] = (recall_c.tolist(), precision_c.tolist())
         else:
             logger.warning(
-                "Classe '%s' : une seule classe présente dans y_true sur ce split - "
+                "Classe '%s' : une seule classe présente dans y_true sur ce split — "
                 "ROC/PR non calculables (échantillon probablement trop petit).", cls,
             )
 
@@ -129,7 +145,13 @@ def compute_eval_metrics(
 def evaluate(
     model: nn.Module, loader: DataLoader, class_to_idx: Dict[str, int],
     device: torch.device, split_name: str = "test",
+    target_size: Optional[Tuple[int, int]] = None,
 ) -> EvalMetrics:
-    """Évalue un modèle sur un DataLoader complet, calcule toutes les métriques."""
-    y_true, y_pred, y_proba = collect_predictions(model, loader, device)
+    """Évalue un modèle sur un DataLoader complet, calcule toutes les métriques.
+
+    Args:
+        target_size: Voir collect_predictions — à fournir explicitement
+            si `loader` n'a pas été construit à la taille native de `model`.
+    """
+    y_true, y_pred, y_proba = collect_predictions(model, loader, device, target_size)
     return compute_eval_metrics(y_true, y_pred, y_proba, class_to_idx, split_name)

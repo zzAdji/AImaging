@@ -1,4 +1,7 @@
 """Génération des rapports d'entraînement/évaluation : CSV, JSON, HTML.
+
+Même approche que le module de prétraitement : pas de dépendance de
+templating, assemblage de chaînes suffisant pour un rapport de synthèse.
 """
 
 from __future__ import annotations
@@ -109,7 +112,7 @@ def generate_training_html(report: TrainingReport, output_path: Path) -> Path:
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Rapport d'entraînement - {report.architecture}</title>
+<title>Rapport d'entraînement — {report.architecture}</title>
 <style>
   body {{ font-family: -apple-system, Arial, sans-serif; margin: 2rem; color: #1f1f1f; }}
   h1 {{ font-size: 1.4rem; }}
@@ -120,7 +123,7 @@ def generate_training_html(report: TrainingReport, output_path: Path) -> Path:
 </style>
 </head>
 <body>
-  <h1>Rapport d'entraînement - {report.architecture}</h1>
+  <h1>Rapport d'entraînement — {report.architecture}</h1>
   <p><b>Meilleure époque :</b> {report.best_epoch}
      &nbsp;|&nbsp; <b>Val accuracy :</b> {report.best_val_accuracy:.4f}
      &nbsp;|&nbsp; <b>Val loss :</b> {report.best_val_loss:.4f}
@@ -136,13 +139,76 @@ def generate_training_html(report: TrainingReport, output_path: Path) -> Path:
     return output_path
 
 
+def generate_eval_json(metrics: EvalMetrics, output_path: Path) -> Path:
+    """Exporte un EvalMetrics autonome (sans contexte d'entraînement) en JSON."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(_eval_metrics_to_dict(metrics), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    logger.info("Métriques JSON écrites : %s", output_path)
+    return output_path
+
+
+def generate_external_validation_html(
+    metrics: EvalMetrics,
+    unknown_classes: List[str],
+    unknown_count: int,
+    total_images: int,
+    output_path: Path,
+) -> Path:
+    """Rapport HTML pour une évaluation sur un dataset externe (voir
+    main_external_eval.py). Documente explicitement les classes exclues
+    car inconnues du modèle — un modèle ne peut structurellement pas
+    prédire une classe qu'il n'a jamais vue à l'entraînement ; les passer
+    sous silence donnerait une fausse impression de validation complète.
+    """
+    unknown_html = ""
+    if unknown_classes:
+        unknown_html = f"""
+        <div style="background:#fff3cd; border:1px solid #ffc107; padding:12px; border-radius:4px; margin-top:1rem;">
+          <b>⚠ {unknown_count} image(s) exclue(s)</b> appartenant à {len(unknown_classes)}
+          classe(s) inconnue(s) du modèle : {", ".join(unknown_classes)}.<br>
+          Le modèle ne peut pas prédire une classe qu'il n'a jamais apprise à l'entraînement —
+          ces images ont été retirées de l'évaluation plutôt que de fausser les métriques.
+        </div>
+        """
+
+    html = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Validation externe</title>
+<style>
+  body {{ font-family: -apple-system, Arial, sans-serif; margin: 2rem; }}
+  table {{ border-collapse: collapse; margin-top: 1rem; }}
+  th, td {{ border: 1px solid #ddd; padding: 6px 12px; text-align: left; }}
+  th {{ background: #2b2b2b; color: white; }}
+</style>
+</head>
+<body>
+  <h1>Validation sur un dataset externe</h1>
+  <p><b>Images totales dans le nouveau dataset :</b> {total_images}
+     &nbsp;|&nbsp; <b>Images évaluées (classes connues) :</b> {total_images - unknown_count}
+     &nbsp;|&nbsp; <b>Accuracy :</b> {metrics.accuracy:.4f}</p>
+  {unknown_html}
+  <h2>Détail par classe</h2>
+  {_class_metrics_table(metrics)}
+</body>
+</html>
+"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    logger.info("Rapport de validation externe écrit : %s", output_path)
+    return output_path
+
+
 def generate_comparison_html(
     individual_reports: Dict[str, EvalMetrics], ensemble_metrics: EvalMetrics, output_path: Path
 ) -> Path:
     """Rapport comparatif modèles individuels vs ensemble (soft voting).
 
     Reproduit l'esprit du tableau "3.1 Model Performance Summary" de
-    Shahzad et al. - une ligne par modèle, plus l'ensemble.
+    Shahzad et al. — une ligne par modèle, plus l'ensemble.
     """
     rows = "".join(
         f"<tr><td>{arch}</td><td>{m.accuracy:.4f}</td></tr>"
@@ -163,10 +229,10 @@ def generate_comparison_html(
 </style>
 </head>
 <body>
-  <h1>Comparaison des modèles - accuracy test</h1>
+  <h1>Comparaison des modèles — accuracy test</h1>
   <table><thead><tr><th>Modèle</th><th>Accuracy test</th></tr></thead>
   <tbody>{rows}</tbody></table>
-  <h2>Détail par classe - ensemble</h2>
+  <h2>Détail par classe — ensemble</h2>
   {_class_metrics_table(ensemble_metrics)}
 </body>
 </html>
