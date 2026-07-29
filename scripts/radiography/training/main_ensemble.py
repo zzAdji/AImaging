@@ -37,7 +37,7 @@ import logging
 import sys
 from pathlib import Path
 
-from training.utils import bootstrap_preprocessing_import
+from scripts.radiography.training.training.utils import bootstrap_preprocessing_import
 
 _parser_for_early_path = argparse.ArgumentParser(add_help=False)
 _parser_for_early_path.add_argument("--preprocessing-path", type=Path, default=None)
@@ -50,15 +50,15 @@ from preprocessing.config import ModelConfig as PPModelConfig, PreprocessConfig 
 from preprocessing.normalization import resolve_normalization  # noqa: E402
 from preprocessing.torch_dataset import build_dataloaders  # noqa: E402
 
-from training.ensemble import (  # noqa: E402
+from scripts.radiography.training.training.ensemble import (  # noqa: E402
     evaluate_ensemble,
     evaluate_ensemble_multi_manifest,
     load_model_from_checkpoint,
 )
-from training.evaluator import evaluate  # noqa: E402
-from training.report import generate_comparison_html  # noqa: E402
-from training.utils import resolve_device, setup_logging  # noqa: E402
-from training.visualization import plot_confusion_matrix, plot_pr_curves, plot_roc_curves  # noqa: E402
+from scripts.radiography.training.training.evaluator import evaluate  # noqa: E402
+from scripts.radiography.training.training.report import generate_comparison_html  # noqa: E402
+from scripts.radiography.training.training.utils import resolve_device, setup_logging  # noqa: E402
+from scripts.radiography.training.training.visualization import plot_confusion_matrix, plot_pr_curves, plot_roc_curves  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -125,7 +125,7 @@ def main(argv=None) -> int:
             # ensemble.py ; on réutilise les MÊMES manifestes alignés pour
             # les métriques individuelles, afin que la comparaison
             # individuel-vs-ensemble porte exactement sur les mêmes images.
-            from training.ensemble import align_manifests_by_identity, build_test_loader_from_manifest
+            from scripts.radiography.training.training.ensemble import align_manifests_by_identity, build_test_loader_from_manifest
 
             raw_manifests = [pd.read_csv(p) for p in args.manifests]
             aligned_manifests, n_common = align_manifests_by_identity(raw_manifests, split="test")

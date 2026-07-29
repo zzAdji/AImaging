@@ -6,12 +6,12 @@ import os
 import sys
 from pathlib import Path
 
-from dataset_analyzer.analyzer import DatasetAnalyzer
-from dataset_analyzer.cleaner import DatasetCleaner
-from dataset_analyzer.config import AnalyzerConfig
-from dataset_analyzer.report import CSVReportGenerator, PDFReportGenerator
-from dataset_analyzer.utils import setup_logging
-from dataset_analyzer.visualization import generate_all
+from scripts.shared.analyzing.dataset_analyzer.analyzer import DatasetAnalyzer
+from scripts.shared.analyzing.dataset_analyzer.cleaner import DatasetCleaner
+from scripts.shared.analyzing.dataset_analyzer.config import AnalyzerConfig
+from scripts.shared.analyzing.dataset_analyzer.report import CSVReportGenerator, PDFReportGenerator
+from scripts.shared.analyzing.dataset_analyzer.utils import setup_logging
+from scripts.shared.analyzing.dataset_analyzer.visualization import generate_all
 
 
 def parse_args(argv: list | None = None) -> argparse.Namespace:

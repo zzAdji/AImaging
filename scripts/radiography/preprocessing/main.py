@@ -9,11 +9,11 @@ import os
 import sys
 from pathlib import Path
 
-from preprocessing.config import ModelConfig, PreprocessConfig
-from preprocessing.pipeline import PreprocessingPipeline
-from preprocessing.report import generate_csv, generate_html, generate_json
-from preprocessing.utils import setup_logging
-from preprocessing.visualization import generate_all_grids
+from scripts.radiography.preprocessing.preprocessing.config import ModelConfig, PreprocessConfig
+from scripts.radiography.preprocessing.preprocessing.pipeline import PreprocessingPipeline
+from scripts.radiography.preprocessing.preprocessing.report import generate_csv, generate_html, generate_json
+from scripts.radiography.preprocessing.preprocessing.utils import setup_logging
+from scripts.radiography.preprocessing.preprocessing.visualization import generate_all_grids
 
 
 def parse_args(argv: list | None = None) -> argparse.Namespace:

@@ -241,8 +241,8 @@ def build_test_loader_from_manifest(
     déjà filtré sur un split (typiquement le résultat de
     align_manifests_by_identity), sans passer par build_dataloaders (qui
     construirait aussi des datasets train/val vides et inutiles ici)."""
-    from preprocessing.preprocessing.augmentation import build_eval_transforms
-    from preprocessing.preprocessing.torch_dataset import MedicalImageDataset
+    from scripts.radiography.preprocessing.preprocessing.augmentation import build_eval_transforms
+    from scripts.radiography.preprocessing.preprocessing.torch_dataset import MedicalImageDataset
 
     transform = build_eval_transforms(mean, std)
     dataset = MedicalImageDataset(manifest_df, "test", transform, class_to_idx)
