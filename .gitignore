@@ -1,9 +1,9 @@
 # Ignore dataset files and raw data folders
-/data/
-/data/**
+/data/chest-xray/
 /docs/litterature/**
 /docs/litterature/
 /models/
+/FetalCLIP/
 
 # Optional common Python/IDE artifacts
 __pycache__/

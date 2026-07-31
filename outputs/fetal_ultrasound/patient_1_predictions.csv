@@ -1,0 +1,17 @@
+image,relative_path,quality_score,quality_prediction,quality_available,quality_unavailable_reason,plane_prediction,plane_confidence
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100001.jpg,100001.jpg,0.9941692352294922,accepted,,,BPD,0.9996123909950256
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100002.jpg,100002.jpg,0.9728101491928101,accepted,,,neg,0.9915845394134521
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100003.jpg,100003.jpg,0.9999411106109619,accepted,,,FL,0.5096026659011841
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100004.jpg,100004.jpg,0.9999377727508545,accepted,,,Leg,0.3785054087638855
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100005.jpg,100005.jpg,0.9999003410339355,accepted,,,AAV,0.6455653309822083
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100006.jpg,100006.jpg,0.5530893802642822,rejected,,,neg,0.6258022785186768
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100007.jpg,100007.jpg,0.9996500015258789,accepted,,,4CH,0.45596981048583984
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100008.jpg,100008.jpg,0.934031069278717,accepted,,,Chest-H,0.8599638938903809
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100009.jpg,100009.jpg,0.9697085022926331,accepted,,,Palm,0.8146363496780396
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100010.jpg,100010.jpg,0.9980660080909729,accepted,,,neg,0.9949008226394653
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100011.jpg,100011.jpg,0.999997615814209,accepted,,,SIVCV,0.4977248013019562
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100012.jpg,100012.jpg,0.9642317295074463,accepted,,,neg,0.9999980926513672
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100013.jpg,100013.jpg,0.9997794032096863,accepted,,,neg,1.0
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100014.jpg,100014.jpg,0.6816396713256836,rejected,,,neg,1.0
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100015.jpg,100015.jpg,0.7652255296707153,rejected,,,neg,1.0
+C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\DeepFetal\data\samples\patient_1_inpatient\100016.jpg,100016.jpg,0.8342126607894897,rejected,,,neg,0.9999997615814209
