@@ -648,6 +648,7 @@ Classifier
       └── Anormal
 
 Ce modèle doit être entraînable.
+Ce modèle procèdera par ensemble learning et transfert learning de 5 modèles choisi comme pour la radiographie
 
 Prévoir :
 
@@ -741,6 +742,8 @@ CNN spécialisé
 Model 5 :
 modèle fine-tuné
 
+et aussi des modèles via transfert learning
+
 Chaque modèle produit :
 
 {
@@ -799,7 +802,7 @@ Model 3 weight = 0.3
 
 Les poids doivent être configurables.
 
-Ne pas choisir les poids arbitrairement sans justification.
+Ne pas choisir les poids arbitrairement sans justification. Adopter la même approche que la radiographie
 
 
 ============================================================
@@ -1327,3 +1330,5 @@ EXAM
 → FINAL LLM REPORT
 
 Le système doit être modulaire, testable, reproductible et adapté à un projet de recherche en imagerie médicale.
+
+NB : TOUT ENTRAINEMENT DE MODèLE SE FERA A TRAVERS KAGGLE ET DES SCRIPTS NOTEBOOK

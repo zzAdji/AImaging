@@ -41,6 +41,27 @@ def unavailable_quality(reason: str) -> QualityPrediction:
     )
 
 
+def plane_prediction_to_dict(prediction, class_labels: dict[str, str], status: str = "predicted"):
+    name_to_id = {name: int(idx) for idx, name in class_labels.items()}
+    return {
+        "plane_id": name_to_id.get(prediction.predicted_label),
+        "plane_prediction": prediction.predicted_label,
+        "plane_confidence": prediction.confidence,
+        "plane_status": status,
+        "plane_probabilities": prediction.probabilities,
+    }
+
+
+def skipped_plane(status: str):
+    return {
+        "plane_id": None,
+        "plane_prediction": None,
+        "plane_confidence": None,
+        "plane_status": status,
+        "plane_probabilities": {},
+    }
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
 
@@ -53,7 +74,6 @@ def main(argv=None) -> int:
             class_indices_path=args.class_indices,
         )
         plane_classifier = PlaneClassifier(plane_config, device=args.device)
-        plane_prediction = plane_classifier.predict(image_path)
 
         if args.skip_quality:
             quality_prediction = unavailable_quality("Filtre qualite desactive par --skip-quality.")
@@ -64,10 +84,25 @@ def main(argv=None) -> int:
             except ModuleNotFoundError as exc:
                 quality_prediction = unavailable_quality(str(exc))
 
+        if quality_prediction.prediction == "accepted":
+            plane_prediction = plane_classifier.predict(image_path)
+            plane_result = plane_prediction_to_dict(plane_prediction, plane_classifier.class_labels)
+        elif args.skip_quality:
+            plane_prediction = plane_classifier.predict(image_path)
+            plane_result = plane_prediction_to_dict(
+                plane_prediction,
+                plane_classifier.class_labels,
+                status="predicted_without_quality_filter",
+            )
+        elif quality_prediction.prediction == "rejected":
+            plane_result = skipped_plane("skipped_quality_rejected")
+        else:
+            plane_result = skipped_plane("skipped_quality_unavailable")
+
         result = {
             "image": str(image_path),
             **quality_prediction.to_dict(),
-            **plane_prediction.to_dict(),
+            **plane_result,
         }
 
         text = json.dumps(result, ensure_ascii=False, indent=2)

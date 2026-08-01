@@ -1,0 +1,150 @@
+{
+  "exam_id": "patient_1_inpatient",
+  "planes_observed": 9,
+  "planes_missing": 32,
+  "missing_planes": [
+    "3DFace",
+    "3VV",
+    "4CH-H",
+    "4CH-lightsplot",
+    "ABS",
+    "AC",
+    "Bladder",
+    "CRL",
+    "CTAR",
+    "Cereb",
+    "Chest-C",
+    "DDA",
+    "Eye",
+    "Foot",
+    "Forearm",
+    "Four",
+    "Gallbladder",
+    "HL",
+    "HardPalate",
+    "Kidney",
+    "KidneyVessel",
+    "LVOT",
+    "Lip",
+    "NT",
+    "PAB",
+    "Palate",
+    "RVOT",
+    "SVSK",
+    "SideFace",
+    "Spine",
+    "Three",
+    "VaVp"
+  ],
+  "unclassified_images_count": 4,
+  "unclassified_images": [
+    {
+      "image_id": "100006",
+      "quality_prediction": "rejected",
+      "plane_status": "skipped_quality_rejected"
+    },
+    {
+      "image_id": "100014",
+      "quality_prediction": "rejected",
+      "plane_status": "skipped_quality_rejected"
+    },
+    {
+      "image_id": "100015",
+      "quality_prediction": "rejected",
+      "plane_status": "skipped_quality_rejected"
+    },
+    {
+      "image_id": "100016",
+      "quality_prediction": "rejected",
+      "plane_status": "skipped_quality_rejected"
+    }
+  ],
+  "low_confidence_images_count": 0,
+  "low_confidence_images": [],
+  "groups": {
+    "4CH": {
+      "plane_name": "4CH",
+      "plane_id": 2,
+      "image_count": 1,
+      "mean_confidence": 0.45596981048583984,
+      "image_ids": [
+        "100007"
+      ]
+    },
+    "AAV": {
+      "plane_name": "AAV",
+      "plane_id": 5,
+      "image_count": 1,
+      "mean_confidence": 0.6455653309822083,
+      "image_ids": [
+        "100005"
+      ]
+    },
+    "BPD": {
+      "plane_name": "BPD",
+      "plane_id": 8,
+      "image_count": 1,
+      "mean_confidence": 0.9996123909950256,
+      "image_ids": [
+        "100001"
+      ]
+    },
+    "Chest-H": {
+      "plane_name": "Chest-H",
+      "plane_id": 14,
+      "image_count": 1,
+      "mean_confidence": 0.8599638938903809,
+      "image_ids": [
+        "100008"
+      ]
+    },
+    "FL": {
+      "plane_name": "FL",
+      "plane_id": 17,
+      "image_count": 1,
+      "mean_confidence": 0.5096026659011841,
+      "image_ids": [
+        "100003"
+      ]
+    },
+    "Leg": {
+      "plane_name": "Leg",
+      "plane_id": 27,
+      "image_count": 1,
+      "mean_confidence": 0.3785054087638855,
+      "image_ids": [
+        "100004"
+      ]
+    },
+    "Palm": {
+      "plane_name": "Palm",
+      "plane_id": 32,
+      "image_count": 1,
+      "mean_confidence": 0.8146363496780396,
+      "image_ids": [
+        "100009"
+      ]
+    },
+    "SIVCV": {
+      "plane_name": "SIVCV",
+      "plane_id": 34,
+      "image_count": 1,
+      "mean_confidence": 0.4977248013019562,
+      "image_ids": [
+        "100011"
+      ]
+    },
+    "neg": {
+      "plane_name": "neg",
+      "plane_id": 40,
+      "image_count": 4,
+      "mean_confidence": 0.9966208636760712,
+      "image_ids": [
+        "100002",
+        "100010",
+        "100012",
+        "100013"
+      ]
+    }
+  }
+}
