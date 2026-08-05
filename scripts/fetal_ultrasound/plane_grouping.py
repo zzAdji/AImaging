@@ -75,6 +75,7 @@ def group_exam_by_plane(
     exam: ExamResult,
     known_planes: Dict[str, int],
     include_unfiltered_predictions: bool = False,
+    min_plane_confidence: float | None = None,
 ) -> ExamPlaneGrouping:
     """Regroupe les images d'un examen par plan predit (Phase F).
 
@@ -89,10 +90,22 @@ def group_exam_by_plane(
             controle qualite (plane.status == "predicted") sont regroupees
             — pour ne jamais faire croire qu'une image non filtree qualite
             a ete validee.
+        min_plane_confidence: Si fourni (ex. 0.6), les images dont la
+            confiance de classification de plan est strictement inferieure
+            a ce seuil sont retirees de leur groupe et deplacees vers
+            low_confidence_images plutot que traitees comme une assignation
+            fiable. Consequence importante : un plan dont TOUTES les images
+            tombent sous le seuil disparait de "groups" et redevient
+            "manquant" s'il fait partie de known_planes — un plan qu'on ne
+            peut confirmer avec confiance n'est pas considere comme observe.
+            Une confidence manquante (None) est traitee comme sous le seuil
+            (choix conservateur : on ne peut pas affirmer une confiance
+            qu'on n'a pas). None (defaut) desactive ce filtrage — comportement
+            identique a avant l'ajout de ce parametre.
 
     Returns:
-        ExamPlaneGrouping avec les groupes observes, les plans absents et
-        les images non classifiees.
+        ExamPlaneGrouping avec les groupes observes, les plans absents,
+        les images non classifiees et les images a confiance insuffisante.
     """
     valid_statuses = set(_DEFAULT_VALID_STATUSES)
     if include_unfiltered_predictions:
@@ -100,10 +113,16 @@ def group_exam_by_plane(
 
     groups: Dict[str, PlaneGroup] = {}
     unclassified: List[ImageResult] = []
+    low_confidence: List[ImageResult] = []
 
     for image in exam.images:
         plane = image.plane
         if plane is not None and plane.status in valid_statuses and plane.name is not None:
+            if min_plane_confidence is not None and (
+                plane.confidence is None or plane.confidence < min_plane_confidence
+            ):
+                low_confidence.append(image)
+                continue
             group = groups.setdefault(
                 plane.name, PlaneGroup(plane_name=plane.name, plane_id=plane.plane_id)
             )
@@ -118,6 +137,7 @@ def group_exam_by_plane(
         groups=groups,
         missing_planes=missing_planes,
         unclassified_images=unclassified,
+        low_confidence_images=low_confidence,
     )
 
 
@@ -149,6 +169,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--include-unfiltered-predictions", action="store_true",
         help="Inclut aussi les images classifiees via --skip-quality (non recommande par defaut).",
     )
+    parser.add_argument(
+        "--min-plane-confidence", type=float, default=None,
+        help="Seuil de confiance minimal (0-1) pour qu'une image reste dans son groupe de plan. "
+             "En dessous, l'image passe dans low_confidence_images. Desactive par defaut.",
+    )
     return parser.parse_args(argv)
 
 
@@ -161,7 +186,9 @@ def main(argv=None) -> int:
         exam = load_exam_from_json(exam_json_path)
         known_planes = load_known_planes(class_indices_path)
         grouping = group_exam_by_plane(
-            exam, known_planes, include_unfiltered_predictions=args.include_unfiltered_predictions
+            exam, known_planes,
+            include_unfiltered_predictions=args.include_unfiltered_predictions,
+            min_plane_confidence=args.min_plane_confidence,
         )
         write_plane_groups_json(args.output_plane_groups_json, grouping)
 
@@ -171,6 +198,8 @@ def main(argv=None) -> int:
             "planes_known": len(known_planes),
             "planes_missing": len(grouping.missing_planes),
             "unclassified_images": len(grouping.unclassified_images),
+            "low_confidence_images": len(grouping.low_confidence_images),
+            "min_plane_confidence": args.min_plane_confidence,
             "output_plane_groups_json": str(args.output_plane_groups_json),
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))

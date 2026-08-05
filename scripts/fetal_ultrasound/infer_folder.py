@@ -47,6 +47,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Inclut dans le regroupement par plan les images classifiees via --skip-quality "
              "(par defaut, seules les images correctement filtrees qualite sont regroupees).",
     )
+    parser.add_argument(
+        "--min-plane-confidence", type=float, default=None,
+        help="Seuil de confiance minimal (0-1) pour qu'une image reste dans son groupe de plan "
+             "dans le regroupement Phase F. Desactive par defaut.",
+    )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--deepfetal-root", type=Path, default=defaults.deepfetal_root)
     parser.add_argument("--plane-checkpoint", type=Path, default=defaults.checkpoint_path)
@@ -225,7 +230,9 @@ def main(argv=None) -> int:
         if args.output_plane_groups_json:
             known_planes = load_known_planes(plane_config.class_indices_path)
             grouping = group_exam_by_plane(
-                exam, known_planes, include_unfiltered_predictions=args.include_unfiltered_plane_groups
+                exam, known_planes,
+                include_unfiltered_predictions=args.include_unfiltered_plane_groups,
+                min_plane_confidence=args.min_plane_confidence,
             )
             write_plane_groups_json(args.output_plane_groups_json, grouping)
             plane_grouping_summary = {
@@ -233,6 +240,7 @@ def main(argv=None) -> int:
                 "planes_known": len(known_planes),
                 "planes_missing": len(grouping.missing_planes),
                 "unclassified_images": len(grouping.unclassified_images),
+                "low_confidence_images": len(grouping.low_confidence_images),
             }
 
         summary = {

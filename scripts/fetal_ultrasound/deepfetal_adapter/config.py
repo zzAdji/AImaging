@@ -26,3 +26,15 @@ class QualityFilterConfig:
     accept_label: str | None = None
     reject_label: str = "neg"
 
+
+@dataclass(frozen=True)
+class FetalCLIPConfig:
+    """Config pour FetalCLIP (https://github.com/BioMedIA-MBZUAI/FetalCLIP),
+    un modele vision-langage base sur open_clip, fine-tune sur 210 035
+    images d'echographie foetale. Phase G n'utilise que l'encodeur visuel.
+    """
+
+    weights_path: Path = PROJECT_ROOT / "models" / "fetal_ultrasound" / "FetalCLIP_weights.pt"
+    config_path: Path = PROJECT_ROOT / "data" / "fetal_ultrasound" / "FetalCLIP_config.json"
+    model_name: str = "FetalCLIP"
+    embed_dim: int = 768

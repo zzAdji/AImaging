@@ -4,6 +4,7 @@
 /docs/litterature/
 /models/
 /FetalCLIP/
+/outputs/
 
 # Optional common Python/IDE artifacts
 __pycache__/

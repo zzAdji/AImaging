@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+body {
+  margin: 0;
+  font-family: "Inter Variable", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
