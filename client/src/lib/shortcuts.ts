@@ -1,0 +1,23 @@
+/** Global keyboard shortcuts, shared by the Preferences and Help > Keyboard Shortcuts modals */
+export const SHORTCUTS: [string, string][] = [
+  ["Open", "Ctrl+O"],
+  ["Save", "Ctrl+S"],
+  ["Save As", "Ctrl+Shift+S"],
+  ["Export", "Ctrl+E"],
+  ["Close", "Ctrl+W"],
+  ["Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z"],
+  ["Cut / Copy / Paste", "Ctrl+X / C / V"],
+  ["Duplicate", "Ctrl+D"],
+  ["Select All", "Ctrl+A"],
+  ["Preferences", "Ctrl+,"],
+  ["Image Info", "Ctrl+I"],
+  ["Fit / 100%", "Ctrl+1 / Ctrl+0"],
+  ["Grid", "Ctrl+'"],
+  ["Pixel Grid", "Ctrl+G"],
+  ["Rulers", "Ctrl+R"],
+  ["Toolbar / Panel", "Ctrl+\\ / Ctrl+Shift+\\"],
+  ["Status Bar", "Ctrl+M"],
+  ["Run Analysis", "Ctrl+Enter"],
+  ["Keyboard Shortcuts", "?"],
+  ["Delete shape", "Del / Backspace"],
+];
