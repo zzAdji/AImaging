@@ -290,6 +290,38 @@ export interface ImageStateSnapshot {
   flipV: boolean;
 }
 
+/* ------------------------------ AI workspace ------------------------------ */
+
+export interface AiDiagnosis {
+  label: string;
+  prob: number;
+  severity: "low" | "medium" | "high";
+  /** Suspected region in doc px (used to focus the canvas) */
+  region?: { x: number; y: number; w: number; h: number };
+}
+
+export interface AiHistoryItem {
+  id: string;
+  text: string;
+  summary: string;
+  at: number;
+}
+
+export interface AiResults {
+  diagnostics: AiDiagnosis[];
+  report: string | null;
+  lastSummary: string | null;
+}
+
+/** Region the canvas should zoom into (fresh object per request → drives an effect) */
+export interface AiFocus {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  ts: number;
+}
+
 export interface WorkspaceState {
   tool: ToolId;
   setTool: (t: ToolId) => void;
@@ -406,6 +438,37 @@ export interface WorkspaceState {
 
   analysis: AnalysisState;
   runAnalysis: () => void;
+
+  /* ------------------------------ AI workspace ------------------------------ */
+
+  /** AI mode: the editor swaps its sidebars for the AI workspace */
+  aiMode: boolean;
+  setAiMode: (v: boolean) => void;
+  /** "Don't show the disclaimer again during this session" */
+  aiDisclaimerAck: boolean;
+  setAiDisclaimerAck: (v: boolean) => void;
+  /** True while a command is being processed (fake latency) */
+  aiBusy: boolean;
+  aiHistory: AiHistoryItem[];
+  aiResults: AiResults;
+  /** Region to zoom into; fresh object each time → CanvasViewport reacts to it */
+  aiFocus: AiFocus | null;
+  /** "Asks the canvas to zoom into a region (px in image space)" */
+  focusAiRegion: (r: { x: number; y: number; w: number; h: number }) => void;
+  /** Parses a natural-language command and applies the matching action(s) to the document */
+  runAiCommand: (raw: string) => void;
+  /** Current reflection step shown above the command bar, null when idle */
+  aiThought: { id: string; text: string } | null;
+  /** Report editor modal state */
+  reportEditOpen: boolean;
+  setReportEditOpen: (v: boolean) => void;
+  /** Working copy of the report being edited */
+  reportDraft: string;
+  setReportDraft: (v: string) => void;
+  /** Opens the editor with the latest generated report */
+  openReportEditor: () => void;
+  /** Commits the draft as the report and closes the editor */
+  saveReportDraft: () => void;
 
   cursorPos: { x: number; y: number } | null;
   setCursorPos: (p: { x: number; y: number } | null) => void;

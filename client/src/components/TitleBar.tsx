@@ -21,10 +21,10 @@ import {
 import {
   IconButton,
   MenuItemRow,
-  Segmented,
   Tooltip,
   type MenuEntry,
 } from "./ui";
+import { ModeSwitch } from "./ai/ModeSwitch";
 
 const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
@@ -68,6 +68,7 @@ export function TitleBar({
   onOpenAbout,
   onBack,
   backLabel,
+  onAiModeChange,
 }: {
   onOpenImage: () => void;
   onOpenRecent: (f: RecentFile) => void;
@@ -85,6 +86,7 @@ export function TitleBar({
   onOpenAbout: () => void;
   onBack?: () => void;
   backLabel?: string;
+  onAiModeChange?: (v: boolean) => void;
 }) {
   const w = useWorkspace();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -588,15 +590,13 @@ export function TitleBar({
 
       <div className="mx-2.5 h-4 w-px shrink-0 bg-border" />
 
-      {/* View mode */}
-      <Segmented
-        options={[
-          { label: "Fit", value: "fit" },
-          { label: "100%", value: "actual" },
-        ]}
-        value={w.zoomPreset}
-        onChange={(v) => (v === "fit" ? w.requestFit() : setZoom(1))}
-        className="w-32"
+      {/* Mode switch: Normal ⇄ AI */}
+      <ModeSwitch
+        aiMode={w.aiMode}
+        onChange={(v) => {
+          onAiModeChange?.(v);
+          w.setAiMode(v);
+        }}
       />
 
       {/* Document info — right side */}

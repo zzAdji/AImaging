@@ -9,6 +9,10 @@ import {
   randomId,
   shapeBBox,
   shapeLayerId,
+  type AiDiagnosis,
+  type AiFocus,
+  type AiHistoryItem,
+  type AiResults,
   type LayerDef,
   type LayerId,
   type ImageStateSnapshot,
@@ -21,6 +25,7 @@ import {
   type WlValue,
 } from "./workspace";
 import { imageToPngDataUrl } from "../lib/exportImage";
+import { amendReportText, mockDiagnostics, mockReport, parseAiCommand, type AiCommandAction, type RegionFrac } from "../lib/aiCommands";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -32,6 +37,17 @@ const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   layers: false,
   metadata: true,
 };
+
+/** Converts a fraction-based region into image px */
+const fracToPx = (r: RegionFrac, dims: { w: number; h: number }) => ({
+  x: r.x * dims.w,
+  y: r.y * dims.h,
+  w: r.w * dims.w,
+  h: r.h * dims.h,
+});
+
+const pxDiag = (d: AiDiagnosis, dims: { w: number; h: number }): AiDiagnosis =>
+  d.region ? { ...d, region: fracToPx(d.region, dims) } : d;
 
 const cloneShape = (s: Shape): Shape => ({
   ...s,
@@ -520,6 +536,247 @@ export function WorkspaceProvider({
     window.setTimeout(() => setAnalysis("done"), 1800);
   }, []);
 
+  /* ------------------------------ AI workspace ------------------------------ */
+
+  const [aiMode, setAiMode] = useState(false);
+  const [aiDisclaimerAck, setAiDisclaimerAck] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiHistory, setAiHistory] = useState<AiHistoryItem[]>([]);
+  const [aiResults, setAiResults] = useState<AiResults>({
+    diagnostics: [],
+    report: null,
+    lastSummary: null,
+  });
+  const [aiFocus, setAiFocus] = useState<AiFocus | null>(null);
+  const [aiThought, setAiThought] = useState<{ id: string; text: string } | null>(null);
+  const [reportEditOpen, setReportEditOpen] = useState(false);
+  const [reportDraft, setReportDraft] = useState("");
+  const aiTimer = useRef<number | null>(null);
+  const aiThoughtTimers = useRef<number[]>([]);
+
+  const openReportEditor = useCallback(() => {
+    setReportDraft(aiResults.report ?? "");
+    setReportEditOpen(true);
+  }, [aiResults.report]);
+
+  const saveReportDraft = useCallback(() => {
+    setAiResults((r) => ({ ...r, report: reportDraft }));
+    setReportEditOpen(false);
+  }, [reportDraft]);
+
+  const focusAiRegion = useCallback((r: { x: number; y: number; w: number; h: number }) => {
+    setAiFocus({ ...r, ts: Date.now() });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (aiTimer.current) window.clearTimeout(aiTimer.current);
+      aiThoughtTimers.current.forEach((t) => window.clearTimeout(t));
+    },
+    [],
+  );
+
+  /** Reflection steps shown above the command bar while an action runs. */
+  const thoughtSteps = (kind: AiCommandAction["kind"]): string[] => {
+    switch (kind) {
+      case "analysis":
+        return [
+          "Interprétation de la requête…",
+          "Analyse des pixels de l'image…",
+          "Détection des anomalies, annotation des zones…",
+        ];
+      case "report":
+        return [
+          "Interprétation de la requête…",
+          "Collecte des mesures et constats…",
+          "Rédaction du rapport…",
+        ];
+      case "amendReport":
+        return [
+          "Interprétation de la requête…",
+          "Révision du rapport en cours…",
+          "Application des modifications…",
+        ];
+      case "gradcam":
+        return [
+          "Interprétation de la requête…",
+          "Calcul de la carte d'activation…",
+          "Superposition de la heatmap sur l'image…",
+        ];
+      case "explain":
+      case "focus":
+      case "focusDiagnosis":
+        return [
+          "Interprétation de la requête…",
+          "Localisation de la région suspecte…",
+          "Recentrage et zoom sur la zone…",
+        ];
+      case "annotation":
+        return ["Interprétation de la requête…", "Placement de l'annotation…"];
+      case "measure":
+        return ["Interprétation de la requête…", "Mesure de la longueur…"];
+      case "wl":
+        return ["Interprétation de la requête…", "Application du fenêtrage…"];
+      case "invert":
+        return ["Interprétation de la requête…", "Inversion des niveaux de gris…"];
+      case "compare":
+        return ["Interprétation de la requête…", "Préparation de la comparaison…"];
+      default:
+        return ["Interprétation de la requête…", "Exécution de la commande…"];
+    }
+  };
+
+  const runAiCommand = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      if (!text) return;
+      const action = parseAiCommand(text);
+      const item: AiHistoryItem = { id: randomId(), text, summary: "En cours…", at: Date.now() };
+      setAiHistory((h) => [{ ...item }, ...h].slice(0, 20));
+      setAiBusy(true);
+      if (aiTimer.current) window.clearTimeout(aiTimer.current);
+      aiThoughtTimers.current.forEach((t) => window.clearTimeout(t));
+      aiThoughtTimers.current = [];
+      const steps = thoughtSteps(action.kind);
+      steps.forEach((s, i) => {
+        aiThoughtTimers.current.push(
+          window.setTimeout(() => setAiThought({ id: item.id + "-" + i, text: s }), i * 300),
+        );
+      });
+      aiTimer.current = window.setTimeout(() => {
+        setAiBusy(false);
+        setAiThought(null);
+        const done: AiHistoryItem = { ...item, summary: action.summary };
+        setAiHistory((h) => h.map((i) => (i.id === item.id ? done : i)));
+        setAiResults((r) => ({ ...r, lastSummary: action.summary }));
+
+        switch (action.kind) {
+          case "analysis":
+            setAnalysis("running");
+            window.setTimeout(() => setAnalysis("done"), 1400);
+            setAiResults((r) => ({ ...r, diagnostics: mockDiagnostics().map((d) => pxDiag(d, dims)) }));
+            break;
+          case "explain":
+            setAiFocus({ ...fracToPx(action.region, dims), ts: Date.now() });
+            break;
+          case "focus":
+            setAiFocus({ ...fracToPx(action.region, dims), ts: Date.now() });
+            break;
+          case "focusDiagnosis": {
+            setAiResults((r) => ({
+              ...r,
+              diagnostics: mockDiagnostics().map((d) => pxDiag(d, dims)),
+            }));
+            const r = fracToPx(action.region, dims);
+            const ann: Shape = {
+              id: randomId(),
+              type: "annotation",
+              x: r.x + r.w / 2,
+              y: r.y,
+              w: 0,
+              h: 0,
+              points: [{ x: r.x + r.w / 2, y: r.y }],
+              strokeWidth: 2,
+              label: action.label,
+              fontSize: 14,
+              fontFamily: "sans",
+              fontWeight: "normal",
+              color: "#ffffff",
+            };
+            pushHistory();
+            commit([...shapesRef.current, ann]);
+            setSelection(ann.id);
+            setAiFocus({ ...r, ts: Date.now() });
+            setAnalysis("done");
+            break;
+          }
+          case "gradcam":
+            setGradcamOn(true);
+            break;
+          case "report": {
+            const fresh = mockReport(imageName);
+            setAiResults((r) => ({ ...r, report: fresh }));
+            if (reportEditOpen) setReportDraft(fresh);
+            break;
+          }
+          case "amendReport": {
+            if (reportEditOpen) {
+              setReportDraft(action.text);
+            } else {
+              setAiResults((r) => ({ ...r, report: amendReportText(item.text, r.report ?? "") }));
+            }
+            break;
+          }
+          case "annotation": {
+            const r = fracToPx(action.region, dims);
+            const ann: Shape = {
+              id: randomId(),
+              type: "annotation",
+              x: r.x + r.w / 2,
+              y: r.y,
+              w: 0,
+              h: 0,
+              points: [{ x: r.x + r.w / 2, y: r.y }],
+              strokeWidth: 2,
+              label: "Note IA",
+              fontSize: 14,
+              fontFamily: "sans",
+              fontWeight: "normal",
+              color: "#ffffff",
+            };
+            pushHistory();
+            commit([...shapesRef.current, ann]);
+            setSelection(ann.id);
+            break;
+          }
+          case "measure": {
+            const r = fracToPx(action.region, dims);
+            const m: Shape = {
+              id: randomId(),
+              type: "measure",
+              x: r.x,
+              y: r.y + r.h / 2,
+              w: r.w,
+              h: 0,
+              points: [],
+              strokeWidth: 2,
+            };
+            pushHistory();
+            commit([...shapesRef.current, m]);
+            setSelection(m.id);
+            break;
+          }
+          case "wl":
+            setWl(action.wl);
+            break;
+          case "invert":
+            setInverted(!inverted);
+            break;
+          case "compare":
+            break;
+          case "unknown":
+            /* While the report editor is open, any unrecognised instruction is
+               treated as a free-form amendment of the draft. */
+            if (reportEditOpen) {
+              setReportDraft((d) => `${d}\n\nNote IA : « ${item.text} » — complément ajouté.\n${amendReportText(item.text, "")}`);
+            }
+            break;
+        }
+      }, 1250);
+    },
+    [
+      dims,
+      imageName,
+      inverted,
+      reportEditOpen,
+      pushHistory,
+      commit,
+      setGradcamOn,
+      setInverted,
+      setWl,
+    ],
+  );
+
   const requestFit = useCallback((pane?: "A" | "B") => {
     const p = pane ?? activePaneRef.current;
     setZoomPreset("fit");
@@ -776,7 +1033,21 @@ export function WorkspaceProvider({
       toggleSection,
       analysis,
       runAnalysis,
-      cursorPos,
+      aiMode,
+      setAiMode,
+      aiDisclaimerAck,
+      setAiDisclaimerAck,
+      aiBusy,
+      aiHistory,
+      aiResults,
+      aiFocus,
+      focusAiRegion,
+      runAiCommand,
+      aiThought,
+      reportEditOpen, setReportEditOpen,
+      reportDraft, setReportDraft,
+      openReportEditor,
+      saveReportDraft,      cursorPos,
       setCursorPos,
       imageSrc,
       setImageSrc,
@@ -815,10 +1086,16 @@ export function WorkspaceProvider({
       gradcamOn, gradcamIntensity, wl, setWl,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       collapsed, toggleSection, analysis,
-      runAnalysis, cursorPos, setCursorPos, imageSrc, imageName, openImageData,
+      runAnalysis,
+      aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck, aiBusy, aiHistory,
+      aiResults, aiFocus, focusAiRegion, runAiCommand, aiThought,
+      reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
+      openReportEditor, saveReportDraft,
+      cursorPos, setCursorPos, imageSrc, imageName, openImageData,
       closeDocument, saveDocument, captureImageState, applyImageState, fitSignal, requestFit,
       layers, setLayerVisible, setLayerLocked, setLayerName, setLayerOpacity,
       moveLayer, deleteLayerContent,
+      openReportEditor, saveReportDraft, reportEditOpen, reportDraft,
     ],
   );
 

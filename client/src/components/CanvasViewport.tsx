@@ -16,6 +16,7 @@ import {
   type Shape,
   type ShapePoint,
   type ShapeType,
+  type Viewport,
   type WlValue,
 } from "../state/workspace";
 import { useWorkspace, type ToolId } from "../state/workspace";
@@ -332,6 +333,30 @@ export function CanvasViewport({
 
   /* ------------------------------ View helpers ------------------------------ */
 
+  /* AI mode: the image is the absolute reference — the view can never leave it */
+  const clampView = useCallback(
+    (v: Viewport) => {
+      if (!w.aiMode) return v;
+      const cw = containerSize.w;
+      const ch = containerSize.h;
+      if (cw <= 0 || ch <= 0 || dims.w <= 0 || dims.h <= 0) return v;
+      const iw = dims.w * v.s;
+      const ih = dims.h * v.s;
+      if (iw <= cw) {
+        v = { ...v, x: (cw - iw) / 2 };
+      } else {
+        v = { ...v, x: Math.min(0, Math.max(cw - iw, v.x)) };
+      }
+      if (ih <= ch) {
+        v = { ...v, y: (ch - ih) / 2 };
+      } else {
+        v = { ...v, y: Math.min(0, Math.max(ch - ih, v.y)) };
+      }
+      return v;
+    },
+    [w.aiMode, containerSize, dims],
+  );
+
   const fit = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -339,8 +364,8 @@ export function CanvasViewport({
     const s = Math.min((rect.width - 180) / dims.w, (rect.height - 160) / dims.h, 1);
     const s2 = Math.max(s, MIN_SCALE);
     /* Image sits at doc (0, 0); centering happens in view space */
-    setView({ s: s2, x: (rect.width - dims.w * s2) / 2, y: (rect.height - dims.h * s2) / 2 });
-  }, [dims, setView]);
+    setView(clampView({ s: s2, x: (rect.width - dims.w * s2) / 2, y: (rect.height - dims.h * s2) / 2 }));
+  }, [dims, setView, clampView]);
 
   useEffect(() => {
     if (loaded) fit();
@@ -351,7 +376,7 @@ export function CanvasViewport({
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
-      setContainerSize({ w: width, h: height });
+      setContainerSize((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
       if (w.zoomPreset === "fit" && loaded) fit();
     });
     ro.observe(el);
@@ -370,16 +395,18 @@ export function CanvasViewport({
       const py = e.clientY - rect.top;
       const factor = Math.exp(-e.deltaY * 0.0016);
       const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.s * factor));
-      setView({
-        s: s2,
-        x: px - ((px - v.x) * s2) / v.s,
-        y: py - ((py - v.y) * s2) / v.s,
-      });
+      setView(
+        clampView({
+          s: s2,
+          x: px - ((px - v.x) * s2) / v.s,
+          y: py - ((py - v.y) * s2) / v.s,
+        }),
+      );
       setZoomPreset("actual");
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [setView, viewRef, setZoomPreset]);
+  }, [setView, viewRef, setZoomPreset, clampView]);
 
   /* Space to pan */
   useEffect(() => {
@@ -439,11 +466,13 @@ export function CanvasViewport({
   const zoomAt = (px: number, py: number, factor: number) => {
     const v = viewRef.current;
     const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.s * factor));
-    setView({
-      s: s2,
-      x: px - ((px - v.x) * s2) / v.s,
-      y: py - ((py - v.y) * s2) / v.s,
-    });
+    setView(
+      clampView({
+        s: s2,
+        x: px - ((px - v.x) * s2) / v.s,
+        y: py - ((py - v.y) * s2) / v.s,
+      }),
+    );
     setZoomPreset("actual");
   };
 
@@ -454,9 +483,24 @@ export function CanvasViewport({
     const cx = (r.x0 + r.x1) / 2;
     const cy = (r.y0 + r.y1) / 2;
     const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(r.vw / rw, r.vh / rh)));
-    setView({ s: s2, x: cx - r.vw / 2 / s2, y: cy - r.vh / 2 / s2 });
+    setView(clampView({ s: s2, x: cx - r.vw / 2 / s2, y: cy - r.vh / 2 / s2 }));
     setZoomPreset("actual");
   };
+
+  /* AI focus: smoothly zoom into a region requested by the AI workspace */
+  useEffect(() => {
+    const f = w.aiFocus;
+    if (!f || f.w <= 0 || f.h <= 0) return;
+    const cw = containerSize.w || 1;
+    const ch = containerSize.h || 1;
+    const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(cw / f.w, ch / f.h) * 0.92));
+    const cx = f.x + f.w / 2;
+    const cy = f.y + f.h / 2;
+    const v2 = clampView({ s: s2, x: cx - cw / 2 / s2, y: cy - ch / 2 / s2 });
+    setView(v2);
+    setZoomPreset("actual");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w.aiFocus]);
 
   const hitTest = (px: number, py: number): Shape | null => {
     const p = screenToDoc(px, py);
@@ -798,7 +842,7 @@ export function CanvasViewport({
 
     if (g?.kind === "pan") {
       const v = viewRef.current;
-      setView({ ...v, x: v.x + (e.clientX - g.lastX), y: v.y + (e.clientY - g.lastY) });
+      setView(clampView({ ...v, x: v.x + (e.clientX - g.lastX), y: v.y + (e.clientY - g.lastY) }));
       g.lastX = e.clientX;
       g.lastY = e.clientY;
       setZoomPreset("actual");
@@ -809,7 +853,7 @@ export function CanvasViewport({
       }
       if (g.moved) {
         const v = viewRef.current;
-        setView({ ...v, x: v.x + (px - g.startX), y: v.y + (py - g.startY) });
+        setView(clampView({ ...v, x: v.x + (px - g.startX), y: v.y + (py - g.startY) }));
         g.startX = px;
         g.startY = py;
         setZoomPreset("actual");
@@ -1130,7 +1174,7 @@ export function CanvasViewport({
         </div>
       )}
       {/* Grid */}
-      {w.gridOn && (
+      {w.gridOn && !w.aiMode && (
         <div
           data-grid
           className="pointer-events-none absolute inset-0"

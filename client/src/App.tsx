@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { AiDisclaimer } from "./components/ai/AiDisclaimer";
+import { AiSidebarLeft } from "./components/ai/AiSidebarLeft";
+import { AiSidebarRight } from "./components/ai/AiSidebarRight";
+import { FloatingCommandBar } from "./components/ai/FloatingCommandBar";
+import { ReportEditorModal } from "./components/ai/ReportEditor";
 import { CanvasViewport } from "./components/CanvasViewport";
 import {
   AboutModal,
@@ -96,7 +102,9 @@ function Shell({
   onSaveImageState: (examId: string, index: number, state: EditorSnapshot) => void;
 }) {
   const w = useWorkspace();
+  const { aiMode, splitOn, setSplitOn } = w;
   const fileRef = useRef<HTMLInputElement>(null);
+  const [disclaimerDone, setDisclaimerDone] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
@@ -395,7 +403,7 @@ function Shell({
       }
       const tool = TOOL_KEYS[e.key.toLowerCase()];
       if (tool && !mod) {
-        w.setTool(tool);
+        if (!w.aiMode) w.setTool(tool);
         return;
       }
       if (e.key === "1" && !mod) w.requestFit();
@@ -404,6 +412,10 @@ function Shell({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [w, openImage, save, togglePixelGrid]);
+
+  useEffect(() => {
+    if (aiMode && splitOn) setSplitOn(false);
+  }, [aiMode, splitOn, setSplitOn]);
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-bg font-sans text-ink">
@@ -438,6 +450,9 @@ function Shell({
         onOpenAbout={() => setAboutOpen(true)}
         onBack={exam ? handleBack : undefined}
         backLabel={exam ? exam.name : undefined}
+        onAiModeChange={(v) => {
+          if (!v) setDisclaimerDone(false);
+        }}
       />
       {exam && exam.images.length > 1 && (
         <div className="flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-panel px-3">
@@ -459,17 +474,78 @@ function Shell({
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        {w.toolbarOpen && <LeftToolbar />}
-        <CanvasViewport pane="A" onOpenImage={openImage} />
-        {w.splitOn && (
-          <>
-            <div className="w-px shrink-0 bg-border" />
-            <CanvasViewport pane="B" onOpenImage={openImage} />
-          </>
-        )}
-        {w.rightPanelOpen ? <RightPanel /> : <RightPanelRail />}
+        <AnimatePresence initial={false} mode="popLayout">
+          {!w.aiMode && w.toolbarOpen && (
+            <motion.div
+              key="left-toolbar"
+              className="flex shrink-0"
+              initial={{ x: -40, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -40, opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              <LeftToolbar />
+            </motion.div>
+          )}
+          {w.aiMode && <AiSidebarLeft key="ai-sidebar-left" />}
+        </AnimatePresence>
+        <div className="relative flex min-w-0 flex-1">
+          <CanvasViewport pane="A" onOpenImage={openImage} />
+          {!w.aiMode && w.splitOn && (
+            <>
+              <div className="w-px shrink-0 bg-border" />
+              <CanvasViewport pane="B" onOpenImage={openImage} />
+            </>
+          )}
+          <AnimatePresence>{w.aiMode && <FloatingCommandBar key="ai-command-bar" />}</AnimatePresence>
+        </div>
+        <AnimatePresence initial={false} mode="popLayout">
+          {w.aiMode && <AiSidebarRight key="ai-sidebar-right" />}
+          {!w.aiMode && w.rightPanelOpen && (
+            <motion.div
+              key="right-panel"
+              className="flex shrink-0"
+              initial={{ x: 40, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 40, opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              <RightPanel />
+            </motion.div>
+          )}
+          {!w.aiMode && !w.rightPanelOpen && (
+            <motion.div
+              key="right-panel-rail"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="flex shrink-0"
+            >
+              <RightPanelRail />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       {w.statusBarOpen && <StatusBar />}
+
+      <AnimatePresence>
+        {w.aiMode && !w.aiDisclaimerAck && !disclaimerDone && (
+          <AiDisclaimer
+            key="ai-disclaimer"
+            onContinue={(ack) => {
+              if (ack) w.setAiDisclaimerAck(true);
+              setDisclaimerDone(true);
+            }}
+            onBack={() => {
+              setDisclaimerDone(false);
+              w.setAiMode(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>{w.reportEditOpen && <ReportEditorModal key="report-editor" />}</AnimatePresence>
 
       {saveAsOpen && (
         <Modal title="Save As" onClose={() => setSaveAsOpen(false)} width="w-80">
