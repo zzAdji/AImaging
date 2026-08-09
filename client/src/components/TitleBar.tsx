@@ -68,7 +68,6 @@ export function TitleBar({
   onOpenAbout,
   onBack,
   backLabel,
-  onAiModeChange,
 }: {
   onOpenImage: () => void;
   onOpenRecent: (f: RecentFile) => void;
@@ -86,7 +85,6 @@ export function TitleBar({
   onOpenAbout: () => void;
   onBack?: () => void;
   backLabel?: string;
-  onAiModeChange?: (v: boolean) => void;
 }) {
   const w = useWorkspace();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -594,7 +592,6 @@ export function TitleBar({
       <ModeSwitch
         aiMode={w.aiMode}
         onChange={(v) => {
-          onAiModeChange?.(v);
           w.setAiMode(v);
         }}
       />

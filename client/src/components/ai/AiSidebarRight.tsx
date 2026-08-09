@@ -71,19 +71,25 @@ function DiagnosisRow({ d, onClick }: { d: AiDiagnosis; onClick: () => void }) {
   );
 }
 
-export function AiSidebarRight() {
+export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "drawer" }) {
   const w = useWorkspace();
 
+  const drawer = variant === "drawer";
   const measures = w.shapes.filter((s) => s.type === "measure" || s.type === "distance" || s.type === "angle");
 
   return (
     <motion.aside
-      initial={{ x: 40, opacity: 0 }}
+      initial={drawer ? { x: 340, opacity: 0 } : { x: 40, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 40, opacity: 0 }}
+      exit={drawer ? { x: 340, opacity: 0 } : { x: 40, opacity: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       data-attr="ai-sidebar-right"
-      className="flex w-72 shrink-0 flex-col overflow-y-auto border-l border-border bg-panel pb-4"
+      className={cn(
+        "flex flex-col overflow-y-auto border-l border-border bg-panel",
+        drawer
+          ? "fixed inset-y-0 right-0 z-[130] w-[85vw] max-w-[320px] border-l border-border shadow-2xl shadow-black/60"
+          : "w-72 shrink-0 pb-4",
+      )}
     >
       {/* Diagnostics */}
       <Card title="Diagnostics" icon={Activity} dataAttr="ai-card-diagnostics" accent>

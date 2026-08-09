@@ -370,7 +370,7 @@ export function Modal({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         data-attr={data}
-        className={cn("relative rounded-xl border border-border bg-card p-4 shadow-2xl shadow-black/50 animate-pop", width)}
+        className={cn("relative max-h-[88vh] w-auto max-w-[92vw] overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-2xl shadow-black/50 animate-pop", width)}
       >
         <h2 className="mb-3 text-[13px] font-semibold text-ink">{title}</h2>
         {children}

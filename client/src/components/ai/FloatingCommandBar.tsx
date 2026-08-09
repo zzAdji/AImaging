@@ -24,11 +24,12 @@ const WAVE_PROFILE = Array.from({ length: 96 }, (_, i) => {
   };
 });
 
-export function FloatingCommandBar() {
+export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const waveProfile = mobile ? WAVE_PROFILE.filter((_, i) => i % 3 === 0) : WAVE_PROFILE;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,9 +67,19 @@ export function FloatingCommandBar() {
       exit={{ y: 24, opacity: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       data-attr="ai-command-bar"
-      className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center px-6"
+      className={cn(
+        "pointer-events-none absolute inset-x-0 z-40 flex justify-center",
+        mobile
+          ? "bottom-[calc(env(safe-area-inset-bottom,0px)+10px)] px-3"
+          : "bottom-4 px-6",
+      )}
     >
-      <div className="flex w-full max-w-[700px] flex-col items-center gap-2">
+      <div
+        className={cn(
+          "flex w-full flex-col items-center gap-2",
+          mobile ? "max-w-none" : "max-w-[700px]",
+        )}
+      >
         <AnimatePresence initial={false}>
           {w.aiThought ? (
             <motion.div
@@ -84,7 +95,12 @@ export function FloatingCommandBar() {
             </motion.div>
           ) : null}
         </AnimatePresence>
-        <div className="pointer-events-auto w-full max-w-[700px] overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl shadow-black/50 backdrop-blur">
+        <div
+          className={cn(
+            "pointer-events-auto w-full overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl shadow-black/50 backdrop-blur",
+            mobile ? "max-w-none" : "max-w-[700px]",
+          )}
+        >
         <AnimatePresence mode="popLayout" initial={false}>
           {!voice ? (
             <motion.div
@@ -158,7 +174,7 @@ export function FloatingCommandBar() {
                 data-attr="ai-voice-bars"
                 className="absolute inset-0 flex items-center justify-center gap-[3px] px-16"
               >
-                {WAVE_PROFILE.map((b, i) => (
+                {waveProfile.map((b, i) => (
                   <span
                     key={i}
                     className="voice-bar"

@@ -16,6 +16,7 @@ import {
 import { ExamsScreen } from "./components/ExamsScreen";
 import { LeftToolbar } from "./components/LeftToolbar";
 import { LoginScreen } from "./components/LoginScreen";
+import { MobileShell } from "./components/MobileShell";
 import { RightPanel } from "./components/RightPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
@@ -45,6 +46,7 @@ import {
   type RecentFile,
 } from "./lib/recent";
 import { SHORTCUTS } from "./lib/shortcuts";
+import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
 import { cn } from "./lib/cn";
 
@@ -104,7 +106,6 @@ function Shell({
   const w = useWorkspace();
   const { aiMode, splitOn, setSplitOn } = w;
   const fileRef = useRef<HTMLInputElement>(null);
-  const [disclaimerDone, setDisclaimerDone] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
@@ -450,9 +451,6 @@ function Shell({
         onOpenAbout={() => setAboutOpen(true)}
         onBack={exam ? handleBack : undefined}
         backLabel={exam ? exam.name : undefined}
-        onAiModeChange={(v) => {
-          if (!v) setDisclaimerDone(false);
-        }}
       />
       {exam && exam.images.length > 1 && (
         <div className="flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-panel px-3">
@@ -530,15 +528,14 @@ function Shell({
       {w.statusBarOpen && <StatusBar />}
 
       <AnimatePresence>
-        {w.aiMode && !w.aiDisclaimerAck && !disclaimerDone && (
+        {w.aiMode && !w.aiDisclaimerAck && !w.aiDisclaimerDismissed && (
           <AiDisclaimer
             key="ai-disclaimer"
             onContinue={(ack) => {
               if (ack) w.setAiDisclaimerAck(true);
-              setDisclaimerDone(true);
+              else w.setAiDisclaimerDismissed(true);
             }}
             onBack={() => {
-              setDisclaimerDone(false);
               w.setAiMode(false);
             }}
           />
@@ -796,6 +793,7 @@ export default function App() {
   const [session, setSession] = useState(loadSession);
   const [examCtx, setExamCtx] = useState<{ examId: string; index: number } | null>(null);
   const [exams, setExams] = useState<Examination[]>(loadExaminations);
+  const isMobile = useIsMobile();
 
   const mutateExams = useCallback((fn: (list: Examination[]) => Examination[]) => {
     setExams((prev) => {
@@ -869,17 +867,28 @@ export default function App() {
           }}
         />
       )}
-      {page === "editor" && (
-        <Shell
-          examCtx={examCtx}
-          exams={exams}
-          onBack={() => {
-            setExamCtx(null);
-            setPage("exams");
-          }}
-          onSaveImageState={saveImageState}
-        />
-      )}
+      {page === "editor" &&
+        (isMobile ? (
+          <MobileShell
+            examCtx={examCtx}
+            exams={exams}
+            onBack={() => {
+              setExamCtx(null);
+              setPage("exams");
+            }}
+            onSaveImageState={saveImageState}
+          />
+        ) : (
+          <Shell
+            examCtx={examCtx}
+            exams={exams}
+            onBack={() => {
+              setExamCtx(null);
+              setPage("exams");
+            }}
+            onSaveImageState={saveImageState}
+          />
+        ))}
     </WorkspaceProvider>
   );
 }

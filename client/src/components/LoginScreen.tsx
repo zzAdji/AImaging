@@ -42,7 +42,7 @@ export function LoginScreen({
     <div className="flex h-screen w-screen select-none flex-col items-center justify-center bg-bg font-sans text-ink">
       <form
         onSubmit={submit}
-        className="flex w-[340px] flex-col items-center"
+        className="flex w-[340px] max-w-[90vw] flex-col items-center"
         data-attr="login-form"
       >
         {/* Logo */}

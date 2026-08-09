@@ -540,6 +540,7 @@ export function WorkspaceProvider({
 
   const [aiMode, setAiMode] = useState(false);
   const [aiDisclaimerAck, setAiDisclaimerAck] = useState(false);
+  const [aiDisclaimerDismissed, setAiDisclaimerDismissed] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiHistory, setAiHistory] = useState<AiHistoryItem[]>([]);
   const [aiResults, setAiResults] = useState<AiResults>({
@@ -1034,9 +1035,14 @@ export function WorkspaceProvider({
       analysis,
       runAnalysis,
       aiMode,
-      setAiMode,
+      setAiMode: (v: boolean) => {
+        setAiMode(v);
+        if (v) setAiDisclaimerDismissed(false);
+      },
       aiDisclaimerAck,
       setAiDisclaimerAck,
+      aiDisclaimerDismissed,
+      setAiDisclaimerDismissed,
       aiBusy,
       aiHistory,
       aiResults,
@@ -1087,7 +1093,8 @@ export function WorkspaceProvider({
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       collapsed, toggleSection, analysis,
       runAnalysis,
-      aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck, aiBusy, aiHistory,
+      aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
+      aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiResults, aiFocus, focusAiRegion, runAiCommand, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,

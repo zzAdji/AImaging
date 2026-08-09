@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { Check, FileText, X } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { cn } from "../../lib/cn";
 import { useWorkspace } from "../../state/workspace";
 
-export function ReportEditorModal() {
+export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -17,15 +18,23 @@ export function ReportEditorModal() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
-      className="fixed inset-0 z-30 flex items-start justify-center bg-black/45 px-6 pt-14 backdrop-blur-md"
+      className={cn(
+        "fixed inset-0 z-30 flex bg-black/45 backdrop-blur-md",
+        mobile ? "items-stretch px-0 pt-0" : "items-start justify-center px-6 pt-14",
+      )}
     >
       <motion.div
-        initial={{ opacity: 0, y: 24, scale: 0.98 }}
+        initial={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 24, scale: 0.98 }}
+        exit={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.98 }}
         transition={{ duration: 0.28, ease: "easeOut" }}
         data-attr="report-modal"
-        className="flex h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl shadow-black/60"
+        className={cn(
+          "flex flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl shadow-black/60",
+          mobile
+            ? "h-screen w-screen rounded-none border-0 pb-[54px]"
+            : "h-[70vh] w-full max-w-3xl",
+        )}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <FileText size={15} className="text-accent" strokeWidth={2.2} />

@@ -447,6 +447,9 @@ export interface WorkspaceState {
   /** "Don't show the disclaimer again during this session" */
   aiDisclaimerAck: boolean;
   setAiDisclaimerAck: (v: boolean) => void;
+  /** Transient dismissal of the disclaimer (reset on each AI mode entry) */
+  aiDisclaimerDismissed: boolean;
+  setAiDisclaimerDismissed: (v: boolean) => void;
   /** True while a command is being processed (fake latency) */
   aiBusy: boolean;
   aiHistory: AiHistoryItem[];

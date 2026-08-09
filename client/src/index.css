@@ -209,6 +209,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .voice-bar {
   display: inline-block;
+  flex-shrink: 0;
   background: var(--color-accent);
   transform-origin: center;
   animation: aim-voice-wave 0.85s ease-in-out infinite;

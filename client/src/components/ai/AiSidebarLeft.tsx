@@ -54,17 +54,24 @@ function QuickAction({
   );
 }
 
-export function AiSidebarLeft() {
+export function AiSidebarLeft({ variant = "static" }: { variant?: "static" | "drawer" }) {
   const w = useWorkspace();
+
+  const drawer = variant === "drawer";
 
   return (
     <motion.aside
-      initial={{ x: -40, opacity: 0 }}
+      initial={drawer ? { x: -320, opacity: 0 } : { x: -40, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: -40, opacity: 0 }}
+      exit={drawer ? { x: -320, opacity: 0 } : { x: -40, opacity: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       data-attr="ai-sidebar-left"
-      className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-border bg-panel"
+      className={cn(
+        "flex flex-col overflow-y-auto border-r border-border bg-panel",
+        drawer
+          ? "fixed inset-y-0 left-0 z-[130] w-[85vw] max-w-[300px] border-r border-border shadow-2xl shadow-black/60"
+          : "w-64 shrink-0",
+      )}
     >
       {/* Historique */}
       <SectionTitle icon={History}>Historique</SectionTitle>

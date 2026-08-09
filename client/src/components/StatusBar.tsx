@@ -58,29 +58,29 @@ export function StatusBar() {
 
       <div className="mx-2 h-3 w-px bg-border" />
 
-      <span className="text-ink-3">
+      <span className="hidden text-ink-3 md:inline">
         x: {w.cursorPos ? w.cursorPos.x : "—"} · y: {w.cursorPos ? w.cursorPos.y : "—"}
       </span>
 
-      <div className="mx-2 h-3 w-px bg-border" />
+      <div className="mx-2 hidden h-3 w-px bg-border md:block" />
 
-      <span>{w.dims.w > 0 ? `${w.dims.w} × ${w.dims.h} px` : "No image"}</span>
+      <span className="hidden sm:inline">{w.dims.w > 0 ? `${w.dims.w} × ${w.dims.h} px` : "No image"}</span>
 
       {w.dims.w > 0 && (
         <>
-          <div className="mx-2 h-3 w-px bg-border" />
+          <div className="mx-2 hidden h-3 w-px bg-border sm:block" />
 
-          <span className="text-ink-3">72 DPI</span>
+          <span className="hidden text-ink-3 lg:inline">72 DPI</span>
 
-          <div className="mx-2 h-3 w-px bg-border" />
+          <div className="mx-2 hidden h-3 w-px bg-border lg:block" />
 
-          <span className="text-ink-3">
+          <span className="hidden text-ink-3 lg:inline">
             Raster · 8-bit · {((w.dims.w * w.dims.h * 4) / 1048576).toFixed(1)} MB
           </span>
         </>
       )}
 
-      <span className="ml-auto text-ink-3/50">AImaging 1.0</span>
+      <span className="ml-auto hidden text-ink-3/50 sm:inline">AImaging 1.0</span>
     </footer>
   );
 }
