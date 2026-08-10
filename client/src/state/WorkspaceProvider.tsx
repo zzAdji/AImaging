@@ -543,6 +543,16 @@ export function WorkspaceProvider({
   const [aiDisclaimerDismissed, setAiDisclaimerDismissed] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiHistory, setAiHistory] = useState<AiHistoryItem[]>([]);
+  const [aiCustomPrompts, setAiCustomPrompts] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("aimaging.aiPrompts");
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string").slice(0, 12) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [aiActionLog, setAiActionLog] = useState<string[]>([]);
   const [aiResults, setAiResults] = useState<AiResults>({
     diagnostics: [],
     report: null,
@@ -567,6 +577,30 @@ export function WorkspaceProvider({
 
   const focusAiRegion = useCallback((r: { x: number; y: number; w: number; h: number }) => {
     setAiFocus({ ...r, ts: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("aimaging.aiPrompts", JSON.stringify(aiCustomPrompts));
+    } catch {
+      /* localStorage unavailable — prompts stay in memory */
+    }
+  }, [aiCustomPrompts]);
+
+  const addAiCustomPrompt = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setAiCustomPrompts((p) => (p.includes(t) ? p : [t, ...p].slice(0, 12)));
+  }, []);
+
+  const removeAiCustomPrompt = useCallback((text: string) => {
+    setAiCustomPrompts((p) => p.filter((t) => t !== text));
+  }, []);
+
+  const recordAiAction = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setAiActionLog((l) => (l[0] === t ? l : [t, ...l.filter((x) => x !== t)].slice(0, 30)));
   }, []);
 
   useEffect(
@@ -1045,6 +1079,11 @@ export function WorkspaceProvider({
       setAiDisclaimerDismissed,
       aiBusy,
       aiHistory,
+      aiCustomPrompts,
+      addAiCustomPrompt,
+      removeAiCustomPrompt,
+      aiActionLog,
+      recordAiAction,
       aiResults,
       aiFocus,
       focusAiRegion,
@@ -1095,6 +1134,8 @@ export function WorkspaceProvider({
       runAnalysis,
       aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
+      aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
+      aiActionLog, recordAiAction,
       aiResults, aiFocus, focusAiRegion, runAiCommand, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,

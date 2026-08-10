@@ -101,6 +101,12 @@ export interface ShapeStyle {
   fontFamily: FontFamily;
   fontWeight: FontWeight;
   color: string;
+  /** Default stroke thickness for new shapes (doc units) */
+  strokeWidth: number;
+  /** Default stroke color for new shapes */
+  strokeColor: string;
+  /** Default fill color for new rect/ellipse shapes (null = no fill) */
+  fillColor: string | null;
 }
 
 export const FONT_FAMILY_LABEL: Record<FontFamily, string> = {
@@ -109,7 +115,7 @@ export const FONT_FAMILY_LABEL: Record<FontFamily, string> = {
   mono: "Mono",
 };
 
-export const TEXT_COLORS = ["#ffffff", "#3B82F6", "#F87171", "#4ADE80", "#FACC15", "#111111"];
+export const TEXT_COLORS = ["#3B82F6", "#ffffff", "#111111"];
 
 export const ACCENT_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#22c55e", "#eab308"];
 
@@ -137,6 +143,9 @@ export const DEFAULT_SHAPE_STYLE: ShapeStyle = {
   fontFamily: "sans",
   fontWeight: "normal",
   color: "#ffffff",
+  strokeWidth: 2,
+  strokeColor: "#3b82f6",
+  fillColor: null,
 };
 
 /** Pixels of image per millimeter (calibrated so ~320 px ≈ 84 mm) */
@@ -164,6 +173,10 @@ export interface Shape {
   fontFamily?: FontFamily;
   fontWeight?: FontWeight;
   color?: string;
+  /** Per-shape stroke color (defaults to the app accent) */
+  strokeColor?: string;
+  /** Per-shape fill for rect/ellipse (absent = no fill) */
+  fillColor?: string;
   /** Per-shape visibility (hidden shapes are not rendered nor hit-tested) */
   visible?: boolean;
 }
@@ -460,6 +473,13 @@ export interface WorkspaceState {
   focusAiRegion: (r: { x: number; y: number; w: number; h: number }) => void;
   /** Parses a natural-language command and applies the matching action(s) to the document */
   runAiCommand: (raw: string) => void;
+  /** User-saved prompt texts, persisted to localStorage (`aimaging.aiPrompts`) */
+  aiCustomPrompts: string[];
+  addAiCustomPrompt: (text: string) => void;
+  removeAiCustomPrompt: (text: string) => void;
+  /** Recent user actions recorded in normal mode (drawing, windowing…) — source for new prompts */
+  aiActionLog: string[];
+  recordAiAction: (text: string) => void;
   /** Current reflection step shown above the command bar, null when idle */
   aiThought: { id: string; text: string } | null;
   /** Report editor modal state */

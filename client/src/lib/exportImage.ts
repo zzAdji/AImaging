@@ -109,34 +109,53 @@ export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void
   ctx.fillStyle = accent;
   ctx.strokeStyle = accent;
   switch (s.type) {
-    case "rectangle":
+    case "rectangle": {
       ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
+      if (s.fillColor) {
+        ctx.fillStyle = s.fillColor;
+        ctx.fillRect(s.x, s.y, s.w, s.h);
+      }
       ctx.strokeRect(s.x, s.y, s.w, s.h);
       break;
-    case "ellipse":
+    }
+    case "ellipse": {
       ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
+      if (s.fillColor) {
+        ctx.fillStyle = s.fillColor;
+        ctx.beginPath();
+        ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, Math.abs(s.w) / 2, Math.abs(s.h) / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.beginPath();
       ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, Math.abs(s.w) / 2, Math.abs(s.h) / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
       break;
+    }
     case "line":
       ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(s.x + s.w, s.y + s.h);
       ctx.stroke();
       break;
-    case "arrow":
+    case "arrow": {
       ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(s.x + s.w, s.y + s.h);
       ctx.stroke();
+      ctx.fillStyle = s.strokeColor ?? accent;
       drawArrowHead(ctx, s.x, s.y, s.x + s.w, s.y + s.h, 14);
       break;
+    }
     case "freedraw": {
       if (s.points.length === 0) break;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
       ctx.beginPath();
       ctx.moveTo(s.points[0].x, s.points[0].y);
       for (const p of s.points.slice(1)) ctx.lineTo(p.x, p.y);
@@ -146,7 +165,9 @@ export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void
     case "measure":
     case "distance": {
       const len = Math.hypot(s.w, s.h) * MM_PER_PX;
-      ctx.lineWidth = 1.75;
+      ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
+      ctx.fillStyle = s.strokeColor ?? accent;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(s.x + s.w, s.y + s.h);
@@ -172,7 +193,9 @@ export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void
           (Math.hypot(s.w, s.h) * Math.hypot(p2.x - s.x, p2.y - s.y) || 1)),
       );
       const deg = (Math.acos(cos) * 180) / Math.PI;
-      ctx.lineWidth = 1.75;
+      ctx.lineWidth = s.strokeWidth;
+      ctx.strokeStyle = s.strokeColor ?? accent;
+      ctx.fillStyle = s.strokeColor ?? accent;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(ex, ey);

@@ -91,6 +91,26 @@ const DRAW_TOOLS: Partial<Record<ToolId, ShapeType>> = {
   distance: "distance",
 };
 
+/** French action label recorded in normal mode when a shape is drawn */
+const DRAW_ACTION_LABEL: Record<ShapeType, string> = {
+  rectangle: "Rectangle tracé",
+  ellipse: "Ellipse tracée",
+  arrow: "Flèche tracée",
+  line: "Ligne tracée",
+  freedraw: "Traçage libre",
+  measure: "Mesure tracée",
+  distance: "Distance mesurée",
+  angle: "Angle mesuré",
+  annotation: "Annotation ajoutée",
+  text: "Texte ajouté",
+};
+
+/** Shape types that expose stroke width / stroke color controls */
+const STYLEABLE_TYPES = new Set<ShapeType>(["rectangle", "ellipse", "arrow", "line", "freedraw", "measure", "distance", "angle"]);
+
+/** Shape types that expose fill controls */
+const FILLABLE_TYPES = new Set<ShapeType>(["rectangle", "ellipse"]);
+
 const CROSSHAIR_TOOLS = new Set<ToolId>([
   "rectangle",
   "ellipse",
@@ -515,15 +535,17 @@ export function CanvasViewport({
 
   /* ------------------------------ Draft geometry ---------------------------- */
 
-  const makeShape = (type: ShapeType, x: number, y: number, w: number, h: number, points: ShapePoint[] = []): Shape => ({
+  const makeShape = (type: ShapeType, x: number, y: number, width: number, height: number, points: ShapePoint[] = []): Shape => ({
     id: "draft",
     type,
     x,
     y,
-    w,
-    h,
+    w: width,
+    h: height,
     points,
-    strokeWidth: type === "freedraw" ? 1.5 : 2,
+    strokeWidth: w.shapeStyle.strokeWidth,
+    strokeColor: w.shapeStyle.strokeColor,
+    fillColor: w.shapeStyle.fillColor ?? undefined,
   });
 
   const updateDraftGeometry = (
@@ -745,6 +767,7 @@ export function CanvasViewport({
           shape.id = randomId();
           w.pushHistory();
           w.addShape(shape);
+          w.recordAiAction("Angle mesuré");
           w.setSelection(shape.id);
           setAngleDraft(null);
         }
@@ -774,6 +797,7 @@ export function CanvasViewport({
       shape.id = randomId();
       w.pushHistory();
       w.addShape(shape);
+      w.recordAiAction(w.tool === "annotation" ? "Annotation ajoutée" : "Texte ajouté");
       w.setSelection(shape.id);
       setEditing({ id: shape.id, original: shape.label ?? "" });
       setEditText(shape.label ?? "");
@@ -964,6 +988,7 @@ export function CanvasViewport({
         if (g.pushed && size > 4) {
           const shape = { ...g.draft, id: randomId() };
           w.addShape(shape);
+          w.recordAiAction(DRAW_ACTION_LABEL[shape.type]);
           w.setSelection(shape.id);
         }
         setDraft(null);
@@ -974,6 +999,7 @@ export function CanvasViewport({
           const shape = makeShape("freedraw", 0, 0, 0, 0, [...g.points]);
           shape.id = randomId();
           w.addShape(shape);
+          w.recordAiAction("Traçage libre");
           w.setSelection(shape.id);
         }
         setDraft(null);
@@ -1490,6 +1516,92 @@ export function CanvasViewport({
               >
                 <Pencil size={12} />
               </button>
+            </>
+          )}
+          {!allSelected && selectedShape && STYLEABLE_TYPES.has(selectedShape.type) && (
+            <>
+              <div className="h-3 w-px bg-border" />
+              <input
+                type="range"
+                min={1}
+                max={12}
+                step={0.5}
+                value={selectedShape.strokeWidth}
+                onChange={(e) => {
+                  w.pushHistory();
+                  w.updateShape(selectedShape.id, { strokeWidth: Number(e.target.value) });
+                }}
+                title="Stroke width"
+                data-attr="shape-stroke-width"
+                className="w-16 accent-[var(--color-accent)]"
+              />
+              <span className="w-8 text-[11px] tabular-nums text-ink-3">
+                {selectedShape.strokeWidth.toFixed(1)}
+              </span>
+              <div className="h-3 w-px bg-border" />
+              {TEXT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  title={`Stroke ${c}`}
+                  onClick={() => {
+                    w.pushHistory();
+                    w.updateShape(selectedShape.id, { strokeColor: c });
+                  }}
+                  data-attr={`shape-stroke-${c.replace("#", "")}`}
+                  className="h-4 w-4 rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                  style={{
+                    backgroundColor: c,
+                    outline:
+                      (selectedShape.strokeColor ?? "#3B82F6").toLowerCase() === c.toLowerCase()
+                        ? "1.5px solid var(--color-accent)"
+                        : "none",
+                    outlineOffset: 1,
+                  }}
+                />
+              ))}
+              {FILLABLE_TYPES.has(selectedShape.type) && (
+                <>
+                  <div className="h-3 w-px bg-border" />
+                  {TEXT_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      title={`Fill ${c}`}
+                      onClick={() => {
+                        w.pushHistory();
+                        w.updateShape(selectedShape.id, { fillColor: c });
+                      }}
+                      data-attr={`shape-fill-${c.replace("#", "")}`}
+                      className="h-4 w-4 rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                      style={{
+                        backgroundColor: c,
+                        outline:
+                          selectedShape.fillColor?.toLowerCase() === c.toLowerCase()
+                            ? "1.5px solid var(--color-accent)"
+                            : "none",
+                        outlineOffset: 1,
+                      }}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    title="No fill"
+                    onClick={() => {
+                      w.pushHistory();
+                      w.updateShape(selectedShape.id, { fillColor: undefined });
+                    }}
+                    data-attr="shape-fill-none"
+                    className="relative h-4 w-4 overflow-hidden rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                    style={{
+                      outline: !selectedShape.fillColor ? "1.5px solid var(--color-accent)" : "none",
+                      outlineOffset: 1,
+                    }}
+                  >
+                    <span className="absolute left-1/2 top-1/2 h-[2px] w-[18px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded bg-red-400" />
+                  </button>
+                </>
+              )}
             </>
           )}
           <div className="h-3 w-px bg-border" />

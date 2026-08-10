@@ -663,6 +663,67 @@ function Shell({
                 ))}
                 <span className="ml-1 text-[11px] text-ink-3">Text color</span>
               </div>
+              <Slider
+                label="Shape stroke width"
+                value={w.shapeStyle.strokeWidth}
+                min={1}
+                max={12}
+                step={0.5}
+                onChange={(v) => w.setShapeStyle({ ...w.shapeStyle, strokeWidth: v })}
+                display={`${w.shapeStyle.strokeWidth} px`}
+              />
+              <div className="mt-2 flex items-center gap-1.5">
+                {TEXT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    title={c}
+                    onClick={() => w.setShapeStyle({ ...w.shapeStyle, strokeColor: c })}
+                    className="h-4 w-4 rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                    style={{
+                      backgroundColor: c,
+                      outline:
+                        w.shapeStyle.strokeColor.toLowerCase() === c.toLowerCase()
+                          ? "1.5px solid var(--color-accent)"
+                          : "none",
+                      outlineOffset: 1,
+                    }}
+                  />
+                ))}
+                <span className="ml-1 text-[11px] text-ink-3">Shape color</span>
+              </div>
+              <div className="mt-2 flex items-center gap-1.5">
+                {TEXT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    title={c}
+                    onClick={() => w.setShapeStyle({ ...w.shapeStyle, fillColor: c })}
+                    className="h-4 w-4 rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                    style={{
+                      backgroundColor: c,
+                      outline:
+                        w.shapeStyle.fillColor?.toLowerCase() === c.toLowerCase()
+                          ? "1.5px solid var(--color-accent)"
+                          : "none",
+                      outlineOffset: 1,
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  title="No fill"
+                  onClick={() => w.setShapeStyle({ ...w.shapeStyle, fillColor: null })}
+                  className="relative h-4 w-4 overflow-hidden rounded-full border border-border transition-transform duration-150 ease-out hover:scale-110"
+                  style={{
+                    outline: !w.shapeStyle.fillColor ? "1.5px solid var(--color-accent)" : "none",
+                    outlineOffset: 1,
+                  }}
+                >
+                  <span className="absolute left-1/2 top-1/2 h-[2px] w-[18px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded bg-red-400" />
+                </button>
+                <span className="ml-1 text-[11px] text-ink-3">Fill color</span>
+              </div>
             </div>
 
             <Divider />

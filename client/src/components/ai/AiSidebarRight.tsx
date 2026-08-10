@@ -6,7 +6,6 @@ import {
   Map,
   Pencil,
   Ruler,
-  Sparkles,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { downloadJson } from "../../lib/exportImage";
@@ -60,7 +59,8 @@ function DiagnosisRow({ d, onClick }: { d: AiDiagnosis; onClick: () => void }) {
     >
       <div className="flex items-center gap-2">
         <span className="truncate text-[11.5px] text-ink">{d.label}</span>
-        <span className={cn("ml-auto shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium", SEVERITY_STYLE[d.severity])}>
+        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink">{Math.round(d.prob * 100)}%</span>
+        <span className={cn("shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium", SEVERITY_STYLE[d.severity])}>
           {d.severity === "high" ? "Élevé" : d.severity === "medium" ? "Modéré" : "Faible"}
         </span>
       </div>
@@ -105,22 +105,6 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
                 d={d}
                 onClick={() => d.region && w.focusAiRegion(d.region)}
               />
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* Probabilités */}
-      <Card title="Probabilités" icon={Sparkles} dataAttr="ai-card-probabilities">
-        {w.aiResults.diagnostics.length === 0 ? (
-          <p className="px-1 text-[11px] text-ink-3">En attente d'une analyse.</p>
-        ) : (
-          <div className="space-y-1.5">
-            {w.aiResults.diagnostics.slice(0, 3).map((d) => (
-              <div key={d.label} className="flex items-center gap-2 px-1">
-                <span className="w-24 truncate text-[11px] text-ink-2">{d.label.split(" — ")[0]}</span>
-                <span className="w-7 text-right text-[11px] tabular-nums text-ink">{Math.round(d.prob * 100)}%</span>
-              </div>
             ))}
           </div>
         )}

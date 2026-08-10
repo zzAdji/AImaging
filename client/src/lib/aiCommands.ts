@@ -143,7 +143,11 @@ export function parseAiCommand(raw: string): AiCommandAction {
     return { kind: "annotation", summary: "Annotation placée au centre de l'image.", region: CENTER_REGION };
   }
 
-  if (/(mesure|mesurer|longueur|distance|diamètre)/.test(q)) {
+  if (/(dessin|dessiné|tracé|tracée|tracer|forme|contour)/.test(q)) {
+    return { kind: "annotation", summary: "Forme rejouée au centre de l'image.", region: CENTER_REGION };
+  }
+
+  if (/(mesur|longueur|distance|diamètre)/.test(q)) {
     return { kind: "measure", summary: "Mesure automatique tracée sur l'image.", region: CENTER_REGION };
   }
 

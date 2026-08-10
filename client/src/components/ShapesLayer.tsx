@@ -40,18 +40,20 @@ function ArrowHead({
   x2,
   y2,
   size,
+  color,
 }: {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   size: number;
+  color: string;
 }) {
   const ang = Math.atan2(y2 - y1, x2 - x1);
   const a1 = ang - 0.42;
   const a2 = ang + 0.42;
   const points = `${x2},${y2} ${x2 - size * Math.cos(a1)},${y2 - size * Math.sin(a1)} ${x2 - size * Math.cos(a2)},${y2 - size * Math.sin(a2)}`;
-  return <polygon points={points} fill={ACCENT} />;
+  return <polygon points={points} fill={color} />;
 }
 
 /** Fixed screen-size chip (text is sized in doc units so it stays constant on screen) */
@@ -127,12 +129,14 @@ function AngleArc({
   a1,
   a2,
   r,
+  color,
 }: {
   vx: number;
   vy: number;
   a1: number;
   a2: number;
   r: number;
+  color: string;
 }) {
   let delta = a2 - a1;
   while (delta > Math.PI) delta -= 2 * Math.PI;
@@ -144,7 +148,7 @@ function AngleArc({
   const y1 = vy + r * Math.sin(a1);
   const x2 = vx + r * Math.cos(a2);
   const y2 = vy + r * Math.sin(a2);
-  return <path d={`M ${x1} ${y1} A ${r} ${r} 0 ${large} ${sweep} ${x2} ${y2}`} fill="none" stroke={ACCENT} strokeWidth={1.25} />;
+  return <path d={`M ${x1} ${y1} A ${r} ${r} 0 ${large} ${sweep} ${x2} ${y2}`} fill="none" stroke={color} strokeWidth={1.25} />;
 }
 
 /* ------------------------------ Shape elements ------------------------------ */
@@ -152,6 +156,7 @@ function AngleArc({
 function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; scale: number }) {
   const dash = draft ? "7 5" : undefined;
   const sw = shape.strokeWidth;
+  const stroke = shape.strokeColor ?? ACCENT;
   const attrs = { "data-shape": shape.id, "data-type": shape.type };
   switch (shape.type) {
     case "rectangle":
@@ -162,8 +167,8 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
           y={shape.y}
           width={shape.w}
           height={shape.h}
-          fill="none"
-          stroke={ACCENT}
+          fill={shape.fillColor ?? "none"}
+          stroke={stroke}
           strokeWidth={sw}
           strokeDasharray={dash}
         />
@@ -176,8 +181,8 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
           cy={shape.y + shape.h / 2}
           rx={Math.abs(shape.w) / 2}
           ry={Math.abs(shape.h) / 2}
-          fill="none"
-          stroke={ACCENT}
+          fill={shape.fillColor ?? "none"}
+          stroke={stroke}
           strokeWidth={sw}
           strokeDasharray={dash}
         />
@@ -190,7 +195,7 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
           y1={shape.y}
           x2={shape.x + shape.w}
           y2={shape.y + shape.h}
-          stroke={ACCENT}
+          stroke={stroke}
           strokeWidth={sw}
           strokeLinecap="round"
           strokeDasharray={dash}
@@ -204,7 +209,7 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
             y1={shape.y}
             x2={shape.x + shape.w}
             y2={shape.y + shape.h}
-            stroke={ACCENT}
+            stroke={stroke}
             strokeWidth={sw}
             strokeLinecap="round"
             strokeDasharray={dash}
@@ -215,6 +220,7 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
             x2={shape.x + shape.w}
             y2={shape.y + shape.h}
             size={14}
+            color={stroke}
           />
         </g>
       );
@@ -224,8 +230,8 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
           {...attrs}
           points={shape.points.map((p) => `${p.x},${p.y}`).join(" ")}
           fill="none"
-          stroke={ACCENT}
-          strokeWidth={1.5}
+          stroke={stroke}
+          strokeWidth={sw}
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeDasharray={dash}
@@ -244,13 +250,13 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
             y1={shape.y}
             x2={shape.x + shape.w}
             y2={shape.y + shape.h}
-            stroke={ACCENT}
-            strokeWidth={1.75}
+            stroke={stroke}
+            strokeWidth={sw}
             strokeLinecap="round"
             strokeDasharray={dash}
           />
-          <circle cx={shape.x} cy={shape.y} r={3.5} fill={ACCENT} />
-          <circle cx={shape.x + shape.w} cy={shape.y + shape.h} r={3.5} fill={ACCENT} />
+          <circle cx={shape.x} cy={shape.y} r={3.5} fill={stroke} />
+          <circle cx={shape.x + shape.w} cy={shape.y + shape.h} r={3.5} fill={stroke} />
           <Chip cx={mcx} cy={mcy} text={text} scale={scale} />
         </g>
       );
@@ -267,10 +273,10 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
       const r = 20;
       return (
         <g {...attrs}>
-          <line x1={shape.x} y1={shape.y} x2={ex} y2={ey} stroke={ACCENT} strokeWidth={1.75} strokeLinecap="round" strokeDasharray={dash} />
-          <line x1={shape.x} y1={shape.y} x2={p2.x} y2={p2.y} stroke={ACCENT} strokeWidth={1.75} strokeLinecap="round" strokeDasharray={dash} />
-          <AngleArc vx={shape.x} vy={shape.y} a1={a1} a2={a2} r={r} />
-          <circle cx={shape.x} cy={shape.y} r={3} fill={ACCENT} />
+          <line x1={shape.x} y1={shape.y} x2={ex} y2={ey} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} />
+          <line x1={shape.x} y1={shape.y} x2={p2.x} y2={p2.y} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} />
+          <AngleArc vx={shape.x} vy={shape.y} a1={a1} a2={a2} r={r} color={stroke} />
+          <circle cx={shape.x} cy={shape.y} r={3} fill={stroke} />
           <Chip cx={shape.x + r + 16} cy={shape.y - r - 2} text={`${deg.toFixed(1)}°`} scale={scale} />
         </g>
       );
@@ -512,7 +518,7 @@ function AngleDraftLayer({ draft, scale }: { draft: AngleDraft; scale: number })
       {end2 && (
         <line x1={vertex.x} y1={vertex.y} x2={end2.x} y2={end2.y} stroke={ACCENT} strokeWidth={1.75} strokeDasharray="7 5" />
       )}
-      {end2 && <AngleArc vx={vertex.x} vy={vertex.y} a1={a1} a2={a2} r={20} />}
+      {end2 && <AngleArc vx={vertex.x} vy={vertex.y} a1={a1} a2={a2} r={20} color={ACCENT} />}
       <circle cx={vertex.x} cy={vertex.y} r={3} fill={ACCENT} />
       {end2 && (
         <Chip cx={vertex.x + 36} cy={vertex.y - 22} text={angleText(vertex, end1, end2)} scale={scale} />

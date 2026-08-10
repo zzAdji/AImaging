@@ -121,7 +121,13 @@ function ImageSection() {
       />
       <div className="flex items-center justify-between">
         <span className="text-[12px] text-ink-2">Invert</span>
-        <Toggle checked={w.inverted} onChange={w.setInverted} />
+        <Toggle
+          checked={w.inverted}
+          onChange={(v) => {
+            w.recordAiAction(v ? "Image inversée" : "Image réinversée");
+            w.setInverted(v);
+          }}
+        />
       </div>
       <div className="mt-2.5 flex gap-1.5">
         <button
@@ -201,7 +207,10 @@ function ImageSection() {
       <PresetChips
         options={WL_PRESETS}
         isActive={(p) => p.wl.window === w.wl.window && p.wl.level === w.wl.level}
-        onSelect={(p) => w.setWl(p.wl)}
+        onSelect={(p) => {
+          w.recordAiAction(`Fenêtrage ${p.label} appliqué`);
+          w.setWl(p.wl);
+        }}
       />
       <Divider className="mt-3" />
       <button
