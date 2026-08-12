@@ -1,22 +1,3 @@
-"""Convertit la sortie JSON de main_predict.py (module radiographie, deja
-livre et teste) en faits structures exploitables pour la generation de
-rapport. Cette couche ne genere AUCUN texte : elle extrait et organise
-des faits deja produits par le pipeline de classification, pour que le
-LLM (Phase C, pas encore implementee) n'ait jamais a deviner une
-information qu'on peut lui fournir directement.
-
-Rappel de la sortie de main_predict.py (voir training/main_predict.py) :
-{
-  "image": "...",
-  "num_models": N,
-  "per_model": [
-    {"architecture": ..., "checkpoint": ..., "predicted_class": ..., "probabilities": {...}}
-  ],
-  "ensemble_prediction": ...,
-  "ensemble_probabilities": {...}
-}
-"""
-
 from __future__ import annotations
 
 import json
@@ -36,11 +17,6 @@ class ModelVote:
 
 @dataclass
 class RadiologyPredictionFacts:
-    """Faits extraits d'une prediction radiographie, avant toute redaction
-    textuelle. C'est CE qui doit etre communique au LLM - jamais l'image
-    brute, jamais une reformulation deja interpretee.
-    """
-
     image_path: str
     predicted_class: str
     confidence: float  # probabilite de l'ensemble pour predicted_class
@@ -52,7 +28,7 @@ class RadiologyPredictionFacts:
     def unanimous(self) -> bool:
         """True si tous les modeles de l'ensemble predisent la meme classe
         que l'ensemble final - signal de confiance utile pour le LLM et
-        pour le controle de coherence (Phase D)."""
+        pour le controle de coherence."""
         return all(vote.predicted_class == self.predicted_class for vote in self.model_votes)
 
     @property
@@ -64,10 +40,6 @@ class RadiologyPredictionFacts:
         return agreeing / len(self.model_votes)
 
     def to_prompt_facts(self) -> str:
-        """Serialise les faits en texte compact destine au prompt LLM -
-        pas de mise en forme de rapport, juste les faits bruts, sans
-        aucune interpretation.
-        """
         lines = [
             f"Classe predite (ensemble) : {self.predicted_class}",
             f"Confiance de l'ensemble pour cette classe : {self.confidence:.1%}",

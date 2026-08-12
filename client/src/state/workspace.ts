@@ -179,6 +179,10 @@ export interface Shape {
   fillColor?: string;
   /** Per-shape visibility (hidden shapes are not rendered nor hit-tested) */
   visible?: boolean;
+  /** Provenance required by the AI action protocol. Existing user shapes default to "user". */
+  createdBy?: "user" | "ai";
+  /** Identifier of the structured AI action that created or last updated the shape. */
+  actionId?: string;
 }
 
 /* ------------------------------ Layer model ------------------------------ */

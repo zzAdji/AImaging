@@ -19,7 +19,17 @@ export interface ExamImage {
   name: string;
   src: string;
   dims: { w: number; h: number };
+  sourceKind?: "browser-image" | "dicom" | "unknown";
+  metadata?: ExamImageMetadata;
   state?: ExamImageState;
+}
+
+export interface ExamImageMetadata {
+  modality?: string;
+  studyInstanceUid?: string;
+  seriesInstanceUid?: string;
+  patientPseudonym?: string;
+  pixelSpacingMm?: [number, number];
 }
 
 export interface Examination {
@@ -118,6 +128,7 @@ export async function readImageFiles(files: File[] | FileList): Promise<ExamImag
       name: file.name.replace(/\.[^.]+$/, ""),
       src,
       dims,
+      sourceKind: "browser-image",
     });
   }
   return out;

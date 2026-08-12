@@ -1,0 +1,162 @@
+import { exportImageDataUrl } from "./exportImage";
+import type { ExamImage, Examination } from "./examinations";
+import { buildImageFilter, type Shape, type WlValue } from "../state/workspace";
+
+export const WORKSPACE_PROTOCOL_VERSION = "1.0" as const;
+
+export type AiActionType =
+  | "analyze_image" | "analyze_exam" | "predict" | "generate_gradcam" | "show_gradcam"
+  | "zoom_to_region" | "set_window_level" | "set_brightness" | "set_contrast" | "invert"
+  | "create_shape" | "update_shape" | "delete_shape" | "set_layer_visibility"
+  | "set_layer_opacity" | "generate_report" | "replace_report" | "notify";
+
+export interface PixelPoint { x: number; y: number }
+export interface PixelRegion { x: number; y: number; w: number; h: number }
+
+export interface WorkspaceCanvasShape {
+  id: string;
+  type: Shape["type"];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  points: PixelPoint[];
+  label?: string;
+  visible: boolean;
+  created_by: "user" | "ai";
+  action_id?: string;
+  style: {
+    color?: string;
+    stroke_color?: string;
+    fill_color?: string;
+    stroke_width?: number;
+    font_size?: number;
+    font_family?: "sans" | "serif" | "mono";
+    font_weight?: "normal" | "bold";
+  };
+}
+
+export interface WorkspaceManifest {
+  protocol_version: typeof WORKSPACE_PROTOCOL_VERSION;
+  exam_id: string;
+  exam_name: string;
+  active_image_id?: string;
+  images: Array<{
+    image_id: string;
+    name: string;
+    width: number;
+    height: number;
+    source_kind: "browser-image" | "dicom" | "unknown";
+    metadata: {
+      modality?: string;
+      study_instance_uid?: string;
+      series_instance_uid?: string;
+      patient_pseudonym?: string;
+      pixel_spacing_mm?: [number, number];
+    };
+    canvas: { shapes: WorkspaceCanvasShape[]; rendered_canvas?: string };
+  }>;
+}
+
+export interface AiActionBase {
+  id: string;
+  order: number;
+  type: AiActionType;
+  target_image_id?: string;
+  reason: string;
+  confidence?: number;
+}
+
+export interface AiActionPlan {
+  protocol_version: typeof WORKSPACE_PROTOCOL_VERSION;
+  summary: string;
+  actions: AiActionBase[];
+}
+
+export interface ActionValidationResult {
+  accepted: boolean;
+  plan: AiActionPlan;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface WorkspaceSession {
+  workspace_id: string;
+  protocol_version: string;
+  exam_id: string;
+  image_count: number;
+}
+
+export type ImageCanvasCapture = Record<string, string | undefined>;
+
+function toCanvasShape(shape: Shape): WorkspaceCanvasShape {
+  return {
+    id: shape.id,
+    type: shape.type,
+    x: shape.x,
+    y: shape.y,
+    w: shape.w,
+    h: shape.h,
+    points: shape.points.map((point) => ({ ...point })),
+    label: shape.label,
+    visible: shape.visible !== false,
+    created_by: shape.createdBy ?? "user",
+    action_id: shape.actionId,
+    style: {
+      color: shape.color,
+      stroke_color: shape.strokeColor,
+      fill_color: shape.fillColor,
+      stroke_width: shape.strokeWidth,
+      font_size: shape.fontSize,
+      font_family: shape.fontFamily,
+      font_weight: shape.fontWeight,
+    },
+  };
+}
+
+function imageShapes(image: ExamImage): Shape[] {
+  return image.state?.shapes ?? [];
+}
+
+/** Builds a JSON-only, pixel-coordinate context. Image files are deliberately sent separately. */
+export function buildWorkspaceManifest(
+  exam: Examination,
+  activeImageId?: string,
+  captures: ImageCanvasCapture = {},
+): WorkspaceManifest {
+  return {
+    protocol_version: WORKSPACE_PROTOCOL_VERSION,
+    exam_id: exam.id,
+    exam_name: exam.name,
+    active_image_id: activeImageId,
+    images: exam.images.map((image) => ({
+      image_id: image.id,
+      name: image.name,
+      width: image.dims.w,
+      height: image.dims.h,
+      source_kind: image.sourceKind ?? "browser-image",
+      metadata: {
+        modality: image.metadata?.modality ?? exam.modality,
+        study_instance_uid: image.metadata?.studyInstanceUid,
+        series_instance_uid: image.metadata?.seriesInstanceUid,
+        patient_pseudonym: image.metadata?.patientPseudonym,
+        pixel_spacing_mm: image.metadata?.pixelSpacingMm,
+      },
+      canvas: { shapes: imageShapes(image).map(toCanvasShape), rendered_canvas: captures[image.id] },
+    })),
+  };
+}
+
+/** Creates an annotated canvas capture only when a command needs visual context. */
+export async function captureAnnotatedImage(image: ExamImage): Promise<string> {
+  const state = image.state;
+  const wl: WlValue = state?.wl ?? { window: 255, level: 127.5 };
+  return exportImageDataUrl({
+    imageSrc: image.src,
+    dims: image.dims,
+    shapes: imageShapes(image),
+    filter: buildImageFilter(wl, state?.brightness ?? 50, state?.contrast ?? 50, state?.inverted ?? false),
+    format: "png",
+    quality: 1,
+  });
+}
