@@ -133,7 +133,7 @@ export function TitleBar({
                   onSelect: () => onOpenRecent(r),
                 })),
         },
-        { label: "Import DICOM…", shortcut: "Ctrl+Shift+I", disabled: true },
+        { label: "Import DICOM…", shortcut: "Ctrl+Shift+I", onSelect: onOpenImage },
         {
           label: "Save",
           shortcut: "Ctrl+S",

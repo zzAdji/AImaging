@@ -20,7 +20,7 @@ import { downloadDataUrl, exportImageDataUrl } from "../lib/exportImage";
 import { deriveMetadata } from "../lib/metadata";
 import {
   BC_PRESETS,
-  MM_PER_PX,
+  formatDistance,
   WL_PRESETS,
   buildImageFilter,
   isShapeVisible,
@@ -248,6 +248,7 @@ function DocumentSection() {
       dims: w.dims,
       shapes: w.shapes.filter((s) => isShapeVisible(s, w.layers)),
       filter: buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
+      pixelSpacingMm: w.pixelSpacingMm,
       format: "png",
     });
     downloadDataUrl(url, `${w.imageName}.png`);
@@ -466,9 +467,9 @@ function GradCamSection() {
 
 /* ------------------------------- Measurements ----------------------------- */
 
-function measureValue(s: Shape): string {
+function measureValue(s: Shape, pixelSpacingMm: ReturnType<typeof useWorkspace>["pixelSpacingMm"]): string {
   if (s.type === "measure" || s.type === "distance") {
-    return `${(Math.hypot(s.w, s.h) * MM_PER_PX).toFixed(1)} mm`;
+    return formatDistance(s.w, s.h, pixelSpacingMm);
   }
   if (s.type === "angle") {
     const p2 = s.points[0] ?? { x: s.x, y: s.y };
@@ -515,7 +516,7 @@ function MeasurementsSection() {
           >
             {measureLabel(s)}
           </span>
-          <span className="shrink-0 text-[11px] tabular-nums text-ink">{measureValue(s)}</span>
+          <span className="shrink-0 text-[11px] tabular-nums text-ink">{measureValue(s, w.pixelSpacingMm)}</span>
           <button
             type="button"
             data-attr={`measure-delete-${s.id}`}
@@ -773,8 +774,8 @@ function LayersSection() {
 function MetadataSection() {
   const w = useWorkspace();
   const tags = useMemo(
-    () => deriveMetadata({ name: w.imageName, dims: w.dims, imageSrc: w.imageSrc, wl: w.wl }),
-    [w.imageName, w.dims, w.imageSrc, w.wl],
+    () => deriveMetadata({ name: w.imageName, dims: w.dims, metadata: w.imageMetadata, wl: w.wl }),
+    [w.imageName, w.dims, w.imageMetadata, w.wl],
   );
   return (
     <Section id="metadata" title="Metadata">

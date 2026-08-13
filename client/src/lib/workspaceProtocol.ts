@@ -51,10 +51,33 @@ export interface WorkspaceManifest {
       modality?: string;
       study_instance_uid?: string;
       series_instance_uid?: string;
+      sop_instance_uid?: string;
+      frame_of_reference_uid?: string;
       patient_pseudonym?: string;
       pixel_spacing_mm?: [number, number];
+      body_part_examined?: string;
+      view_position?: string;
+      study_date?: string;
+      study_description?: string;
+      series_description?: string;
+      photometric_interpretation?: string;
+      rows?: number;
+      columns?: number;
+      bits_stored?: number;
+      window_center?: number;
+      window_width?: number;
+      number_of_frames?: number;
     };
-    canvas: { shapes: WorkspaceCanvasShape[]; rendered_canvas?: string };
+    canvas: {
+      shapes: WorkspaceCanvasShape[];
+      rendered_canvas?: string;
+      gradcam?: {
+        class_name: string;
+        model_count: number;
+        generated_at: string;
+        peak_region?: PixelRegion;
+      };
+    };
   }>;
 }
 
@@ -65,6 +88,8 @@ export interface AiActionBase {
   target_image_id?: string;
   reason: string;
   confidence?: number;
+  /** Action payload fields are validated by the server; the client executes known variants. */
+  [key: string]: unknown;
 }
 
 export interface AiActionPlan {
@@ -85,6 +110,11 @@ export interface WorkspaceSession {
   protocol_version: string;
   exam_id: string;
   image_count: number;
+  consistency_issues?: Array<{
+    level: "warning" | "error";
+    code: string;
+    message: string;
+  }>;
 }
 
 export type ImageCanvasCapture = Record<string, string | undefined>;
@@ -139,10 +169,33 @@ export function buildWorkspaceManifest(
         modality: image.metadata?.modality ?? exam.modality,
         study_instance_uid: image.metadata?.studyInstanceUid,
         series_instance_uid: image.metadata?.seriesInstanceUid,
+        sop_instance_uid: image.metadata?.sopInstanceUid,
+        frame_of_reference_uid: image.metadata?.frameOfReferenceUid,
         patient_pseudonym: image.metadata?.patientPseudonym,
         pixel_spacing_mm: image.metadata?.pixelSpacingMm,
+        body_part_examined: image.metadata?.bodyPartExamined,
+        view_position: image.metadata?.viewPosition,
+        study_date: image.metadata?.studyDate,
+        study_description: image.metadata?.studyDescription,
+        series_description: image.metadata?.seriesDescription,
+        photometric_interpretation: image.metadata?.photometricInterpretation,
+        rows: image.metadata?.rows,
+        columns: image.metadata?.columns,
+        bits_stored: image.metadata?.bitsStored,
+        window_center: image.metadata?.windowCenter,
+        window_width: image.metadata?.windowWidth,
+        number_of_frames: image.metadata?.numberOfFrames,
       },
-      canvas: { shapes: imageShapes(image).map(toCanvasShape), rendered_canvas: captures[image.id] },
+      canvas: {
+        shapes: imageShapes(image).map(toCanvasShape),
+        rendered_canvas: captures[image.id],
+        gradcam: image.gradcam ? {
+          class_name: image.gradcam.className,
+          model_count: image.gradcam.modelCount,
+          generated_at: image.gradcam.generatedAt,
+          peak_region: image.gradcam.peakRegion,
+        } : undefined,
+      },
     })),
   };
 }
@@ -156,6 +209,9 @@ export async function captureAnnotatedImage(image: ExamImage): Promise<string> {
     dims: image.dims,
     shapes: imageShapes(image),
     filter: buildImageFilter(wl, state?.brightness ?? 50, state?.contrast ?? 50, state?.inverted ?? false),
+    overlaySrc: image.gradcam?.heatmapDataUrl,
+    overlayOpacity: image.gradcam ? 0.62 : undefined,
+    pixelSpacingMm: image.metadata?.pixelSpacingMm,
     format: "png",
     quality: 1,
   });

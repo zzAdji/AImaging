@@ -6,16 +6,19 @@ import {
   IMAGE_SELECTION,
   SELECT_ALL,
   WorkspaceContext,
+  isPixelSpacingMm,
   randomId,
   shapeBBox,
   shapeLayerId,
   type AiDiagnosis,
+  type AiCommandResolver,
   type AiFocus,
   type AiHistoryItem,
   type AiResults,
   type LayerDef,
   type LayerId,
   type ImageStateSnapshot,
+  type PixelSpacingMm,
   type Prefs,
   type SectionId,
   type Shape,
@@ -24,8 +27,10 @@ import {
   type WorkspaceState,
   type WlValue,
 } from "./workspace";
+import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import { amendReportText, mockDiagnostics, mockReport, parseAiCommand, type AiCommandAction, type RegionFrac } from "../lib/aiCommands";
+import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -329,6 +334,16 @@ export function WorkspaceProvider({
   /* -------------------------------- Layers -------------------------------- */
 
   const [layers, setLayers] = useState<LayerDef[]>(DEFAULT_LAYERS);
+  const gradcamResultRef = useRef<GradCamResult | null>(null);
+  const [gradcamResult, setGradcamResultState] = useState<GradCamResult | null>(null);
+  const setGradcamResult = useCallback((result: GradCamResult | null) => {
+    gradcamResultRef.current = result;
+    setGradcamResultState(result);
+  }, []);
+  const [pixelSpacingMm, setPixelSpacingMmState] = useState<PixelSpacingMm | null>(null);
+  const setPixelSpacingMm = useCallback((spacing: PixelSpacingMm | null) => {
+    setPixelSpacingMmState(spacing);
+  }, []);
   const [gradcamOn, setGradcamOnState] = useState(false);
   const setGradcamOn = useCallback((v: boolean) => {
     setGradcamOnState(v);
@@ -403,7 +418,12 @@ export function WorkspaceProvider({
     );
   }, []);
   const [imageSrc, setImageSrc] = useState("");
+  const [imageId, setImageId] = useState<string | null>(null);
   const [imageName, setImageName] = useState("Chest X-Ray — PA");
+  const [imageMetadata, setImageMetadataState] = useState<ExamImageMetadata | null>(null);
+  const setImageMetadata = useCallback((metadata: ExamImageMetadata | null) => {
+    setImageMetadataState(metadata);
+  }, []);
   const [fitSignal, setFitSignal] = useState<{ a: number; b: number }>({ a: 0, b: 0 });
   const [dims, setDims] = useState({ w: 1200, h: 1063 });
   const [crop, setCrop] = useState<WorkspaceState["crop"]>(null);
@@ -557,13 +577,33 @@ export function WorkspaceProvider({
     diagnostics: [],
     report: null,
     lastSummary: null,
+    lastResponse: null,
+    lastWarnings: [],
+    lastLimitations: [],
+    modelName: null,
+    modelCount: null,
   });
+  const setAiDiagnostics = useCallback((diagnostics: AiDiagnosis[], metadata?: { modelName?: string; modelCount?: number }) => {
+    setAiResults((results) => ({
+      ...results,
+      diagnostics,
+      modelName: metadata?.modelName ?? results.modelName,
+      modelCount: metadata?.modelCount ?? results.modelCount,
+    }));
+    setAnalysis("done");
+  }, []);
   const [aiFocus, setAiFocus] = useState<AiFocus | null>(null);
   const [aiThought, setAiThought] = useState<{ id: string; text: string } | null>(null);
   const [reportEditOpen, setReportEditOpen] = useState(false);
   const [reportDraft, setReportDraft] = useState("");
   const aiTimer = useRef<number | null>(null);
   const aiThoughtTimers = useRef<number[]>([]);
+  const commandResolverRef = useRef<AiCommandResolver | null>(null);
+  const executePlanRef = useRef<(plan: AiActionPlan) => { appliedActionIds: string[]; warnings: string[] }>(() => ({ appliedActionIds: [], warnings: [] }));
+
+  const setAiCommandResolver = useCallback((resolver: AiCommandResolver | null) => {
+    commandResolverRef.current = resolver;
+  }, []);
 
   const openReportEditor = useCallback(() => {
     setReportDraft(aiResults.report ?? "");
@@ -665,6 +705,51 @@ export function WorkspaceProvider({
     (raw: string) => {
       const text = raw.trim();
       if (!text) return;
+      if (commandResolverRef.current) {
+        const item: AiHistoryItem = { id: randomId(), text, summary: "Commande en cours…", at: Date.now() };
+        setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
+        setAiBusy(true);
+        setAiThought({ id: item.id, text: "Validation de la commande structurée…" });
+        void commandResolverRef.current(text)
+          .then((resolution) => {
+            const result = executePlanRef.current(resolution.plan);
+            const warnings = [...(resolution.warnings ?? []), ...result.warnings];
+            const actionSummary = result.appliedActionIds.length
+              ? `${result.appliedActionIds.length} action(s) appliquée(s).`
+              : "Aucune action canvas appliquée.";
+            const summary = `${actionSummary}${warnings.length ? ` ${warnings[0]}` : ""}`;
+            setAiHistory((history) => history.map((entry) => entry.id === item.id ? {
+              ...entry,
+              summary,
+              answer: resolution.assistantMessage,
+              warnings,
+              limitations: resolution.limitations ?? [],
+            } : entry));
+            setAiResults((results) => ({
+              ...results,
+              lastSummary: summary,
+              lastResponse: resolution.assistantMessage,
+              lastWarnings: warnings,
+              lastLimitations: resolution.limitations ?? [],
+            }));
+          })
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : "Commande impossible à traiter.";
+            setAiHistory((history) => history.map((entry) => entry.id === item.id ? { ...entry, summary: message } : entry));
+            setAiResults((results) => ({
+              ...results,
+              lastSummary: message,
+              lastResponse: message,
+              lastWarnings: [],
+              lastLimitations: [],
+            }));
+          })
+          .finally(() => {
+            setAiBusy(false);
+            setAiThought(null);
+          });
+        return;
+      }
       const action = parseAiCommand(text);
       const item: AiHistoryItem = { id: randomId(), text, summary: "En cours…", at: Date.now() };
       setAiHistory((h) => [{ ...item }, ...h].slice(0, 20));
@@ -726,7 +811,10 @@ export function WorkspaceProvider({
             break;
           }
           case "gradcam":
-            setGradcamOn(true);
+            setAiResults((r) => ({
+              ...r,
+              lastWarnings: ["Ouvrez un examen pour calculer une Grad-CAM rÃ©elle sur le serveur."],
+            }));
             break;
           case "report": {
             const fresh = mockReport(imageName);
@@ -812,6 +900,151 @@ export function WorkspaceProvider({
     ],
   );
 
+  /** Executes only actions that target the image currently loaded in this provider.
+   *  The shell will route multi-image plans to the appropriate image in the next
+   *  integration step. Keeping the transaction here guarantees one Ctrl+Z.
+   */
+  const executeAiActionPlan = useCallback((plan: AiActionPlan) => {
+    const appliedActionIds: string[] = [];
+    const warnings: string[] = [];
+    const actionList = [...plan.actions].sort((a, b) => a.order - b.order);
+    const actionShapeIds = new Set<string>();
+
+    pushHistory();
+    for (const action of actionList) {
+      const payload = action as typeof action & Record<string, unknown>;
+      if (action.target_image_id && action.target_image_id !== imageId) {
+        warnings.push(`Action ${action.id} ignorée : elle cible une autre image.`);
+        continue;
+      }
+      switch (action.type) {
+        case "set_window_level":
+          setWl({ window: Number(payload.window), level: Number(payload.level) });
+          break;
+        case "set_brightness":
+          setBrightness(Number(payload.value));
+          break;
+        case "set_contrast":
+          setContrast(Number(payload.value));
+          break;
+        case "invert":
+          setInverted(Boolean(payload.value));
+          break;
+        case "show_gradcam":
+          if (!gradcamResultRef.current) {
+            warnings.push("Aucune Grad-CAM réelle n'est disponible pour cette image.");
+            continue;
+          }
+          setGradcamOn(Boolean(payload.visible));
+          setGradcamIntensity(Number(payload.opacity));
+          break;
+        case "zoom_to_region": {
+          const region = payload.region as { x: number; y: number; w: number; h: number };
+          setAiFocus({ ...region, ts: Date.now() });
+          break;
+        }
+        case "create_shape": {
+          const source = payload.shape as {
+            id: string; type: Shape["type"]; x: number; y: number; w: number; h: number;
+            points?: Array<{ x: number; y: number }>; label?: string; visible?: boolean;
+            style?: { color?: string; stroke_color?: string; fill_color?: string; stroke_width?: number;
+              font_size?: number; font_family?: Shape["fontFamily"]; font_weight?: Shape["fontWeight"] };
+          };
+          const style = source.style ?? {};
+          const shape: Shape = {
+            id: source.id,
+            type: source.type,
+            x: source.x,
+            y: source.y,
+            w: source.w,
+            h: source.h,
+            points: source.points ?? [],
+            label: source.label,
+            visible: source.visible,
+            strokeWidth: style.stroke_width ?? 2,
+            strokeColor: style.stroke_color,
+            fillColor: style.fill_color,
+            color: style.color,
+            fontSize: style.font_size,
+            fontFamily: style.font_family,
+            fontWeight: style.font_weight,
+            createdBy: "ai",
+            actionId: action.id,
+          };
+          commit([...shapesRef.current, shape]);
+          actionShapeIds.add(shape.id);
+          setSelection(shape.id);
+          break;
+        }
+        case "delete_shape": {
+          const shapeId = String(payload.shape_id);
+          commit(shapesRef.current.filter((shape) => shape.id !== shapeId));
+          break;
+        }
+        case "update_shape": {
+          const shapeId = String(payload.shape_id);
+          const patch = payload.patch as Record<string, unknown>;
+          const style = patch.style as Record<string, unknown> | undefined;
+          commit(shapesRef.current.map((shape) => shape.id !== shapeId ? shape : {
+            ...shape,
+            x: typeof patch.x === "number" ? patch.x : shape.x,
+            y: typeof patch.y === "number" ? patch.y : shape.y,
+            w: typeof patch.w === "number" ? patch.w : shape.w,
+            h: typeof patch.h === "number" ? patch.h : shape.h,
+            points: Array.isArray(patch.points) ? patch.points as Shape["points"] : shape.points,
+            label: typeof patch.label === "string" ? patch.label : shape.label,
+            visible: typeof patch.visible === "boolean" ? patch.visible : shape.visible,
+            color: typeof style?.color === "string" ? style.color : shape.color,
+            strokeColor: typeof style?.stroke_color === "string" ? style.stroke_color : shape.strokeColor,
+            fillColor: typeof style?.fill_color === "string" ? style.fill_color : shape.fillColor,
+            strokeWidth: typeof style?.stroke_width === "number" ? style.stroke_width : shape.strokeWidth,
+            fontSize: typeof style?.font_size === "number" ? style.font_size : shape.fontSize,
+            actionId: action.id,
+          }));
+          break;
+        }
+        case "set_layer_visibility":
+          setLayerVisible(String(payload.layer) as LayerId, Boolean(payload.visible));
+          break;
+        case "set_layer_opacity":
+          setLayerOpacity(String(payload.layer) as LayerId, Number(payload.opacity));
+          break;
+        case "replace_report":
+          if (typeof payload.text === "string") {
+            const text = payload.text;
+            setAiResults((results) => ({ ...results, report: text }));
+          }
+          break;
+        case "notify":
+          if (typeof payload.message === "string") warnings.push(payload.message);
+          break;
+        case "analyze_image":
+        case "analyze_exam":
+        case "predict":
+          setAnalysis("done");
+          break;
+        case "generate_gradcam":
+          if (!gradcamResultRef.current) {
+            warnings.push("La génération Grad-CAM n'a pas fourni de carte exploitable.");
+            continue;
+          }
+          break;
+        case "generate_report":
+          warnings.push(`Action ${action.type} planifiée mais son service backend n'est pas encore relié.`);
+          continue;
+      }
+      appliedActionIds.push(action.id);
+    }
+    if (appliedActionIds.length === 0) {
+      /* Aucun changement : retire l'instantané inutile créé pour cette transaction. */
+      pastRef.current.pop();
+      setCanUndo(pastRef.current.length > 0);
+    }
+    if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajouté(s) par l'IA.`);
+    return { appliedActionIds, warnings };
+  }, [commit, imageId, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setWl]);
+  executePlanRef.current = executeAiActionPlan;
+
   const requestFit = useCallback((pane?: "A" | "B") => {
     const p = pane ?? activePaneRef.current;
     setZoomPreset("fit");
@@ -830,31 +1063,37 @@ export function WorkspaceProvider({
     setInverted(false);
     setCrop(null);
     setGradcamOn(false);
+    setGradcamResult(null);
+    setPixelSpacingMm(null);
     setSelection(null);
-  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted]);
+  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamResult, setPixelSpacingMm]);
 
   const openImageData = useCallback(
-    (dataUrl: string, name: string) => {
+    (dataUrl: string, name: string, nextImageId?: string) => {
       resetDocument();
       resetImageAdjustments();
       setImageSrc(dataUrl);
+      setImageId(nextImageId ?? null);
       setImageName(name);
+      setImageMetadata(null);
       setDims({ w: 0, h: 0 });
       setZoomPreset("fit");
       setFitSignal((s) => ({ a: s.a + 1, b: s.b + 1 }));
     },
-    [resetDocument, resetImageAdjustments],
+    [resetDocument, resetImageAdjustments, setImageMetadata],
   );
 
   const closeDocument = useCallback(() => {
     resetDocument();
     resetImageAdjustments();
     setImageSrc("");
+    setImageId(null);
     setImageName("Untitled");
+    setImageMetadata(null);
     setDims({ w: 0, h: 0 });
     setZoomPreset("fit");
     setFitSignal((s) => ({ a: s.a + 1, b: s.b + 1 }));
-  }, [resetDocument, resetImageAdjustments]);
+  }, [resetDocument, resetImageAdjustments, setImageMetadata]);
 
   const captureImageState = useCallback((): ImageStateSnapshot & { name: string; dims: { w: number; h: number } } | null => {
     if (!imageSrc) return null;
@@ -877,6 +1116,7 @@ export function WorkspaceProvider({
     (s: ImageStateSnapshot) => {
       setImageSrc(s.src);
       setImageName(s.name || "Untitled");
+      setImageMetadata(null);
       setDims(s.dims ?? { w: 0, h: 0 });
       commit(s.shapes);
       setWl(s.wl);
@@ -890,7 +1130,7 @@ export function WorkspaceProvider({
       setZoomPreset("fit");
       setFitSignal((sig) => ({ a: sig.a + 1, b: sig.b + 1 }));
     },
-    [commit, setWl, setBrightness, setContrast, setInverted, setRotation, setFlipH, setFlipV],
+    [commit, setWl, setBrightness, setContrast, setInverted, setRotation, setFlipH, setFlipV, setImageMetadata],
   );
 
   const saveDocument = useCallback(
@@ -909,6 +1149,8 @@ export function WorkspaceProvider({
         contrast,
         inverted,
         rotation,
+        imageMetadata,
+        pixelSpacingMm,
         savedAt: new Date().toISOString(),
       };
       try {
@@ -919,7 +1161,7 @@ export function WorkspaceProvider({
       if (name) setImageName(n);
       return { name: n, savedAt: doc.savedAt, doc };
     },
-    [imageSrc, imageName, dims, shapesRef, wl, brightness, contrast, inverted, rotation],
+    [imageSrc, imageName, dims, shapesRef, wl, brightness, contrast, inverted, rotation, imageMetadata, pixelSpacingMm],
   );
 
   /* ------------------------- Auto-save + restore (44) ------------------------ */
@@ -956,6 +1198,8 @@ export function WorkspaceProvider({
           contrast?: unknown;
           inverted?: unknown;
           rotation?: unknown;
+          imageMetadata?: unknown;
+          pixelSpacingMm?: unknown;
         };
         if (typeof d.imageSrc !== "string" || !d.imageSrc) return;
         const restored = (Array.isArray(d.shapes) ? d.shapes : []).filter(
@@ -974,6 +1218,10 @@ export function WorkspaceProvider({
         if (typeof d.contrast === "number") setContrast(d.contrast);
         if (typeof d.inverted === "boolean") setInverted(d.inverted);
         if (typeof d.rotation === "number") setRotation(d.rotation);
+        if (typeof d.imageMetadata === "object" && d.imageMetadata !== null) {
+          setImageMetadata(d.imageMetadata as ExamImageMetadata);
+        }
+        if (isPixelSpacingMm(d.pixelSpacingMm)) setPixelSpacingMm(d.pixelSpacingMm);
         setSelection(null);
       } catch {
         /* corrupt snapshot — ignore */
@@ -982,7 +1230,7 @@ export function WorkspaceProvider({
     return () => {
       cancelled = true;
     };
-  }, [setShapesState, setImageSrc, setImageName, setDims, setWl, setBrightness, setContrast, setInverted, setRotation, setSelection, autoRestore]);
+  }, [setShapesState, setImageSrc, setImageName, setDims, setWl, setBrightness, setContrast, setInverted, setRotation, setImageMetadata, setPixelSpacingMm, setSelection, autoRestore]);
 
   const value = useMemo<WorkspaceState>(
     () => ({
@@ -1056,6 +1304,10 @@ export function WorkspaceProvider({
       setGradcamOn,
       gradcamIntensity,
       setGradcamIntensity,
+      gradcamResult,
+      setGradcamResult,
+      pixelSpacingMm,
+      setPixelSpacingMm,
       wl,
       setWl,
       brightness,
@@ -1085,9 +1337,12 @@ export function WorkspaceProvider({
       aiActionLog,
       recordAiAction,
       aiResults,
+      setAiDiagnostics,
       aiFocus,
       focusAiRegion,
       runAiCommand,
+      setAiCommandResolver,
+      executeAiActionPlan,
       aiThought,
       reportEditOpen, setReportEditOpen,
       reportDraft, setReportDraft,
@@ -1096,8 +1351,12 @@ export function WorkspaceProvider({
       setCursorPos,
       imageSrc,
       setImageSrc,
+      imageId,
+      setImageId,
       imageName,
       setImageName,
+      imageMetadata,
+      setImageMetadata,
       openImageData,
       closeDocument,
       saveDocument,
@@ -1128,7 +1387,7 @@ export function WorkspaceProvider({
       toolbarOpen,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
-      gradcamOn, gradcamIntensity, wl, setWl,
+      gradcamOn, gradcamIntensity, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       collapsed, toggleSection, analysis,
       runAnalysis,
@@ -1136,10 +1395,10 @@ export function WorkspaceProvider({
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
       aiActionLog, recordAiAction,
-      aiResults, aiFocus, focusAiRegion, runAiCommand, aiThought,
+      aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,
-      cursorPos, setCursorPos, imageSrc, imageName, openImageData,
+      cursorPos, setCursorPos, imageSrc, imageId, imageName, imageMetadata, setImageMetadata, openImageData,
       closeDocument, saveDocument, captureImageState, applyImageState, fitSignal, requestFit,
       layers, setLayerVisible, setLayerLocked, setLayerName, setLayerOpacity,
       moveLayer, deleteLayerContent,

@@ -35,9 +35,12 @@ import {
 import { downloadDataUrl, downloadJson, exportImageDataUrl } from "./lib/exportImage";
 import {
   loadExaminations,
+  isRadiographyCompatible,
+  readImportedImageFiles,
   saveExaminations,
   type ExamImageState,
   type Examination,
+  type GradCamResult,
 } from "./lib/examinations";
 import {
   getLastFileHandle,
@@ -49,6 +52,16 @@ import { SHORTCUTS } from "./lib/shortcuts";
 import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
 import { cn } from "./lib/cn";
+import { buildWorkspaceManifest, captureAnnotatedImage, type AiActionPlan } from "./lib/workspaceProtocol";
+import {
+  analyzeWorkspaceImages,
+  createWorkspaceExam,
+  generateWorkspaceGradcam,
+  generateRadiographyReport,
+  parseExplicitCommand,
+  runWorkspaceAgentTurn,
+  type RadiographyPrediction,
+} from "./lib/workspaceApi";
 
 const TOOL_KEYS: Record<string, ToolId> = {
   v: "move",
@@ -92,16 +105,46 @@ type FileWindow = Window & {
   }) => Promise<FileSystemFileHandle[]>;
 };
 
+async function captureCanvasContext(
+  images: Examination["images"],
+  requestedImageIds: string[],
+): Promise<{ captures: Record<string, string>; warnings: string[] }> {
+  const captures: Record<string, string> = {};
+  const warnings: string[] = [];
+  const imageById = new Map(images.map((image) => [image.id, image]));
+  for (const imageId of [...new Set(requestedImageIds)]) {
+    const image = imageById.get(imageId);
+    if (!image) {
+      warnings.push(`Contexte visuel ignoré : image inconnue '${imageId}'.`);
+      continue;
+    }
+    if (image.dims.w <= 0 || image.dims.h <= 0) {
+      warnings.push(`Contexte visuel indisponible pour '${image.name}' : dimensions inconnues.`);
+      continue;
+    }
+    try {
+      captures[image.id] = await captureAnnotatedImage(image);
+    } catch {
+      warnings.push(`La capture canvas de '${image.name}' n'a pas pu être créée.`);
+    }
+  }
+  return { captures, warnings };
+}
+
 function Shell({
   examCtx,
   exams,
   onBack,
   onSaveImageState,
+  onSavePredictions,
+  onSaveGradcams,
 }: {
   examCtx: { examId: string; index: number } | null;
   exams: Examination[];
   onBack: () => void;
   onSaveImageState: (examId: string, index: number, state: EditorSnapshot) => void;
+  onSavePredictions: (examId: string, predictions: Record<string, RadiographyPrediction>) => void;
+  onSaveGradcams: (examId: string, gradcams: Record<string, GradCamResult>) => void;
 }) {
   const w = useWorkspace();
   const { aiMode, splitOn, setSplitOn } = w;
@@ -118,8 +161,217 @@ function Shell({
   const [quality, setQuality] = useState(0.9);
   const [saveAsName, setSaveAsName] = useState("");
   const [imageIndex, setImageIndex] = useState(examCtx?.index ?? 0);
+  const autoAnalysisStartedFor = useRef<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const exam = examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null;
+
+  const applyPrediction = useCallback((prediction: RadiographyPrediction) => {
+    const diagnostics = Object.entries(prediction.ensemble_probabilities)
+      .sort(([, left], [, right]) => right - left)
+      .map(([label, prob]) => ({
+        label,
+        prob,
+        severity: prob >= 0.7 ? "high" as const : prob >= 0.3 ? "medium" as const : "low" as const,
+      }));
+    w.setAiDiagnostics(diagnostics, {
+      modelName: prediction.per_model.map((model) => model.architecture).join(" + "),
+      modelCount: prediction.num_models,
+    });
+  }, [w]);
+
+  const analyzeExamImages = useCallback(async (scope: "active" | "all" = "active") => {
+    if (!exam) throw new Error("Ouvrez un examen avant de lancer une analyse.");
+    const snapshot = w.captureImageState();
+    const current = exam.images[imageIndex];
+    if (!current) throw new Error("Image active introuvable.");
+    const synchronizedExam = {
+      ...exam,
+      images: exam.images.map((image, index) => index === imageIndex && snapshot ? { ...image, state: snapshot } : image),
+    };
+    const session = await createWorkspaceExam(buildWorkspaceManifest(synchronizedExam, current.id));
+    const requestedTargets = scope === "all" ? synchronizedExam.images : [current];
+    const unsupportedTargets = requestedTargets.filter((image) => !isRadiographyCompatible(image));
+    const targets = requestedTargets.filter(isRadiographyCompatible);
+    if (targets.length === 0) {
+      throw new Error("Le modèle radiographique accepte uniquement les DICOM CR ou DX ; aucune image compatible n'est sélectionnée.");
+    }
+    setAnalysisProgress({ completed: 0, total: targets.length });
+    const response = await analyzeWorkspaceImages(session.workspace_id, targets);
+    [
+      ...(session.consistency_issues ?? []).map((issue) => issue.message),
+      ...response.warnings,
+      ...unsupportedTargets.map((image) => `${image.name} : modèle radiographique non applicable à la modalité ${image.metadata?.modality ?? "DICOM inconnue"}.`),
+    ]
+      .filter((message, index, all) => all.indexOf(message) === index)
+      .forEach((warning) => w.recordAiAction(`Cohérence examen : ${warning}`));
+    setAnalysisProgress({ completed: response.results.length, total: targets.length });
+    onSavePredictions(exam.id, Object.fromEntries(response.results.map((result) => [result.image_id, result.prediction])));
+    const activeResult = response.results.find((result) => result.image_id === current.id);
+    if (!activeResult) throw new Error("Le serveur n'a pas renvoyé de résultat pour l'image active.");
+    applyPrediction(activeResult.prediction);
+  }, [applyPrediction, exam, imageIndex, onSavePredictions, w]);
+
+  useEffect(() => {
+    if (!analysisProgress || analysisProgress.completed !== analysisProgress.total) return;
+    const timer = window.setTimeout(() => setAnalysisProgress(null), 350);
+    return () => window.clearTimeout(timer);
+  }, [analysisProgress]);
+
+  useEffect(() => {
+    if (!exam) {
+      w.setAiCommandResolver(null);
+      return;
+    }
+    w.setAiCommandResolver(async (text) => {
+      const snapshot = w.captureImageState();
+      const current = exam.images[imageIndex];
+      if (!current) throw new Error("Image active introuvable.");
+      const synchronizedExam = {
+        ...exam,
+        images: exam.images.map((image, index) => index === imageIndex && snapshot ? { ...image, state: snapshot } : image),
+      };
+      const generatePlanGradcams = async (workspaceId: string, plan: AiActionPlan) => {
+        const warnings: string[] = [];
+        const generated: Record<string, GradCamResult> = {};
+        for (const action of plan.actions.filter((item) => item.type === "generate_gradcam")) {
+          const targetImageId = action.target_image_id ?? current.id;
+          const targetImage = synchronizedExam.images.find((image) => image.id === targetImageId);
+          if (!targetImage) {
+            warnings.push(`Grad-CAM ignorée : image inconnue '${targetImageId}'.`);
+            continue;
+          }
+          if (!isRadiographyCompatible(targetImage)) {
+            warnings.push(`Grad-CAM ignorée pour '${targetImage.name}' : le modèle radiographique n'accepte que les DICOM CR ou DX.`);
+            continue;
+          }
+          const requestedClass = typeof action.class_name === "string"
+            ? action.class_name
+            : targetImage.prediction?.ensemble_prediction;
+          if (targetImage.gradcam && (!requestedClass || targetImage.gradcam.className === requestedClass)) {
+            generated[targetImageId] = targetImage.gradcam;
+            if (targetImageId === current.id) w.setGradcamResult(targetImage.gradcam);
+            continue;
+          }
+          try {
+            const response = await generateWorkspaceGradcam(workspaceId, targetImage, requestedClass);
+            generated[targetImageId] = response.result;
+            if (targetImageId === current.id) w.setGradcamResult(response.result);
+          } catch (error) {
+            warnings.push(error instanceof Error ? error.message : "Échec de la génération Grad-CAM.");
+          }
+        }
+        if (Object.keys(generated).length > 0) onSaveGradcams(exam.id, generated);
+        return warnings;
+      };
+      const withoutHandledForeignGradcams = (plan: AiActionPlan): AiActionPlan => ({
+        ...plan,
+        actions: plan.actions.filter((action) => {
+          if (!action.target_image_id || action.target_image_id === current.id) return true;
+          return action.type !== "generate_gradcam" && action.type !== "show_gradcam";
+        }),
+      });
+
+      if (!text.startsWith("@")) {
+        const activeCapture = await captureCanvasContext(synchronizedExam.images, [current.id]);
+        const predictions = Object.fromEntries(
+          synchronizedExam.images
+            .filter((image): image is typeof image & { prediction: RadiographyPrediction } => Boolean(image.prediction))
+            .map((image) => [image.id, image.prediction]),
+        );
+        const requestTurn = async (captures: Record<string, string>) => {
+          const manifest = buildWorkspaceManifest(synchronizedExam, current.id, captures);
+          const session = await createWorkspaceExam(manifest);
+          const turn = await runWorkspaceAgentTurn(
+              session.workspace_id,
+              text,
+              predictions,
+              { available: Object.keys(captures).length > 0, image_ids: Object.keys(captures) },
+            );
+          return {
+            turn,
+            workspaceId: session.workspace_id,
+            consistencyWarnings: (session.consistency_issues ?? []).map((issue) => issue.message),
+          };
+        };
+
+        let captureWarnings = activeCapture.warnings;
+        let captures = activeCapture.captures;
+        let turnRequest = await requestTurn(captures);
+        let turn = turnRequest.turn;
+        const requiredImageIds = turn.needs_visual_context === "all_exam_images"
+          ? synchronizedExam.images.map((image) => image.id)
+          : turn.needs_visual_context === "target_images"
+            ? turn.target_visual_image_ids
+            : turn.needs_visual_context === "active_image"
+              ? [current.id]
+              : [];
+        const missingImageIds = requiredImageIds.filter((imageId) => !captures[imageId]);
+        if (missingImageIds.length > 0) {
+          const additionalCapture = await captureCanvasContext(synchronizedExam.images, missingImageIds);
+          captureWarnings = [...captureWarnings, ...additionalCapture.warnings];
+          if (Object.keys(additionalCapture.captures).length > 0) {
+            captures = { ...captures, ...additionalCapture.captures };
+            turnRequest = await requestTurn(captures);
+            turn = turnRequest.turn;
+          }
+        }
+        const gradcamWarnings = await generatePlanGradcams(turnRequest.workspaceId, turn.validation.plan);
+        const localPlan = withoutHandledForeignGradcams(turn.validation.plan);
+
+        return {
+          plan: localPlan,
+          assistantMessage: turn.clarifying_question
+            ? `${turn.assistant_message}\n\n${turn.clarifying_question}`
+            : turn.assistant_message,
+          warnings: [
+            ...captureWarnings,
+            ...turnRequest.consistencyWarnings,
+            ...gradcamWarnings,
+            ...turn.warnings,
+            ...turn.validation.warnings,
+            ...turn.validation.errors,
+          ],
+          limitations: turn.limitations,
+        };
+      }
+
+      const manifest = buildWorkspaceManifest(synchronizedExam, current.id);
+      const session = await createWorkspaceExam(manifest);
+      const consistencyWarnings = (session.consistency_issues ?? []).map((issue) => issue.message);
+      const parsed = await parseExplicitCommand(session.workspace_id, text);
+      if (parsed.command === "analyze" || parsed.command === "predict") {
+        await analyzeExamImages(/image:all\b/.test(text) ? "all" : "active");
+      }
+      if (parsed.command === "report") {
+        if (!current.prediction) {
+          throw new Error("Aucune prédiction disponible. Lancez d'abord @analyze ou @predict.");
+        }
+        const generated = await generateRadiographyReport(current.prediction);
+        const reportAction = parsed.plan.actions.find((action) => action.type === "generate_report");
+        if (!reportAction) throw new Error("Le plan de rapport est invalide.");
+        const plan: AiActionPlan = {
+          ...parsed.plan,
+          summary: generated.coherence_passed
+            ? "Rapport Gemini généré à partir de la prédiction de l'image active."
+            : "Rapport généré avec avertissements de cohérence.",
+          actions: [{ ...reportAction, type: "replace_report" as const, text: generated.rendered_text }],
+        };
+        return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
+      }
+      const gradcamWarnings = await generatePlanGradcams(session.workspace_id, parsed.plan);
+      const foreignTargets = parsed.plan.actions
+        .filter((action) => action.type !== "generate_gradcam" && action.type !== "show_gradcam")
+        .map((action) => action.target_image_id)
+        .filter((target): target is string => Boolean(target && target !== current.id));
+      if (foreignTargets.length > 0) {
+        throw new Error("Cette version exécute les commandes uniquement sur l'image active. Sélectionnez l'image ciblée puis relancez la commande.");
+      }
+      const localPlan = withoutHandledForeignGradcams(parsed.plan);
+      return { plan: localPlan, assistantMessage: parsed.plan.summary, warnings: [...consistencyWarnings, ...gradcamWarnings] };
+    });
+    return () => w.setAiCommandResolver(null);
+  }, [analyzeExamImages, exam, imageIndex, onSaveGradcams, w]);
 
   /* Load / restore the examination image into the editor */
   useEffect(() => {
@@ -128,11 +380,31 @@ function Shell({
     if (!img) return;
     if (img.state) {
       w.applyImageState(img.state);
+      w.setImageId(img.id);
     } else {
-      w.openImageData(img.src, img.name);
+      w.openImageData(img.src, img.name, img.id);
     }
+    if (img.prediction) applyPrediction(img.prediction);
+    w.setImageMetadata(img.metadata ?? null);
+    w.setPixelSpacingMm(img.metadata?.pixelSpacingMm ?? null);
+    w.setGradcamResult(img.gradcam ?? null);
+    w.setGradcamOn(Boolean(img.gradcam));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examCtx?.examId, imageIndex]);
+
+  useEffect(() => {
+    if (!exam || exam.images.length === 0 || exam.images.every((image) => image.prediction)) return;
+    if (autoAnalysisStartedFor.current === exam.id) return;
+    autoAnalysisStartedFor.current = exam.id;
+    if (!exam.images.some(isRadiographyCompatible)) {
+      w.recordAiAction("Analyse automatique ignorée : aucun DICOM CR/DX compatible avec le modèle radiographique.");
+      return;
+    }
+    void analyzeExamImages("all").catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Analyse automatique impossible.";
+      w.recordAiAction(`Analyse automatique : ${message}`);
+    });
+  }, [analyzeExamImages, exam, w]);
 
   const switchImage = (i: number) => {
     if (!exam || i === imageIndex) return;
@@ -158,15 +430,19 @@ function Shell({
   };
 
   const openFile = useCallback(async (file: File) => {
-    const name = file.name.replace(/\.[^.]+$/, "");
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
-    w.openImageData(dataUrl, name);
-    recordRecent(name, dataUrl);
+    const imported = await readImportedImageFiles([file]);
+    const image = imported.images[0];
+    if (!image) {
+      throw new Error(imported.warnings[0] ?? `Impossible d'ouvrir '${file.name}'.`);
+    }
+    w.openImageData(image.src, image.name);
+    w.setImageMetadata(image.metadata ?? null);
+    w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
+    imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
+    if (imported.images.length > 1) {
+      w.recordAiAction(`Import : DICOM multi-frame détecté ; la première frame est ouverte dans cet espace autonome.`);
+    }
+    recordRecent(image.name, image.src);
   }, [w]);
 
   const openImage = useCallback(async () => {
@@ -226,6 +502,7 @@ function Shell({
       dims: w.dims,
       shapes: w.shapes,
       filter: buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
+      pixelSpacingMm: w.pixelSpacingMm,
       format,
       quality,
     });
@@ -243,6 +520,11 @@ function Shell({
       const mod = e.ctrlKey || e.metaKey;
 
       if (mod && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        openImage();
+        return;
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
         openImage();
         return;
@@ -420,6 +702,18 @@ function Shell({
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-bg font-sans text-ink">
+      {analysisProgress && (
+        <div data-attr="exam-analysis-loader" className="absolute inset-0 z-[200] flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="w-[min(420px,calc(100vw-48px))] rounded-2xl border border-border bg-panel p-5 shadow-2xl shadow-black/50">
+            <p className="text-[13px] font-semibold text-ink">Analyse de l'examen</p>
+            <p className="mt-1 text-[11.5px] text-ink-3">Préparation et prédiction par l'ensemble radiographique.</p>
+            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-hover">
+              <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(8, (analysisProgress.completed / Math.max(1, analysisProgress.total)) * 100)}%` }} />
+            </div>
+            <p className="mt-2 text-right text-[11px] tabular-nums text-ink-3">{analysisProgress.completed} / {analysisProgress.total} image(s)</p>
+          </div>
+        </div>
+      )}
       <input
         ref={fileRef}
         type="file"
@@ -893,6 +1187,20 @@ export default function App() {
     [mutateExams],
   );
 
+  const savePredictions = useCallback((examId: string, predictions: Record<string, RadiographyPrediction>) => {
+    mutateExams((list) => list.map((exam) => exam.id !== examId ? exam : {
+      ...exam,
+      images: exam.images.map((image) => predictions[image.id] ? { ...image, prediction: predictions[image.id] } : image),
+    }));
+  }, [mutateExams]);
+
+  const saveGradcams = useCallback((examId: string, gradcams: Record<string, GradCamResult>) => {
+    mutateExams((list) => list.map((exam) => exam.id !== examId ? exam : {
+      ...exam,
+      images: exam.images.map((image) => gradcams[image.id] ? { ...image, gradcam: gradcams[image.id] } : image),
+    }));
+  }, [mutateExams]);
+
   const autoRestore = page === "editor" && examCtx === null;
 
   return (
@@ -948,6 +1256,8 @@ export default function App() {
               setPage("exams");
             }}
             onSaveImageState={saveImageState}
+            onSavePredictions={savePredictions}
+            onSaveGradcams={saveGradcams}
           />
         ))}
     </WorkspaceProvider>

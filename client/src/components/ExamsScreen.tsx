@@ -19,8 +19,9 @@ import {
   BUCKETS,
   MODALITIES,
   bucketOf,
+  inspectExamConsistency,
   lastOpenedLabel,
-  readImageFiles,
+  readImportedImageFiles,
   uid,
   type Examination,
   type ExamImage,
@@ -184,15 +185,18 @@ function CreateExamDialog({
   const [name, setName] = useState("");
   const [modality, setModality] = useState("Radiography");
   const [images, setImages] = useState<ExamImage[]>([]);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
   const pick = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const imgs = await readImageFiles(files);
-    if (imgs.length > 0) setImages((prev) => [...prev, ...imgs]);
+    const imported = await readImportedImageFiles(files);
+    setImportWarnings(imported.warnings);
+    if (imported.images.length > 0) setImages((prev) => [...prev, ...imported.images]);
   };
+  const consistencyIssues = inspectExamConsistency(images);
 
   return (
     <Modal title="Create examination" onClose={onClose} width="w-96">
@@ -251,7 +255,7 @@ function CreateExamDialog({
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.dcm,.dicom,application/dicom"
             multiple
             className="hidden"
             onChange={(e) => {
@@ -259,6 +263,23 @@ function CreateExamDialog({
               e.target.value = "";
             }}
           />
+          {(importWarnings.length > 0 || consistencyIssues.length > 0) && (
+            <div className="mt-2 space-y-1.5">
+              {[...importWarnings, ...consistencyIssues.map((issue) => issue.message)].map((message, index) => (
+                <p
+                  key={`${message}-${index}`}
+                  className={cn(
+                    "rounded-md border px-2 py-1.5 text-[10.5px] leading-relaxed",
+                    consistencyIssues.some((issue) => issue.level === "error" && issue.message === message)
+                      ? "border-red-500/30 bg-red-500/10 text-red-200"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-200",
+                  )}
+                >
+                  {message}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-4 flex justify-end gap-2">
@@ -305,6 +326,7 @@ export function ExamsScreen({
   const [accountOpen, setAccountOpen] = useState(false);
   const [light, setLight] = useState(() => localStorage.getItem("aimaging.theme") === "light");
   const [dragging, setDragging] = useState(false);
+  const [importNotices, setImportNotices] = useState<string[]>([]);
   const importRef = useRef<HTMLInputElement>(null);
 
   const toggleTheme = () => {
@@ -326,7 +348,9 @@ export function ExamsScreen({
   const visibleBuckets = BUCKETS.filter((b) => (byBucket.get(b)?.length ?? 0) > 0);
 
   const createFromFiles = async (files: FileList) => {
-    const imgs = await readImageFiles(files);
+    const imported = await readImportedImageFiles(files);
+    const imgs = imported.images;
+    setImportNotices([...imported.warnings, ...inspectExamConsistency(imgs).map((issue) => issue.message)]);
     if (imgs.length === 0) return;
     const now = new Date().toISOString();
     onCreateExam({
@@ -473,6 +497,16 @@ export function ExamsScreen({
           </div>
         </div>
       </header>
+
+      {importNotices.length > 0 && (
+        <div className="absolute right-5 top-16 z-[120] w-[min(440px,calc(100vw-40px))] space-y-1.5">
+          {importNotices.slice(0, 4).map((message, index) => (
+            <p key={`${message}-${index}`} className="rounded-lg border border-amber-500/30 bg-[#252014] px-3 py-2 text-[11px] leading-relaxed text-amber-100 shadow-lg">
+              {message}
+            </p>
+          ))}
+        </div>
+      )}
 
       {/* Content */}
       <main className="min-h-0 flex-1 overflow-y-auto px-6 pb-16 pt-6">
@@ -663,7 +697,7 @@ export function ExamsScreen({
       <input
         ref={importRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.dcm,.dicom,application/dicom"
         multiple
         className="hidden"
         onChange={(e) => {

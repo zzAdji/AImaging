@@ -31,6 +31,16 @@ Vérifie `config.py` si l'emplacement de tes checkpoints diffère de
   contexte patient, renvoie le rapport structuré (6 champs), le résultat
   du contrôle de cohérence, et le texte final rendu au format HGG
 
+- `POST /dicom/parse` — reçoit un fichier `.dcm`/`.dicom`, rend ses pixels
+  en PNG (y compris multi-frame) et renvoie les métadonnées utiles au viewer.
+  Le Patient ID/Name n'est jamais renvoyé en clair : un pseudonyme temporaire
+  sert uniquement aux contrôles de cohérence.
+- `POST /workspace/exams/{id}/gradcam` — calcule une Grad-CAM réelle de
+  l'ensemble radiographique et la renvoie comme overlay PNG transparent.
+- `POST /workspace/exams/{id}/ai/turn` — réponse Gemini et plan d'actions
+  canvas validé. Les contrôles de cohérence DICOM sont joints au contexte et
+  bloquent une comparaison inter-images incohérente.
+
 ## Rappel important
 
 Palier gratuit Gemini : les prompts peuvent être utilisés par Google pour

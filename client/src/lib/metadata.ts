@@ -1,44 +1,55 @@
+import type { ExamImageMetadata } from "./examinations";
 import type { WlValue } from "../state/workspace";
 
-/* ------------------------------ Mock metadata ----------------------------- */
-/* Deterministic pseudo-DICOM metadata: values are derived from the loaded
- * image (name + source) so they "follow" the document, while staying stable
- * for a given image. */
-
-function hashStr(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h) || 1;
-}
-
-const pick = <T,>(arr: readonly T[], h: number): T => arr[h % arr.length];
-const pad = (n: number) => String(n).padStart(2, "0");
+/** Metadata rows shown in the UI. Values are real DICOM fields when available. */
 
 export interface MetadataInput {
   name: string;
   dims: { w: number; h: number };
-  imageSrc: string;
+  metadata: ExamImageMetadata | null;
   wl: WlValue;
 }
 
-export function deriveMetadata({ name, dims, imageSrc, wl }: MetadataInput): [string, string][] {
-  const h = hashStr(name);
-  const h2 = hashStr(imageSrc.slice(0, 4000) + name);
-  const month = (h2 % 12) + 1;
-  const day = (h2 % 27) + 1;
+function valueOrUnknown(value: string | number | undefined): string {
+  return value === undefined || value === "" ? "Non renseigné" : String(value);
+}
+
+function compactUid(uid: string | undefined): string {
+  if (!uid) return "Non renseigné";
+  return uid.length <= 34 ? uid : `${uid.slice(0, 17)}…${uid.slice(-12)}`;
+}
+
+export function deriveMetadata({ name, dims, metadata, wl }: MetadataInput): [string, string][] {
+  const rows: [string, string][] = [
+    ["Name", name],
+    ["Dimensions", `${dims.w} × ${dims.h} px`],
+    ["Display W/L", `${Math.round(wl.window)} / ${Math.round(wl.level)}`],
+  ];
+  if (!metadata) {
+    return [
+      ["Source", "Image navigateur"],
+      ["Modality", "Non renseignée"],
+      ["Calibration", "Absente — mesures en pixels"],
+      ...rows,
+    ];
+  }
+
+  const spacing = metadata.pixelSpacingMm
+    ? `${metadata.pixelSpacingMm[0]} × ${metadata.pixelSpacingMm[1]} mm/px (row × column)`
+    : "Absente — mesures en pixels";
   return [
-    ["Modality", pick(["CR", "DX", "CT", "MR"], h)],
-    ["Manufacturer", pick(["GE Medical", "Siemens Healthineers", "Philips", "Canon Medical"], h2)],
-    ["Body part", pick(["Chest", "Abdomen", "Brain", "Pelvis", "Spine"], h >> 3)],
-    ["View position", pick(["PA", "AP", "Lateral"], h2 >> 4)],
-    ["Columns", String(dims.w)],
-    ["Rows", String(dims.h)],
-    ["KVp", String(90 + (h % 31))],
-    ["Exposure", `${(2 + (h % 20) / 10).toFixed(1)} mAs`],
-    ["Pixel spacing", `${(0.1 + (h % 100) / 1000).toFixed(3)} mm`],
-    ["Bits stored", String(10 + (h % 3) * 2)],
-    ["Window / Level", `${Math.round(wl.window)} / ${Math.round(wl.level)}`],
-    ["Study date", `2026-${pad(month)}-${pad(day)}`],
-    ["Study UID", `1.2.826.0.1.${100000 + (h % 900000)}.${h2 % 10000}.1`],
+    ["Source", "DICOM rendu par le serveur"],
+    ["Modality", valueOrUnknown(metadata.modality)],
+    ["Pixel spacing", spacing],
+    ["Calibration", metadata.pixelSpacingMm ? "DICOM active" : "Non calibrée"],
+    ["Rows / Columns", `${valueOrUnknown(metadata.rows)} / ${valueOrUnknown(metadata.columns)}`],
+    ["Bits stored", valueOrUnknown(metadata.bitsStored)],
+    ["Photometric", valueOrUnknown(metadata.photometricInterpretation)],
+    ["View position", valueOrUnknown(metadata.viewPosition)],
+    ["Body part", valueOrUnknown(metadata.bodyPartExamined)],
+    ["Study UID", compactUid(metadata.studyInstanceUid)],
+    ["Series UID", compactUid(metadata.seriesInstanceUid)],
+    ["Frame count", valueOrUnknown(metadata.numberOfFrames)],
+    ...rows,
   ];
 }

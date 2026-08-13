@@ -70,7 +70,14 @@ function HistoryModal({ onClose }: { onClose: () => void }) {
                   {new Date(h.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
+              {h.answer && <p className="mt-1 whitespace-pre-wrap text-[11px] leading-snug text-ink-2">{h.answer}</p>}
               <p className="mt-0.5 text-[10.5px] leading-snug text-ink-3">{h.summary}</p>
+              {h.limitations && h.limitations.length > 0 && (
+                <p className="mt-1 text-[10px] leading-snug text-ink-3">Limites : {h.limitations.join(" ")}</p>
+              )}
+              {h.warnings && h.warnings.length > 0 && (
+                <p className="mt-1 text-[10px] leading-snug text-amber-300">{h.warnings.join(" ")}</p>
+              )}
               <div className="mt-1.5 flex gap-1.5">
                 <button
                   type="button"

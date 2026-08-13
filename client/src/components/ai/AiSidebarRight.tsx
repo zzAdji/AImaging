@@ -4,12 +4,13 @@ import {
   Download,
   FileText,
   Map,
+  MessageSquare,
   Pencil,
   Ruler,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { downloadJson } from "../../lib/exportImage";
-import { MM_PER_PX, shapeBBox, useWorkspace, type AiDiagnosis } from "../../state/workspace";
+import { formatDistance, shapeBBox, useWorkspace, type AiDiagnosis } from "../../state/workspace";
 import { KV, ProgressBar, Slider } from "../ui";
 function Card({
   title,
@@ -110,6 +111,30 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
         )}
       </Card>
 
+      {/* Latest conversational response */}
+      <Card title="Réponse IA" icon={MessageSquare} dataAttr="ai-card-response">
+        {!w.aiResults.lastResponse ? (
+          <p className="px-1 text-[11px] text-ink-3">
+            Posez une question ou donnez une instruction pour recevoir une réponse détaillée.
+          </p>
+        ) : (
+          <div className="space-y-2 px-1">
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink-2">{w.aiResults.lastResponse}</p>
+            {w.aiResults.lastLimitations.length > 0 && (
+              <div className="rounded-md border border-border/80 bg-canvas/50 p-2 text-[10px] leading-relaxed text-ink-3">
+                <span className="font-medium text-ink-2">Limites : </span>
+                {w.aiResults.lastLimitations.join(" ")}
+              </div>
+            )}
+            {w.aiResults.lastWarnings.length > 0 && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] leading-relaxed text-amber-200">
+                {w.aiResults.lastWarnings.join(" ")}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
       {/* Grad-CAM */}
       <Card title="Grad-CAM" icon={Map} dataAttr="ai-card-gradcam">
         <div className="flex items-center justify-between px-1">
@@ -117,7 +142,14 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
           <button
             type="button"
             data-attr="ai-gradcam-toggle"
-            onClick={() => w.setGradcamOn(!w.gradcamOn)}
+            onClick={() => {
+              if (w.gradcamResult) {
+                w.setGradcamOn(!w.gradcamOn);
+              } else {
+                w.runAiCommand("@gradcam");
+              }
+            }}
+            title={w.gradcamResult ? "Afficher ou masquer la Grad-CAM" : "Calculer une Grad-CAM réelle"}
             className={cn(
               "flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors duration-300",
               w.gradcamOn ? "justify-end border-accent/60 bg-accent" : "justify-start border-border bg-hover",
@@ -131,6 +163,11 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
             />
           </button>
         </div>
+        {!w.gradcamResult && (
+          <p className="mt-2 px-1 text-[10px] leading-relaxed text-ink-3">
+            Cliquez pour calculer une carte d'activation rÃ©elle sur le serveur.
+          </p>
+        )}
         {w.gradcamOn && (
           <div className="mt-2.5">
             <Slider
@@ -191,14 +228,17 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
           <div className="space-y-1">
             {measures.map((s) => {
               const bb = shapeBBox(s);
-              const lenPx = s.type === "angle" ? bb.w : Math.hypot(bb.w, bb.h);
-              const mm = (lenPx * MM_PER_PX).toFixed(1);
+              const measurement = s.type === "angle"
+                ? null
+                : formatDistance(bb.w, bb.h, w.pixelSpacingMm);
               return (
                 <div key={s.id} className="flex items-center gap-2 px-1">
                   <span className="truncate text-[11px] text-ink-2">
                     {s.type === "measure" ? "Mesure" : s.type === "angle" ? "Angle" : "Distance"}
                   </span>
-                  <span className="ml-auto text-[11px] tabular-nums text-ink">{mm} mm</span>
+                  <span className="ml-auto text-[11px] tabular-nums text-ink">
+                    {s.type === "angle" ? "Angle" : measurement}
+                  </span>
                 </div>
               );
             })}
@@ -209,11 +249,11 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
       {/* Métadonnées IA */}
       <Card title="Métadonnées IA" icon={Activity} dataAttr="ai-card-metadata">
         <div className="space-y-1 px-1">
-          <KV k="Modèle" v="ChestNet v3.1" />
-          <KV k="Type" v="Classification · Segmentation" />
+          <KV k="Modèle" v={w.aiResults.modelName ?? "En attente d'analyse"} />
+          <KV k="Type" v={w.aiResults.modelCount ? `Ensemble de ${w.aiResults.modelCount} modèles` : "Classification"} />
           <KV k="Résolution" v={`${w.dims.w} × ${w.dims.h} px`} />
-          <KV k="Latence" v="1.2 s" />
-          <KV k="Série" v="Study 2026-08 — AImaging" />
+          <KV k="Statut" v={w.aiResults.lastSummary ?? "En attente"} />
+          <KV k="Image" v={w.imageName} />
         </div>
       </Card>
     </motion.aside>

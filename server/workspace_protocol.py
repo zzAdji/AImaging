@@ -52,17 +52,47 @@ class CanvasShape(StrictModel):
     style: ShapeStyle = Field(default_factory=ShapeStyle)
 
 
+class GradcamState(StrictModel):
+    """Métadonnées non binaires d'une Grad-CAM déjà calculée pour l'image."""
+
+    class_name: str = Field(min_length=1, max_length=128)
+    model_count: int = Field(gt=0, le=64)
+    generated_at: str = Field(min_length=1, max_length=64)
+    peak_region: PixelRegion | None = None
+
+
 class CanvasState(StrictModel):
     shapes: list[CanvasShape] = Field(default_factory=list, max_length=10_000)
     rendered_canvas: str | None = None
+    gradcam: GradcamState | None = None
 
 
 class ImageMetadata(StrictModel):
     modality: str | None = Field(default=None, max_length=32)
     study_instance_uid: str | None = Field(default=None, max_length=128)
     series_instance_uid: str | None = Field(default=None, max_length=128)
+    sop_instance_uid: str | None = Field(default=None, max_length=128)
+    frame_of_reference_uid: str | None = Field(default=None, max_length=128)
     patient_pseudonym: str | None = Field(default=None, max_length=128)
-    pixel_spacing_mm: tuple[float, float] | None = None
+    pixel_spacing_mm: tuple[float, float] | None = Field(default=None, min_length=2, max_length=2)
+    body_part_examined: str | None = Field(default=None, max_length=128)
+    view_position: str | None = Field(default=None, max_length=64)
+    study_date: str | None = Field(default=None, max_length=32)
+    study_description: str | None = Field(default=None, max_length=512)
+    series_description: str | None = Field(default=None, max_length=512)
+    photometric_interpretation: str | None = Field(default=None, max_length=64)
+    rows: int | None = Field(default=None, gt=0, le=32_768)
+    columns: int | None = Field(default=None, gt=0, le=32_768)
+    bits_stored: int | None = Field(default=None, gt=0, le=64)
+    window_center: float | None = Field(default=None, ge=-1_000_000, le=1_000_000)
+    window_width: float | None = Field(default=None, gt=0, le=1_000_000)
+    number_of_frames: int | None = Field(default=None, gt=0, le=100_000)
+
+    @model_validator(mode="after")
+    def validate_pixel_spacing(self) -> "ImageMetadata":
+        if self.pixel_spacing_mm is not None and any(value <= 0 for value in self.pixel_spacing_mm):
+            raise ValueError("pixel_spacing_mm doit contenir deux valeurs strictement positives.")
+        return self
 
 
 class WorkspaceImage(StrictModel):
@@ -90,6 +120,96 @@ class WorkspaceManifest(StrictModel):
         if self.active_image_id is not None and self.active_image_id not in image_ids:
             raise ValueError("active_image_id ne référence aucune image de l'examen.")
         return self
+
+
+class WorkspaceConsistencyIssue(StrictModel):
+    """Avertissement de cohérence déterministe, partagé avec l'agent IA."""
+
+    level: Literal["warning", "error"]
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=2_000)
+
+
+def _defined_values(values: list[str | None]) -> list[str]:
+    return sorted({value for value in values if value})
+
+
+def inspect_manifest_consistency(manifest: WorkspaceManifest) -> list[WorkspaceConsistencyIssue]:
+    """Détermine si les images peuvent être comparées comme un seul examen.
+
+    Les prédictions et outils locaux par image restent autorisés : les erreurs
+    marquent uniquement une comparaison clinique inter-images comme non fiable.
+    """
+    dicom_images = [image for image in manifest.images if image.source_kind == "dicom"]
+    if not dicom_images:
+        return []
+
+    issues: list[WorkspaceConsistencyIssue] = []
+    study_uids = _defined_values([image.metadata.study_instance_uid for image in dicom_images])
+    patient_ids = _defined_values([image.metadata.patient_pseudonym for image in dicom_images])
+    modalities = _defined_values([image.metadata.modality for image in dicom_images])
+    frame_reference_uids = _defined_values([image.metadata.frame_of_reference_uid for image in dicom_images])
+    spacing = _defined_values([
+        "×".join(f"{value:g}" for value in image.metadata.pixel_spacing_mm)
+        if image.metadata.pixel_spacing_mm is not None else None
+        for image in dicom_images
+    ])
+    single_frame_images = [
+        image for image in dicom_images
+        if (image.metadata.number_of_frames or 1) <= 1
+    ]
+    sop_uids = _defined_values([image.metadata.sop_instance_uid for image in single_frame_images])
+    sop_uid_count = sum(image.metadata.sop_instance_uid is not None for image in single_frame_images)
+
+    if len(study_uids) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="error",
+            code="multiple_studies",
+            message="Les images DICOM appartiennent à plusieurs Study Instance UID : la comparaison inter-images est bloquée.",
+        ))
+    if len(patient_ids) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="error",
+            code="multiple_patients",
+            message="Les images DICOM correspondent à plusieurs patients pseudonymisés : elles ne forment pas un seul examen.",
+        ))
+    if len(modalities) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="error",
+            code="multiple_modalities",
+            message=f"Modalités DICOM incompatibles dans le même espace ({', '.join(modalities)}).",
+        ))
+    if len(study_uids) == 0 and len(dicom_images) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="warning",
+            code="missing_study_uid",
+            message="Study Instance UID absent : la cohérence inter-images ne peut pas être démontrée.",
+        ))
+    if len(frame_reference_uids) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="warning",
+            code="multiple_frame_references",
+            message="Plusieurs Frame of Reference UID : ne transposez pas de coordonnées entre images.",
+        ))
+    if len(spacing) > 1:
+        issues.append(WorkspaceConsistencyIssue(
+            level="warning",
+            code="different_pixel_spacing",
+            message="Les images n'ont pas le même Pixel Spacing : les mesures restent valides par image, mais ne sont pas directement comparables.",
+        ))
+    if len(sop_uids) != sop_uid_count:
+        issues.append(WorkspaceConsistencyIssue(
+            level="warning",
+            code="duplicate_sop_instance",
+            message="Certaines images mono-frame réutilisent le même SOP Instance UID ; vérifiez les doublons.",
+        ))
+    if len(dicom_images) != len(manifest.images):
+        issues.append(WorkspaceConsistencyIssue(
+            level="warning",
+            code="mixed_sources",
+            message="L'espace mélange des DICOM et des images sans métadonnées DICOM : la comparaison clinique est limitée.",
+        ))
+    return issues
 
 
 class ActionType(StrEnum):

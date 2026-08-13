@@ -1,5 +1,5 @@
 import {
-  MM_PER_PX,
+  formatDistance,
   SELECT_ALL,
   isShapeVisible,
   shapeBBox,
@@ -7,6 +7,7 @@ import {
   shapeTextBox,
   type FontFamily,
   type LayerDef,
+  type PixelSpacingMm,
   type Shape,
 } from "../state/workspace";
 
@@ -153,7 +154,17 @@ function AngleArc({
 
 /* ------------------------------ Shape elements ------------------------------ */
 
-function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; scale: number }) {
+function ShapeElement({
+  shape,
+  draft,
+  scale,
+  pixelSpacingMm,
+}: {
+  shape: Shape;
+  draft?: boolean;
+  scale: number;
+  pixelSpacingMm: PixelSpacingMm | null;
+}) {
   const dash = draft ? "7 5" : undefined;
   const sw = shape.strokeWidth;
   const stroke = shape.strokeColor ?? ACCENT;
@@ -239,8 +250,7 @@ function ShapeElement({ shape, draft, scale }: { shape: Shape; draft?: boolean; 
       );
     case "measure":
     case "distance": {
-      const len = Math.hypot(shape.w, shape.h) * MM_PER_PX;
-      const text = `${len.toFixed(1)} mm`;
+      const text = formatDistance(shape.w, shape.h, pixelSpacingMm);
       const mcx = shape.x + shape.w / 2;
       const mcy = shape.y + shape.h / 2;
       return (
@@ -547,6 +557,7 @@ export function ShapesLayer({
   angleDraft,
   crop,
   layers,
+  pixelSpacingMm,
 }: {
   viewBox: string;
   viewRect: { x: number; y: number; w: number; h: number };
@@ -557,6 +568,7 @@ export function ShapesLayer({
   angleDraft: AngleDraft | null;
   crop: Shape | null;
   layers: LayerDef[];
+  pixelSpacingMm: PixelSpacingMm | null;
 }) {
   const paintOrder = (id: LayerDef["id"]) => layers.findIndex((l) => l.id === id);
   const visibleShapes = shapes
@@ -575,11 +587,11 @@ export function ShapesLayer({
       <g>
         {visibleShapes.map((s) => (
           <g key={s.id} opacity={layerOpacityFor(s, layers) / 100}>
-            <ShapeElement shape={s} scale={scale} />
+            <ShapeElement shape={s} scale={scale} pixelSpacingMm={pixelSpacingMm} />
           </g>
         ))}
       </g>
-      {draft && <ShapeElement shape={draft} draft scale={scale} />}
+      {draft && <ShapeElement shape={draft} draft scale={scale} pixelSpacingMm={pixelSpacingMm} />}
       {angleDraft && <AngleDraftLayer draft={angleDraft} scale={scale} />}
       {selection === SELECT_ALL
         ? visibleShapes.map((s) => <ShapeSelection key={s.id} shape={s} />)

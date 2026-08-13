@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { computeHistogram, type HistogramResult } from "../lib/histogram";
+import { deriveMetadata } from "../lib/metadata";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { useWorkspace } from "../state/workspace";
 import { Button, Divider, KV, Modal, Segmented } from "./ui";
@@ -71,29 +72,12 @@ export function HistogramModal({ onClose }: { onClose: () => void }) {
 
 /* ------------------------------- Image info ------------------------------ */
 
-const DICOM_TAGS: [string, string][] = [
-  ["Patient", "P-2048-71"],
-  ["Patient ID", "ID-4821-993"],
-  ["Age / Sex", "57 / M"],
-  ["Study date", "2026-04-12"],
-  ["Modality", "CR"],
-  ["Study", "CHEST PA"],
-  ["Manufacturer", "GE Medical"],
-  ["Body part", "Chest"],
-  ["View position", "PA"],
-  ["KVp", "120"],
-  ["Exposure", "3.2 mAs"],
-  ["Pixel spacing", "0.139 mm"],
-  ["Bits stored", "12"],
-  ["Series", "4 / 8"],
-  ["Study UID", "1.2.826.0.1.36…"],
-];
-
 export function ImageInfoModal({ onClose }: { onClose: () => void }) {
   const w = useWorkspace();
   const [tab, setTab] = useState<"General" | "DICOM">("General");
   const mb = ((w.dims.w * w.dims.h * 4) / 1048576).toFixed(1);
-  const format = w.imageSrc.startsWith("data:image/jpeg") ? "JPEG" : w.imageSrc.startsWith("data:image/png") ? "PNG" : "PNG";
+  const format = w.imageMetadata ? "DICOM rendered as PNG" : w.imageSrc.startsWith("data:image/jpeg") ? "JPEG" : "PNG";
+  const dicomRows = deriveMetadata({ name: w.imageName, dims: w.dims, metadata: w.imageMetadata, wl: w.wl });
 
   return (
     <Modal title="Image Info" onClose={onClose} width="w-[420px]">
@@ -113,8 +97,9 @@ export function ImageInfoModal({ onClose }: { onClose: () => void }) {
               <KV k="Dimensions" v={`${w.dims.w} × ${w.dims.h} px`} />
               <KV k="File format" v={format} />
               <KV k="File size" v={`${mb} MB`} />
-              <KV k="Bit depth" v="8-bit" />
-              <KV k="Modality" v="CR" />
+              <KV k="Bit depth" v={w.imageMetadata?.bitsStored ? `${w.imageMetadata.bitsStored}-bit source` : "8-bit rendered"} />
+              <KV k="Modality" v={w.imageMetadata?.modality ?? "Unknown"} />
+              <KV k="Calibration" v={w.pixelSpacingMm ? "DICOM active" : "None — measurements in pixels"} />
               <KV k="Window / Level" v={`${Math.round(w.wl.window)} / ${Math.round(w.wl.level)}`} />
               <KV k="Brightness / Contrast" v={`${Math.round(w.brightness)} / ${Math.round(w.contrast)}`} />
               <KV k="Zoom" v={`${Math.round((w.activePane === "B" ? w.viewB : w.view).s * 100)}%`} />
@@ -123,7 +108,9 @@ export function ImageInfoModal({ onClose }: { onClose: () => void }) {
               <KV k="Annotations" v={`${w.shapes.length}`} />
             </>
           ) : (
-            DICOM_TAGS.map(([k, v]) => <KV key={k} k={k} v={v} />)
+            w.imageMetadata
+              ? dicomRows.map(([k, v]) => <KV key={k} k={k} v={v} />)
+              : <p className="text-[12px] text-ink-3">No real DICOM metadata is available for this image.</p>
           )}
         </div>
       </div>

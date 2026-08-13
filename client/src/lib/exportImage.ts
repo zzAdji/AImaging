@@ -1,4 +1,4 @@
-import { MM_PER_PX, type Shape } from "../state/workspace";
+import { formatDistance, type PixelSpacingMm, type Shape } from "../state/workspace";
 
 /* --------------------------- Canvas export helpers --------------------------- */
 
@@ -102,7 +102,11 @@ function drawAngleArc(
   ctx.stroke();
 }
 
-export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void {
+export function drawShapeOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  s: Shape,
+  pixelSpacingMm: PixelSpacingMm | null = null,
+): void {
   const accent = resolveAccent();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -164,7 +168,7 @@ export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void
     }
     case "measure":
     case "distance": {
-      const len = Math.hypot(s.w, s.h) * MM_PER_PX;
+      const len = formatDistance(s.w, s.h, pixelSpacingMm);
       ctx.lineWidth = s.strokeWidth;
       ctx.strokeStyle = s.strokeColor ?? accent;
       ctx.fillStyle = s.strokeColor ?? accent;
@@ -178,7 +182,7 @@ export function drawShapeOnCanvas(ctx: CanvasRenderingContext2D, s: Shape): void
       ctx.beginPath();
       ctx.arc(s.x + s.w, s.y + s.h, 3.5, 0, Math.PI * 2);
       ctx.fill();
-      drawChip(ctx, s.x + s.w / 2, s.y + s.h / 2, `${len.toFixed(1)} mm`);
+      drawChip(ctx, s.x + s.w / 2, s.y + s.h / 2, len);
       break;
     }
     case "angle": {
@@ -278,6 +282,11 @@ export interface ExportOptions {
   shapes: Shape[];
   /** CSS filter applied to the image (window/level, brightness, contrast…) */
   filter: string;
+  /** Optional server-computed overlay rendered in the image coordinate system. */
+  overlaySrc?: string;
+  overlayOpacity?: number;
+  /** DICOM Pixel Spacing for calibrated measurement labels. */
+  pixelSpacingMm?: PixelSpacingMm | null;
   format: "png" | "jpeg";
   quality?: number;
   scale?: number;
@@ -286,12 +295,16 @@ export interface ExportOptions {
 /** Renders image + annotations to a canvas and returns a data URL. */
 export async function exportImageDataUrl(opts: ExportOptions): Promise<string> {
   const scale = opts.scale ?? 1;
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+  const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
     const i = new Image();
     i.onload = () => resolve(i);
     i.onerror = () => reject(new Error("Image could not be loaded"));
-    i.src = opts.imageSrc;
+    i.src = src;
   });
+  const [img, overlay] = await Promise.all([
+    loadImage(opts.imageSrc),
+    opts.overlaySrc ? loadImage(opts.overlaySrc) : Promise.resolve(null),
+  ]);
 
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(opts.dims.w * scale));
@@ -307,7 +320,14 @@ export async function exportImageDataUrl(opts: ExportOptions): Promise<string> {
   ctx.filter = opts.filter;
   ctx.drawImage(img, 0, 0, opts.dims.w, opts.dims.h);
   ctx.filter = "none";
-  for (const s of opts.shapes) drawShapeOnCanvas(ctx, s);
+  if (overlay) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, Math.max(0, opts.overlayOpacity ?? 1));
+    ctx.globalCompositeOperation = "screen";
+    ctx.drawImage(overlay, 0, 0, opts.dims.w, opts.dims.h);
+    ctx.restore();
+  }
+  for (const s of opts.shapes) drawShapeOnCanvas(ctx, s, opts.pixelSpacingMm);
 
   const mime = opts.format === "jpeg" ? "image/jpeg" : "image/png";
   return canvas.toDataURL(mime, opts.format === "jpeg" ? opts.quality ?? 0.9 : undefined);

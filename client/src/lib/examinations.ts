@@ -1,4 +1,6 @@
-import type { Shape, WlValue } from "../state/workspace";
+import type { PixelSpacingMm, Shape, WlValue } from "../state/workspace";
+import type { RadiographyPrediction } from "./workspaceApi";
+import { isDicomFile, parseDicomFile } from "./dicom";
 
 /* ------------------------------ Examination model ------------------------------ */
 
@@ -14,6 +16,16 @@ export interface ExamImageState {
   flipV: boolean;
 }
 
+/** Résultat Grad-CAM calculé par le serveur dans le repère de l'image source. */
+export interface GradCamResult {
+  className: string;
+  modelCount: number;
+  heatmapDataUrl: string;
+  peakRegion?: { x: number; y: number; w: number; h: number };
+  generatedAt: string;
+  perModel: Array<{ architecture: string; className: string; classIndex: number }>;
+}
+
 export interface ExamImage {
   id: string;
   name: string;
@@ -21,6 +33,8 @@ export interface ExamImage {
   dims: { w: number; h: number };
   sourceKind?: "browser-image" | "dicom" | "unknown";
   metadata?: ExamImageMetadata;
+  prediction?: RadiographyPrediction;
+  gradcam?: GradCamResult;
   state?: ExamImageState;
 }
 
@@ -28,8 +42,22 @@ export interface ExamImageMetadata {
   modality?: string;
   studyInstanceUid?: string;
   seriesInstanceUid?: string;
+  sopInstanceUid?: string;
+  frameOfReferenceUid?: string;
   patientPseudonym?: string;
-  pixelSpacingMm?: [number, number];
+  pixelSpacingMm?: PixelSpacingMm;
+  bodyPartExamined?: string;
+  viewPosition?: string;
+  studyDate?: string;
+  studyDescription?: string;
+  seriesDescription?: string;
+  photometricInterpretation?: string;
+  rows?: number;
+  columns?: number;
+  bitsStored?: number;
+  windowCenter?: number;
+  windowWidth?: number;
+  numberOfFrames?: number;
 }
 
 export interface Examination {
@@ -105,35 +133,186 @@ export function lastOpenedLabel(iso: string, archived: boolean): string {
 }
 
 /** Reads image files (dropped or picked) into ExamImage records with dims */
-export async function readImageFiles(files: File[] | FileList): Promise<ExamImage[]> {
+export interface ImportedImageBatch {
+  images: ExamImage[];
+  warnings: string[];
+}
+
+function imageStem(filename: string): string {
+  return filename.replace(/\.[^.]+$/, "") || "Image";
+}
+
+function dicomMetadata(metadata: Awaited<ReturnType<typeof parseDicomFile>>["metadata"]): ExamImageMetadata {
+  return {
+    modality: metadata.modality ?? undefined,
+    studyInstanceUid: metadata.study_instance_uid ?? undefined,
+    seriesInstanceUid: metadata.series_instance_uid ?? undefined,
+    sopInstanceUid: metadata.sop_instance_uid ?? undefined,
+    frameOfReferenceUid: metadata.frame_of_reference_uid ?? undefined,
+    patientPseudonym: metadata.patient_pseudonym ?? undefined,
+    pixelSpacingMm: metadata.pixel_spacing_mm ?? undefined,
+    bodyPartExamined: metadata.body_part_examined ?? undefined,
+    viewPosition: metadata.view_position ?? undefined,
+    studyDate: metadata.study_date ?? undefined,
+    studyDescription: metadata.study_description ?? undefined,
+    seriesDescription: metadata.series_description ?? undefined,
+    photometricInterpretation: metadata.photometric_interpretation ?? undefined,
+    rows: metadata.rows ?? undefined,
+    columns: metadata.columns ?? undefined,
+    bitsStored: metadata.bits_stored ?? undefined,
+    windowCenter: metadata.window_center ?? undefined,
+    windowWidth: metadata.window_width ?? undefined,
+    numberOfFrames: metadata.number_of_frames,
+  };
+}
+
+async function readBrowserImage(file: File): Promise<ExamImage | null> {
+  if (!file.type.startsWith("image/")) return null;
+  const src = await new Promise<string | null>((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(file);
+  });
+  if (!src) return null;
+  const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => resolve({ w: 0, h: 0 });
+    img.src = src;
+  });
+  return {
+    id: uid(),
+    name: imageStem(file.name),
+    src,
+    dims,
+    sourceKind: "browser-image",
+  };
+}
+
+/** Reads conventional images and DICOM files. A multi-frame DICOM becomes one workspace image per frame. */
+export async function readImportedImageFiles(files: File[] | FileList): Promise<ImportedImageBatch> {
   const out: ExamImage[] = [];
+  const warnings: string[] = [];
   const list = Array.from(files);
   for (const file of list) {
-    if (!file.type.startsWith("image/")) continue;
-    const src = await new Promise<string | null>((resolve) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = () => resolve(null);
-      r.readAsDataURL(file);
-    });
-    if (!src) continue;
-    const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-      img.onerror = () => resolve({ w: 0, h: 0 });
-      img.src = src;
-    });
-    out.push({
-      id: uid(),
-      name: file.name.replace(/\.[^.]+$/, ""),
-      src,
-      dims,
-      sourceKind: "browser-image",
-    });
+    if (isDicomFile(file)) {
+      try {
+        const parsed = await parseDicomFile(file);
+        const baseName = imageStem(file.name);
+        const metadata = dicomMetadata(parsed.metadata);
+        for (const frame of parsed.frames) {
+          out.push({
+            id: uid(),
+            name: parsed.frames.length > 1 ? `${baseName} · frame ${frame.frame_index + 1}` : baseName,
+            src: frame.image_data_url,
+            dims: { w: frame.width, h: frame.height },
+            sourceKind: "dicom",
+            metadata: { ...metadata },
+          });
+        }
+        warnings.push(...parsed.warnings.map((warning) => `${file.name} : ${warning}`));
+      } catch (error) {
+        warnings.push(error instanceof Error ? error.message : `Import DICOM impossible : ${file.name}`);
+      }
+      continue;
+    }
+    const image = await readBrowserImage(file);
+    if (image) out.push(image);
+    else warnings.push(`${file.name} : format non pris en charge.`);
   }
-  return out;
+  return { images: out, warnings };
+}
+
+/** Compatibility helper for existing callers that do not need import diagnostics. */
+export async function readImageFiles(files: File[] | FileList): Promise<ExamImage[]> {
+  return (await readImportedImageFiles(files)).images;
 }
 
 export function emptyExamImages(list: ExamImage[]): boolean {
   return list.length === 0;
+}
+
+/** The currently loaded ensemble was trained for chest radiographs, not CT/MR/US. */
+export function isRadiographyCompatible(image: ExamImage): boolean {
+  if (image.sourceKind !== "dicom") return true;
+  const modality = image.metadata?.modality?.trim().toUpperCase();
+  return modality === "CR" || modality === "DX";
+}
+
+export interface ExamConsistencyIssue {
+  level: "warning" | "error";
+  message: string;
+}
+
+const distinct = <T,>(values: Array<T | null | undefined>): T[] =>
+  [...new Set(values.filter((value): value is T => value !== null && value !== undefined))];
+
+/**
+ * Reports whether images can safely be treated as one DICOM examination.
+ * It never prevents individual viewing or prediction; it only prevents a
+ * misleading inter-image clinical comparison.
+ */
+export function inspectExamConsistency(images: ExamImage[]): ExamConsistencyIssue[] {
+  const issues: ExamConsistencyIssue[] = [];
+  const dicomImages = images.filter((image) => image.sourceKind === "dicom");
+  if (dicomImages.length === 0) return issues;
+
+  const studyUids = distinct(dicomImages.map((image) => image.metadata?.studyInstanceUid));
+  const patientIds = distinct(dicomImages.map((image) => image.metadata?.patientPseudonym));
+  const modalities = distinct(dicomImages.map((image) => image.metadata?.modality));
+  const frameOfReferenceUids = distinct(dicomImages.map((image) => image.metadata?.frameOfReferenceUid));
+  const singleFrameImages = dicomImages.filter((image) => (image.metadata?.numberOfFrames ?? 1) <= 1);
+  const sopUids = distinct(singleFrameImages.map((image) => image.metadata?.sopInstanceUid));
+  const spacing = distinct(dicomImages.map((image) => image.metadata?.pixelSpacingMm?.join("×")));
+
+  if (studyUids.length > 1) {
+    issues.push({
+      level: "error",
+      message: "Les images DICOM appartiennent à plusieurs Study Instance UID : la comparaison inter-images est bloquée.",
+    });
+  }
+  if (patientIds.length > 1) {
+    issues.push({
+      level: "error",
+      message: "Les images DICOM correspondent à plusieurs patients pseudonymisés : elles ne doivent pas être analysées comme un seul examen.",
+    });
+  }
+  if (modalities.length > 1) {
+    issues.push({
+      level: "error",
+      message: `Modalités DICOM incompatibles dans le même espace (${modalities.join(", ")}).`,
+    });
+  }
+  if (frameOfReferenceUids.length > 1) {
+    issues.push({
+      level: "warning",
+      message: "Les images utilisent plusieurs Frame of Reference UID : ne transposez pas de coordonnées d'une image à l'autre.",
+    });
+  }
+  if (spacing.length > 1) {
+    issues.push({
+      level: "warning",
+      message: "Les images n'ont pas le même Pixel Spacing : les longueurs calibrées restent valides par image mais ne sont pas directement comparables.",
+    });
+  }
+  if (sopUids.length !== singleFrameImages.filter((image) => image.metadata?.sopInstanceUid).length) {
+    issues.push({
+      level: "warning",
+      message: "Certaines images réutilisent le même SOP Instance UID ; vérifiez qu'il ne s'agit pas de doublons.",
+    });
+  }
+  if (studyUids.length === 0 && dicomImages.length > 1) {
+    issues.push({
+      level: "warning",
+      message: "Study Instance UID absent : la cohérence inter-images ne peut pas être démontrée.",
+    });
+  }
+  if (dicomImages.length !== images.length) {
+    issues.push({
+      level: "warning",
+      message: "L'espace mélange des DICOM et des images sans métadonnées DICOM ; la comparaison clinique est limitée.",
+    });
+  }
+  return issues;
 }

@@ -8,7 +8,7 @@ import { FloatingCommandBar } from "./ai/FloatingCommandBar";
 import { ReportEditorModal } from "./ai/ReportEditor";
 import { CanvasViewport } from "./CanvasViewport";
 import { cn } from "../lib/cn";
-import type { ExamImageState, Examination } from "../lib/examinations";
+import { readImportedImageFiles, type ExamImageState, type Examination } from "../lib/examinations";
 import { recordRecent } from "../lib/recent";
 import { useWorkspace } from "../state/workspace";
 
@@ -54,9 +54,14 @@ export function MobileShell({
     if (!img) return;
     if (img.state) {
       w.applyImageState(img.state);
+      w.setImageId(img.id);
     } else {
-      w.openImageData(img.src, img.name);
+      w.openImageData(img.src, img.name, img.id);
     }
+    w.setImageMetadata(img.metadata ?? null);
+    w.setPixelSpacingMm(img.metadata?.pixelSpacingMm ?? null);
+    w.setGradcamResult(img.gradcam ?? null);
+    w.setGradcamOn(Boolean(img.gradcam));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examCtx?.examId, imageIndex]);
 
@@ -77,15 +82,15 @@ export function MobileShell({
 
   const openFile = useCallback(
     async (file: File) => {
-      const name = file.name.replace(/\.[^.]+$/, "");
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(r.error);
-        r.readAsDataURL(file);
-      });
-      w.openImageData(dataUrl, name);
-      recordRecent(name, dataUrl);
+      const imported = await readImportedImageFiles([file]);
+      const image = imported.images[0];
+      if (!image) throw new Error(imported.warnings[0] ?? `Impossible d'ouvrir '${file.name}'.`);
+      w.openImageData(image.src, image.name);
+      w.setImageMetadata(image.metadata ?? null);
+      w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
+      imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
+      if (imported.images.length > 1) w.recordAiAction("Import : première frame d'un DICOM multi-frame ouverte.");
+      recordRecent(image.name, image.src);
     },
     [w],
   );

@@ -1,4 +1,6 @@
 import { createContext, useContext, type RefObject } from "react";
+import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
+import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
   | "move"
@@ -148,8 +150,29 @@ export const DEFAULT_SHAPE_STYLE: ShapeStyle = {
   fillColor: null,
 };
 
-/** Pixels of image per millimeter (calibrated so ~320 px ≈ 84 mm) */
-export const MM_PER_PX = 0.26;
+/** DICOM Pixel Spacing in millimetres: [row (vertical), column (horizontal)]. */
+export type PixelSpacingMm = [number, number];
+
+export function isPixelSpacingMm(value: unknown): value is PixelSpacingMm {
+  return Array.isArray(value)
+    && value.length === 2
+    && value.every((part) => typeof part === "number" && Number.isFinite(part) && part > 0);
+}
+
+/** Converts a vector in image pixels to a physical length when DICOM calibration exists. */
+export function distanceMm(dx: number, dy: number, pixelSpacingMm: PixelSpacingMm | null | undefined): number | null {
+  if (!isPixelSpacingMm(pixelSpacingMm)) return null;
+  const [rowSpacing, columnSpacing] = pixelSpacingMm;
+  return Math.hypot(dx * columnSpacing, dy * rowSpacing);
+}
+
+/** Never invents a millimetre calibration: uncalibrated measures remain in pixels. */
+export function formatDistance(dx: number, dy: number, pixelSpacingMm: PixelSpacingMm | null | undefined): string {
+  const calibrated = distanceMm(dx, dy, pixelSpacingMm);
+  return calibrated === null
+    ? `${Math.hypot(dx, dy).toFixed(1)} px`
+    : `${calibrated.toFixed(1)} mm`;
+}
 
 export interface ShapePoint {
   x: number;
@@ -321,6 +344,10 @@ export interface AiHistoryItem {
   id: string;
   text: string;
   summary: string;
+  /** Full natural-language answer returned by the IA. */
+  answer?: string;
+  warnings?: string[];
+  limitations?: string[];
   at: number;
 }
 
@@ -328,7 +355,26 @@ export interface AiResults {
   diagnostics: AiDiagnosis[];
   report: string | null;
   lastSummary: string | null;
+  lastResponse: string | null;
+  lastWarnings: string[];
+  lastLimitations: string[];
+  modelName: string | null;
+  modelCount: number | null;
 }
+
+export interface AiActionExecutionResult {
+  appliedActionIds: string[];
+  warnings: string[];
+}
+
+export interface AiCommandResolution {
+  plan: AiActionPlan;
+  assistantMessage: string;
+  warnings?: string[];
+  limitations?: string[];
+}
+
+export type AiCommandResolver = (text: string) => Promise<AiCommandResolution>;
 
 /** Region the canvas should zoom into (fresh object per request → drives an effect) */
 export interface AiFocus {
@@ -440,6 +486,12 @@ export interface WorkspaceState {
   setGradcamOn: (o: boolean) => void;
   gradcamIntensity: number;
   setGradcamIntensity: (v: number) => void;
+  /** Server-computed Grad-CAM for the image currently loaded in the canvas. */
+  gradcamResult: GradCamResult | null;
+  setGradcamResult: (result: GradCamResult | null) => void;
+  /** DICOM calibration for the active image; absent means measurements stay in px. */
+  pixelSpacingMm: PixelSpacingMm | null;
+  setPixelSpacingMm: (spacing: PixelSpacingMm | null) => void;
 
   wl: WlValue;
   setWl: (v: WlValue) => void;
@@ -471,12 +523,17 @@ export interface WorkspaceState {
   aiBusy: boolean;
   aiHistory: AiHistoryItem[];
   aiResults: AiResults;
+  setAiDiagnostics: (diagnostics: AiDiagnosis[], metadata?: { modelName?: string; modelCount?: number }) => void;
   /** Region to zoom into; fresh object each time → CanvasViewport reacts to it */
   aiFocus: AiFocus | null;
   /** "Asks the canvas to zoom into a region (px in image space)" */
   focusAiRegion: (r: { x: number; y: number; w: number; h: number }) => void;
   /** Parses a natural-language command and applies the matching action(s) to the document */
   runAiCommand: (raw: string) => void;
+  /** Registers the shell-specific bridge from instructions to the backend workspace API. */
+  setAiCommandResolver: (resolver: AiCommandResolver | null) => void;
+  /** Applies a server-validated action plan as one undoable canvas transaction. */
+  executeAiActionPlan: (plan: AiActionPlan) => AiActionExecutionResult;
   /** User-saved prompt texts, persisted to localStorage (`aimaging.aiPrompts`) */
   aiCustomPrompts: string[];
   addAiCustomPrompt: (text: string) => void;
@@ -502,8 +559,14 @@ export interface WorkspaceState {
 
   imageSrc: string;
   setImageSrc: (s: string) => void;
+  /** Stable examination image identifier; distinct from the human-readable name. */
+  imageId: string | null;
+  setImageId: (id: string | null) => void;
   imageName: string;
   setImageName: (n: string) => void;
+  /** Real DICOM metadata for the active image, or null for an ordinary browser image. */
+  imageMetadata: ExamImageMetadata | null;
+  setImageMetadata: (metadata: ExamImageMetadata | null) => void;
 
   /** Captures the current editor state. Returns null when no image is open. */
   captureImageState: () => (ImageStateSnapshot & { name: string; dims: { w: number; h: number } }) | null;
@@ -511,7 +574,7 @@ export interface WorkspaceState {
   applyImageState: (s: ImageStateSnapshot) => void;
 
   /** Opens a new image: resets shapes/history, overlays and view adjustments */
-  openImageData: (dataUrl: string, name: string) => void;
+  openImageData: (dataUrl: string, name: string, imageId?: string) => void;
   /** Closes the current document: neutral, empty state */
   closeDocument: () => void;
   /** Persists the document snapshot to localStorage (async: image re-encoded to PNG data URL).

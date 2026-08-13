@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, Mic, Paperclip, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
+import { commandSuggestions, completeCommand } from "../../lib/aiCommandSyntax";
 import { useWorkspace } from "../../state/workspace";
 
 /**
@@ -28,8 +29,10 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const waveProfile = mobile ? WAVE_PROFILE.filter((_, i) => i % 3 === 0) : WAVE_PROFILE;
+  const suggestions = commandSuggestions(value);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -123,9 +126,23 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
                 ref={inputRef}
                 data-attr="ai-command-input"
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setActiveSuggestion(0);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") submit();
+                  if (suggestions.length > 0 && e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActiveSuggestion((index) => (index + 1) % suggestions.length);
+                  } else if (suggestions.length > 0 && e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length);
+                  } else if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter") && !/\s/.test(value.trimStart().slice(1))) {
+                    e.preventDefault();
+                    setValue(completeCommand(value, suggestions[activeSuggestion]));
+                  } else if (e.key === "Enter") {
+                    submit();
+                  }
                 }}
                 placeholder="Demandez une analyse ou exécutez une commande…"
                 spellCheck={false}
@@ -206,6 +223,29 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             </motion.div>
           )}
         </AnimatePresence>
+        {!voice && suggestions.length > 0 && (
+          <div data-attr="ai-command-suggestions" className="border-t border-border bg-panel/95 p-1.5">
+            {suggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.name}
+                type="button"
+                data-attr={`ai-command-suggestion-${suggestion.name}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setValue(completeCommand(value, suggestion));
+                  inputRef.current?.focus();
+                }}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+                  index === activeSuggestion ? "bg-accent/15" : "hover:bg-hover",
+                )}
+              >
+                <code className="shrink-0 text-[11px] font-semibold text-accent">@{suggestion.name}</code>
+                <span className="min-w-0 text-[10.5px] text-ink-3">{suggestion.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         </div>
       </div>
     </motion.div>

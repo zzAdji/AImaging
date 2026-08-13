@@ -237,37 +237,34 @@ const bboxOf = (s: Shape): Rect => {
 
 /* ------------------------------ Grad-CAM overlay ----------------------------- */
 
-function GradCamOverlay({ dims, intensity, layerOpacity = 1 }: { dims: Dims; intensity: number; layerOpacity?: number }) {
+function GradCamOverlay({
+  dims,
+  src,
+  intensity,
+  layerOpacity = 1,
+  transform,
+}: {
+  dims: Dims;
+  src: string;
+  intensity: number;
+  layerOpacity?: number;
+  transform?: string;
+}) {
   return (
-    <svg
+    <img
+      src={src}
+      alt="Grad-CAM"
       width={dims.w}
       height={dims.h}
-      viewBox={`0 0 ${dims.w} ${dims.h}`}
-      className="pointer-events-none absolute inset-0"
-      style={{ opacity: (intensity / 100) * layerOpacity, mixBlendMode: "screen" }}
-    >
-      <defs>
-        <radialGradient id="gc-a" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#7cb0fb" stopOpacity={0.85} />
-          <stop offset="45%" stopColor="#4f8ef7" stopOpacity={0.45} />
-          <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-        </radialGradient>
-        <radialGradient id="gc-b" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#a5c8fc" stopOpacity={0.8} />
-          <stop offset="55%" stopColor="#3b82f6" stopOpacity={0.3} />
-          <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-        </radialGradient>
-        <radialGradient id="gc-c" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#cfe1fe" stopOpacity={0.75} />
-          <stop offset="60%" stopColor="#4f8ef7" stopOpacity={0.28} />
-          <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-        </radialGradient>
-      </defs>
-      <rect width={dims.w} height={dims.h} fill="url(#gc-b)" opacity={0.25} />
-      <ellipse cx={dims.w * 0.62} cy={dims.h * 0.53} rx={dims.w * 0.2} ry={dims.h * 0.16} fill="url(#gc-a)" />
-      <ellipse cx={dims.w * 0.38} cy={dims.h * 0.4} rx={dims.w * 0.16} ry={dims.h * 0.14} fill="url(#gc-c)" />
-      <ellipse cx={dims.w * 0.5} cy={dims.h * 0.62} rx={dims.w * 0.13} ry={dims.h * 0.1} fill="url(#gc-a)" opacity={0.8} />
-    </svg>
+      draggable={false}
+      className="pointer-events-none absolute inset-0 h-full w-full select-none object-fill"
+      style={{
+        opacity: (intensity / 100) * layerOpacity,
+        mixBlendMode: "screen",
+        transform,
+        transformOrigin: "50% 50%",
+      }}
+    />
   );
 }
 
@@ -1360,11 +1357,19 @@ export function CanvasViewport({
             style={{ filter: imgFilter, transform: imgTransform }}
           />
 
-          {w.gradcamOn && <GradCamOverlay dims={dims} intensity={w.gradcamIntensity} layerOpacity={gradcamOpacity} />}
-          {w.gradcamOn && (
+          {w.gradcamOn && w.gradcamResult && (
+            <GradCamOverlay
+              dims={dims}
+              src={w.gradcamResult.heatmapDataUrl}
+              intensity={w.gradcamIntensity}
+              layerOpacity={gradcamOpacity}
+              transform={imgTransform}
+            />
+          )}
+          {w.gradcamOn && w.gradcamResult && (
             <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
               <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
-              Grad-CAM · Emphysema risk
+              Grad-CAM · {w.gradcamResult.className} · {w.gradcamResult.modelCount} modèles
             </div>
           )}
 
@@ -1403,6 +1408,7 @@ export function CanvasViewport({
             : null
         }
         layers={w.layers}
+        pixelSpacingMm={w.pixelSpacingMm}
       />
 
       {/* Inline text editor */}
