@@ -24,11 +24,32 @@ export interface ParsedDicomMetadata {
   number_of_frames: number;
 }
 
+/** Buffer linéaire des pixels DICOM (Rescale Slope/Intercept appliqués).
+
+`dataUrl` est un base64 d'uint16 little-endian ; chaque valeur reconstruite :
+`raw = min + uint16 * scale`. Permet d'appliquer fenêtrage/niveau nativement
+sur les valeurs physiques (HU) au lieu de l'approximation CSS sur le rendu PNG.
+ */
+export interface LinearImageBuffer {
+  dataUrl: string;
+  min: number;
+  max: number;
+  scale: number;
+  width: number;
+  height: number;
+  /** PhotometricInterpretation === "MONOCHROME1" : le rendu doit inverser le mapping. */
+  inverted: boolean;
+}
+
 export interface ParsedDicomFrame {
   frame_index: number;
   image_data_url: string;
   width: number;
   height: number;
+  linear_data_url: string | null;
+  linear_min: number | null;
+  linear_max: number | null;
+  linear_scale: number | null;
 }
 
 export interface ParsedDicomImport {

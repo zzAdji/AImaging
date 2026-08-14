@@ -1,5 +1,6 @@
 import { createContext, useContext, type RefObject } from "react";
 import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
+import type { LinearImageBuffer } from "../lib/dicom";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
@@ -22,7 +23,8 @@ export type ToolId =
   | "contrast"
   | "magicwand"
   | "aiselection"
-  | "gradcam";
+  | "gradcam"
+  | "probe";
 
 export type SectionId =
   | "document"
@@ -78,6 +80,16 @@ export const WL_PRESETS: { label: string; wl: WlValue }[] = [
   { label: "Bone", wl: { window: 350, level: 110 } },
   { label: "Soft Tissue", wl: { window: 60, level: 40 } },
   { label: "Abdomen", wl: { window: 100, level: 50 } },
+  { label: "Brain", wl: { window: 80, level: 40 } },
+];
+
+/** Window / Level presets destinés au fenêtrage natif sur valeurs rescalees (HU). */
+export const WL_PRESETS_HU: { label: string; wl: WlValue }[] = [
+  { label: "Lung", wl: { window: 1500, level: -600 } },
+  { label: "Mediastinum", wl: { window: 350, level: 40 } },
+  { label: "Bone", wl: { window: 2000, level: 500 } },
+  { label: "Soft Tissue", wl: { window: 400, level: 40 } },
+  { label: "Abdomen", wl: { window: 400, level: 60 } },
   { label: "Brain", wl: { window: 80, level: 40 } },
 ];
 
@@ -372,6 +384,8 @@ export interface AiCommandResolution {
   assistantMessage: string;
   warnings?: string[];
   limitations?: string[];
+  /** Remplace le décompte local des actions appliquées (exécution multi-images). */
+  actionSummary?: string;
 }
 
 export type AiCommandResolver = (text: string) => Promise<AiCommandResolution>;
@@ -502,6 +516,10 @@ export interface WorkspaceState {
   inverted: boolean;
   setInverted: (o: boolean) => void;
 
+  /** Sonde anatomique : point posé sur l'image (fractions 0..1) — relie le canvas à la carte anatomique. */
+  probe: { x: number; y: number } | null;
+  setProbe: (p: { x: number; y: number } | null) => void;
+
   collapsed: Record<SectionId, boolean>;
   toggleSection: (id: SectionId) => void;
 
@@ -534,6 +552,14 @@ export interface WorkspaceState {
   setAiCommandResolver: (resolver: AiCommandResolver | null) => void;
   /** Applies a server-validated action plan as one undoable canvas transaction. */
   executeAiActionPlan: (plan: AiActionPlan) => AiActionExecutionResult;
+  /** Registers the shell's whole-exam multi-image undo (Ctrl+Z / bouton). */
+  setAiTransactionUndo: (fn: (() => boolean) | null) => void;
+  /** Undoes the last multi-image AI transaction across all touched images. */
+  undoAiTransaction: () => boolean;
+  /** True while a multi-image AI transaction is pending undo (enables the button). */
+  aiTransactionUndoable: boolean;
+  setAiTransactionUndoable: (v: boolean) => void;
+
   /** User-saved prompt texts, persisted to localStorage (`aimaging.aiPrompts`) */
   aiCustomPrompts: string[];
   addAiCustomPrompt: (text: string) => void;
@@ -557,11 +583,19 @@ export interface WorkspaceState {
   cursorPos: { x: number; y: number } | null;
   setCursorPos: (p: { x: number; y: number } | null) => void;
 
-  imageSrc: string;
+imageSrc: string;
   setImageSrc: (s: string) => void;
+  /** Image prête à afficher : rendu fenêtrage natif pour les DICOM linéaires,
+   *  sinon l'image source telle quelle (le filtre CSS prend le relais). */
+  renderSrc: string;
+  /** Pixels rescalees du DICOM actif, ou null pour une image ordinaire. */
+  dicomLinear: LinearImageBuffer | null;
+  setDicomLinear: (buffer: LinearImageBuffer | null) => void;
   /** Stable examination image identifier; distinct from the human-readable name. */
   imageId: string | null;
   setImageId: (id: string | null) => void;
+  /** Référence live de l'image active (lue hors rendu par les flux asynchrones). */
+  imageIdRef: { current: string | null };
   imageName: string;
   setImageName: (n: string) => void;
   /** Real DICOM metadata for the active image, or null for an ordinary browser image. */

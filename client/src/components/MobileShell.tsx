@@ -57,8 +57,12 @@ export function MobileShell({
       w.setImageId(img.id);
     } else {
       w.openImageData(img.src, img.name, img.id);
+      if (img.metadata?.windowWidth && img.metadata.windowWidth > 1) {
+        w.setWl({ window: img.metadata.windowWidth, level: img.metadata.windowCenter ?? 127.5 });
+      }
     }
     w.setImageMetadata(img.metadata ?? null);
+    w.setDicomLinear(img.linear ?? null);
     w.setPixelSpacingMm(img.metadata?.pixelSpacingMm ?? null);
     w.setGradcamResult(img.gradcam ?? null);
     w.setGradcamOn(Boolean(img.gradcam));
@@ -87,6 +91,10 @@ export function MobileShell({
       if (!image) throw new Error(imported.warnings[0] ?? `Impossible d'ouvrir '${file.name}'.`);
       w.openImageData(image.src, image.name);
       w.setImageMetadata(image.metadata ?? null);
+      w.setDicomLinear(image.linear ?? null);
+      if (image.metadata?.windowWidth && image.metadata.windowWidth > 1) {
+        w.setWl({ window: image.metadata.windowWidth, level: image.metadata.windowCenter ?? 127.5 });
+      }
       w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
       imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
       if (imported.images.length > 1) w.recordAiAction("Import : première frame d'un DICOM multi-frame ouverte.");

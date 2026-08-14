@@ -21,6 +21,8 @@ import {
 } from "../state/workspace";
 import { useWorkspace, type ToolId } from "../state/workspace";
 import { ShapesLayer, type AngleDraft } from "./ShapesLayer";
+import type { LinearImageBuffer } from "../lib/dicom";
+import { paintLinearFrame } from "../lib/dicomRenderer";
 
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 16;
@@ -312,6 +314,42 @@ function ImageSelectionOverlay({ dims, selected }: { dims: Dims; selected: boole
 }
 
 /* ------------------------------ Main viewport ------------------------------ */
+
+/** Render DICOM fenêtré nativement : chaque changement de window/level (ou
+ *  luminosité/contraste/inversion) repeint le canvas à partir des pixels
+ *  rescalees. Remplaçant du filtre CSS pour les images linéaires. */
+function LinearCanvas({
+  buffer,
+  wl,
+  brightness,
+  contrast,
+  inverted,
+  transform,
+}: {
+  buffer: LinearImageBuffer;
+  wl: WlValue;
+  brightness: number;
+  contrast: number;
+  inverted: boolean;
+  transform?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    paintLinearFrame(ctx, buffer, { wl, brightness, contrast, inverted });
+  }, [buffer, wl, brightness, contrast, inverted]);
+  return (
+    <canvas
+      ref={canvasRef}
+      width={buffer.width}
+      height={buffer.height}
+      className="block h-full w-full select-none"
+      style={{ transform, transformOrigin: "50% 50%" }}
+    />
+  );
+}
 
 export function CanvasViewport({
   onOpenImage,
@@ -801,6 +839,16 @@ export function CanvasViewport({
       return;
     }
 
+    /* Sonde anatomique — pointé une zone, sans dessiner */
+    if (w.tool === "probe") {
+      e.preventDefault();
+      const p = screenToDoc(px, py);
+      w.setProbe({ x: p.x / dims.w, y: p.y / dims.h });
+      w.recordAiAction("Sonde posée sur l'image — zone affichée sur la carte anatomique.");
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
     /* Draw tools */
     const drawType = DRAW_TOOLS[w.tool];
     if (drawType) {
@@ -1138,9 +1186,11 @@ export function CanvasViewport({
         ? "grab"
         : w.tool === "zoom"
           ? "zoom-in"
-          : CROSSHAIR_TOOLS.has(w.tool)
+          : w.tool === "probe"
             ? "crosshair"
-            : "default");
+            : CROSSHAIR_TOOLS.has(w.tool)
+              ? "crosshair"
+              : "default");
 
   const drawHint = DRAW_TOOLS[w.tool];
   const allSelected = w.selection === SELECT_ALL;
@@ -1354,8 +1404,24 @@ export function CanvasViewport({
               w.setDims({ w: el.naturalWidth, h: el.naturalHeight });
               setLoaded(true);
             }}
-            style={{ filter: imgFilter, transform: imgTransform }}
+            style={{
+              /* L'image linéaire (fenêtrage natif) recouvre la prévisualisation. */
+              opacity: w.dicomLinear ? 0 : 1,
+              filter: w.dicomLinear ? undefined : imgFilter,
+              transform: imgTransform,
+            }}
           />
+
+          {w.dicomLinear && (
+            <LinearCanvas
+              buffer={w.dicomLinear}
+              wl={w.wl}
+              brightness={w.brightness}
+              contrast={w.contrast}
+              inverted={w.inverted}
+              transform={imgTransform}
+            />
+          )}
 
           {w.gradcamOn && w.gradcamResult && (
             <GradCamOverlay
@@ -1674,6 +1740,7 @@ export function CanvasViewport({
         {w.tool === "annotation" && "Click to place a note"}
         {w.tool === "text" && "Click to add text"}
         {w.tool === "crop" && "Drag to select crop area · Enter to apply · Esc to cancel"}
+        {w.tool === "probe" && "Click to place the anatomical probe on a point of the organ"}
         {drawHint === "freedraw" && "Drag to draw a freehand path"}
         {drawHint && drawHint !== "freedraw" && (drawHint === "measure" || drawHint === "distance" ? "Drag to measure distance" : "Drag to draw · Shift to constrain · Alt from center")}
       </div>

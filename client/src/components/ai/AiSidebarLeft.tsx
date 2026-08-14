@@ -1,5 +1,8 @@
 import { motion } from "framer-motion";
-import { FileText, History, Lightbulb, Save, ScanSearch, Sparkles, Wand2, X, Zap, type LucideIcon } from "lucide-react";
+import {
+  Boxes, History, Lightbulb, Map, Save, Stethoscope, X, Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { AI_PROMPTS } from "../../lib/aiCommands";
 import { cn } from "../../lib/cn";
@@ -27,23 +30,36 @@ function Chip({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function QuickAction({
+/* ------------------------------ Outils radio ------------------------------ */
+
+function RadioToolButton({
   label,
   icon: Icon,
+  active = false,
   onClick,
+  dataAttr,
 }: {
   label: string;
   icon: typeof Zap;
+  active?: boolean;
   onClick: () => void;
+  dataAttr: string;
 }) {
   return (
     <button
       type="button"
+      data-attr={dataAttr}
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-left text-[12px] text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
+      title={label}
+      className={cn(
+        "flex flex-col items-center justify-center gap-1.5 rounded-xl border px-1 py-3 transition-colors duration-150 ease-out",
+        active
+          ? "border-accent/60 bg-accent/10 text-accent"
+          : "border-border bg-card text-ink-2 hover:border-accent/50 hover:text-ink",
+      )}
     >
-      <Icon size={13} strokeWidth={2.2} className="text-icon" />
-      {label}
+      <Icon size={22} strokeWidth={2} className={active ? "text-accent" : "text-icon"} />
+      <span className="text-[10px] font-medium leading-none">{label}</span>
     </button>
   );
 }
@@ -201,12 +217,21 @@ function SavePromptModal({ onClose }: { onClose: () => void }) {
 
 /* --------------------------------- Sidebar ---------------------------------- */
 
-export function AiSidebarLeft({ variant = "static" }: { variant?: "static" | "drawer" }) {
+export function AiSidebarLeft({
+  variant = "static",
+}: {
+  variant?: "static" | "drawer";
+}) {
   const w = useWorkspace();
   const [showHistory, setShowHistory] = useState(false);
   const [showSavePrompt, setShowSavePrompt] = useState(false);
 
   const drawer = variant === "drawer";
+
+  const toggleGradcam = () => {
+    if (w.gradcamResult) w.setGradcamOn(!w.gradcamOn);
+    else w.runAiCommand("@gradcam");
+  };
 
   return (
     <motion.aside
@@ -282,12 +307,22 @@ export function AiSidebarLeft({ variant = "static" }: { variant?: "static" | "dr
 
       <Divider className="mx-3 my-2" />
 
-      {/* Outils IA */}
-      <SectionTitle icon={Wand2}>Outils IA</SectionTitle>
-      <div className="mx-3 mb-3 space-y-1.5">
-        <QuickAction label="Analyse complète" icon={ScanSearch} onClick={() => w.runAiCommand("Analyse cette radiographie.")} />
-        <QuickAction label="Détection de pathologies" icon={Sparkles} onClick={() => w.runAiCommand("Détecte une pneumonie.")} />
-        <QuickAction label="Générer un rapport" icon={FileText} onClick={() => w.runAiCommand("Génère un rapport.")} />
+      {/* Outils radio */}
+      <SectionTitle icon={Stethoscope}>Outils radio</SectionTitle>
+      <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
+        <RadioToolButton
+          label="3D"
+          icon={Boxes}
+          dataAttr="ai-tool-3d"
+          onClick={() => w.recordAiAction("Rendu 3D : nécessite un volume DICOM (multi-frame) — indisponible pour cette image.")}
+        />
+        <RadioToolButton
+          label="Grad-CAM"
+          icon={Map}
+          active={w.gradcamOn}
+          dataAttr="ai-tool-gradcam"
+          onClick={toggleGradcam}
+        />
       </div>
 
       {showHistory && <HistoryModal onClose={() => setShowHistory(false)} />}

@@ -25,6 +25,8 @@ const WAVE_PROFILE = Array.from({ length: 96 }, (_, i) => {
   };
 });
 
+const THINK_DOTS = [0, 0.18, 0.36];
+
 export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
   const [value, setValue] = useState("");
@@ -83,6 +85,40 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
           mobile ? "max-w-none" : "max-w-[700px]",
         )}
       >
+        {/* Suggestions open ABOVE the bar so the bar itself never moves */}
+        <AnimatePresence initial={false}>
+          {!voice && suggestions.length > 0 && (
+            <motion.div
+              key="suggestions"
+              data-attr="ai-command-suggestions"
+              initial={{ opacity: 0, y: 14, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="pointer-events-auto w-full overflow-hidden rounded-2xl border border-border bg-panel/95 p-1.5 shadow-2xl shadow-black/50 backdrop-blur"
+            >
+              {suggestions.map((suggestion, index) => (
+                <button
+                  key={suggestion.name}
+                  type="button"
+                  data-attr={`ai-command-suggestion-${suggestion.name}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setValue(completeCommand(value, suggestion));
+                    inputRef.current?.focus();
+                  }}
+                  className={cn(
+                    "flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+                    index === activeSuggestion ? "bg-accent/15" : "hover:bg-hover",
+                  )}
+                >
+                  <code className="shrink-0 text-[11px] font-semibold text-accent">@{suggestion.name}</code>
+                  <span className="min-w-0 text-[10.5px] text-ink-3">{suggestion.description}</span>
+                </button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
         <AnimatePresence initial={false}>
           {w.aiThought ? (
             <motion.div
@@ -122,32 +158,44 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
               >
                 <Paperclip size={16} strokeWidth={2} />
               </button>
-              <input
-                ref={inputRef}
-                data-attr="ai-command-input"
-                value={value}
-                onChange={(e) => {
-                  setValue(e.target.value);
-                  setActiveSuggestion(0);
-                }}
-                onKeyDown={(e) => {
-                  if (suggestions.length > 0 && e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setActiveSuggestion((index) => (index + 1) % suggestions.length);
-                  } else if (suggestions.length > 0 && e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length);
-                  } else if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter") && !/\s/.test(value.trimStart().slice(1))) {
-                    e.preventDefault();
-                    setValue(completeCommand(value, suggestions[activeSuggestion]));
-                  } else if (e.key === "Enter") {
-                    submit();
-                  }
-                }}
-                placeholder="Demandez une analyse ou exécutez une commande…"
-                spellCheck={false}
-                className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-3/70"
-              />
+              {w.aiBusy ? (
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  {THINK_DOTS.map((delay, index) => (
+                    <span
+                      key={index}
+                      className="aim-think-dot"
+                      style={{ animationDelay: `${delay}s` }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <input
+                  ref={inputRef}
+                  data-attr="ai-command-input"
+                  value={value}
+                  onChange={(e) => {
+                    setValue(e.target.value);
+                    setActiveSuggestion(0);
+                  }}
+                  onKeyDown={(e) => {
+                    if (suggestions.length > 0 && e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setActiveSuggestion((index) => (index + 1) % suggestions.length);
+                    } else if (suggestions.length > 0 && e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length);
+                    } else if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter") && !/\s/.test(value.trimStart().slice(1))) {
+                      e.preventDefault();
+                      setValue(completeCommand(value, suggestions[activeSuggestion]));
+                    } else if (e.key === "Enter") {
+                      submit();
+                    }
+                  }}
+                  placeholder="Demandez une analyse ou exécutez une commande…"
+                  spellCheck={false}
+                  className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-3/70"
+                />
+              )}
               <button
                 type="button"
                 data-attr="ai-command-mic"
@@ -223,29 +271,6 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             </motion.div>
           )}
         </AnimatePresence>
-        {!voice && suggestions.length > 0 && (
-          <div data-attr="ai-command-suggestions" className="border-t border-border bg-panel/95 p-1.5">
-            {suggestions.map((suggestion, index) => (
-              <button
-                key={suggestion.name}
-                type="button"
-                data-attr={`ai-command-suggestion-${suggestion.name}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  setValue(completeCommand(value, suggestion));
-                  inputRef.current?.focus();
-                }}
-                className={cn(
-                  "flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
-                  index === activeSuggestion ? "bg-accent/15" : "hover:bg-hover",
-                )}
-              >
-                <code className="shrink-0 text-[11px] font-semibold text-accent">@{suggestion.name}</code>
-                <span className="min-w-0 text-[10.5px] text-ink-3">{suggestion.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
         </div>
       </div>
     </motion.div>

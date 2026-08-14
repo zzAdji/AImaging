@@ -24,6 +24,9 @@ from PIL import Image
 MAX_DICOM_BYTES = 128 * 1024 * 1024
 MAX_RENDERED_FRAMES = 64
 MAX_FRAME_PIXELS = 20_000_000
+# Au-delà, le buffer linéaire devient trop lourd pour le navigateur : le
+# client retombe sur le fenêtrage CSS du rendu initial (comportement dégradé).
+MAX_LINEAR_PIXELS = 12_000_000
 _PSEUDONYM_KEY = os.environ.get("DICOM_PSEUDONYM_KEY") or secrets.token_hex(32)
 
 
@@ -60,6 +63,14 @@ class DicomFrame:
     image_data_url: str
     width: int
     height: int
+    # Pixels bruts rescalees (Rescale Slope/Intercept appliques), encodes en
+    # uint16 little-endian : raw = linear_min + u16 * linear_scale. Permet au
+    # client d'appliquer le fenêtrage/niveau nativement sur les valeurs reelles.
+    # None pour les DICOM couleur (le rendu preview fait foi).
+    linear_data_url: str | None = None
+    linear_min: float | None = None
+    linear_max: float | None = None
+    linear_scale: float | None = None
 
 
 @dataclass(frozen=True)
@@ -162,13 +173,22 @@ def _metadata(dataset: Any, frame_count: int) -> DicomMetadata:
     )
 
 
-def _normalise_to_uint8(pixels: np.ndarray, dataset: Any) -> np.ndarray:
-    """Applique Rescale + Window Center/Width puis produit des pixels 8 bits."""
+def _rescaled_values(pixels: np.ndarray, dataset: Any) -> np.ndarray:
+    """Applique Rescale Slope/Intercept et nettoie les valeurs non finies.
+
+    Ces valeurs constituent le repère physique (HU pour le scanner) dans
+    lequel le client applique son fenêtrage natif.
+    """
     values = np.asarray(pixels, dtype=np.float64)
     slope = _number(getattr(dataset, "RescaleSlope", None)) or 1.0
     intercept = _number(getattr(dataset, "RescaleIntercept", None)) or 0.0
     values = values * slope + intercept
-    values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _normalise_to_uint8(pixels: np.ndarray, dataset: Any) -> np.ndarray:
+    """Applique Rescale + Window Center/Width puis produit des pixels 8 bits."""
+    values = _rescaled_values(pixels, dataset)
 
     center = _number(getattr(dataset, "WindowCenter", None))
     width = _number(getattr(dataset, "WindowWidth", None))
@@ -185,6 +205,32 @@ def _normalise_to_uint8(pixels: np.ndarray, dataset: Any) -> np.ndarray:
     if _text(dataset, "PhotometricInterpretation") == "MONOCHROME1":
         normalised = 1.0 - normalised
     return np.uint8(np.round(normalised * 255))
+
+
+def _encode_linear_buffer(
+    values: np.ndarray,
+    *,
+    min_value: float,
+    max_value: float,
+) -> tuple[str, float]:
+    """Encode les valeurs rescalees en uint16 LE pour le fenêtrage natif.
+
+    Retourne (base64, linear_scale). Quand la gamme tient dans 16 bits, la
+    représentation est exacte (scale = 1) ; au-delà, la gamme est quantifiée
+    linéairement et le client reconstruit raw = min + u16 * scale.
+    """
+    span = max_value - min_value
+    if span <= 0:
+        uint16 = np.zeros(values.size, dtype="<u2")
+        scale = 1.0
+    elif span <= 65_535:
+        uint16 = np.clip(np.rint(values - min_value), 0, 65_535).astype("<u2")
+        scale = 1.0
+    else:
+        uint16 = np.clip(np.rint((values - min_value) / span * 65_535), 0, 65_535).astype("<u2")
+        scale = span / 65_535.0
+    encoded = base64.b64encode(uint16.tobytes()).decode("ascii")
+    return encoded, scale
 
 
 def _colour_to_uint8(pixels: np.ndarray) -> np.ndarray:
@@ -221,6 +267,26 @@ def _split_frames(pixel_array: np.ndarray, samples_per_pixel: int) -> list[np.nd
         if array.ndim == 3:
             return [array[index] for index in range(array.shape[0])]
     raise DicomImportError("La dimension des pixels DICOM n'est pas prise en charge.")
+
+
+def _linear_frame_data(
+    frame: np.ndarray,
+    dataset: Any,
+    samples_per_pixel: int,
+) -> tuple[str | None, float | None, float | None, float | None]:
+    """Prépare le buffer linéaire du frame pour le fenêtrage natif client.
+
+    Les DICOM couleur n'ont pas de repère physique : le rendu preview fait foi.
+    Les très grandes images sont exclues pour ne pas saturer le navigateur.
+    """
+    if samples_per_pixel > 1:
+        return None, None, None, None
+    if frame.shape[0] * frame.shape[1] > MAX_LINEAR_PIXELS:
+        return None, None, None, None
+    values = _rescaled_values(frame, dataset)
+    min_value, max_value = float(values.min()), float(values.max())
+    encoded, scale = _encode_linear_buffer(values, min_value=min_value, max_value=max_value)
+    return encoded, min_value, max_value, scale
 
 
 def _render_frame(frame: np.ndarray, dataset: Any, samples_per_pixel: int) -> Image.Image:
@@ -279,11 +345,19 @@ def parse_dicom_bytes(data: bytes) -> DicomImportResult:
 
     rendered: list[DicomFrame] = []
     for index in selected_indices:
-        image = _render_frame(frames[index], dataset, samples_per_pixel)
+        frame_array = frames[index]
+        image = _render_frame(frame_array, dataset, samples_per_pixel)
+        linear_data_url, linear_min, linear_max, linear_scale = _linear_frame_data(
+            frame_array, dataset, samples_per_pixel
+        )
         rendered.append(DicomFrame(
             frame_index=index,
             image_data_url=_encode_png(image),
             width=image.width,
             height=image.height,
+            linear_data_url=linear_data_url,
+            linear_min=linear_min,
+            linear_max=linear_max,
+            linear_scale=linear_scale,
         ))
     return DicomImportResult(metadata=metadata, frames=rendered, warnings=warnings)

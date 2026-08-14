@@ -291,8 +291,8 @@ export function ProgressBar({
       <div className={cn("h-1 w-full overflow-hidden rounded-full bg-active", className)}>
         <div
           className={cn(
-            "h-full w-1/3 rounded-full aim-indeterminate-bar",
-            tone === "accent" ? "bg-accent" : "bg-ink-3",
+            "h-full w-2/5 rounded-full bg-gradient-to-r from-accent/40 via-accent to-accent/40 aim-indeterminate-bar",
+            tone === "accent" ? "" : "opacity-60",
           )}
         />
       </div>
@@ -302,11 +302,13 @@ export function ProgressBar({
     <div className={cn("h-1 w-full overflow-hidden rounded-full bg-active", className)}>
       <div
         className={cn(
-          "h-full rounded-full transition-[width] duration-150 ease-out",
+          "relative h-full overflow-hidden rounded-full transition-[width] duration-500 ease-out",
           tone === "accent" ? "bg-accent" : "bg-ink-3",
         )}
         style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-      />
+      >
+        <span className="absolute inset-0 aim-progress-shimmer bg-[linear-gradient(100deg,transparent_30%,rgba(255,255,255,0.35)_50%,transparent_70%)]" />
+      </div>
     </div>
   );
 }

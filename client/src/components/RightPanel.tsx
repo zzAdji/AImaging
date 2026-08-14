@@ -22,6 +22,7 @@ import {
   BC_PRESETS,
   formatDistance,
   WL_PRESETS,
+  WL_PRESETS_HU,
   buildImageFilter,
   isShapeVisible,
   shapeLayerId,
@@ -101,10 +102,17 @@ function PresetChips<T extends { label: string }>({
 
 function ImageSection() {
   const w = useWorkspace();
+  const native = Boolean(w.dicomLinear);
+  const defaultWl = useMemo(() => {
+    if (native && w.imageMetadata?.windowWidth && w.imageMetadata.windowWidth > 1) {
+      return { window: w.imageMetadata.windowWidth, level: w.imageMetadata.windowCenter ?? 127.5 };
+    }
+    return { window: 255, level: 127.5 };
+  }, [native, w.imageMetadata]);
   const reset = () => {
     w.setBrightness(50);
     w.setContrast(50);
-    w.setWl({ window: 255, level: 127.5 });
+    w.setWl(defaultWl);
     w.setInverted(false);
   };
   return (
@@ -191,21 +199,21 @@ function ImageSection() {
       <SliderRow
         label="Window"
         value={w.wl.window}
-        min={20}
-        max={512}
+        min={native ? 1 : 20}
+        max={native ? Math.max(512, Math.round((w.dicomLinear?.max ?? 255) - (w.dicomLinear?.min ?? 0) + 1)) : 512}
         onChange={(v) => w.setWl({ ...w.wl, window: v })}
         inputData="window-input"
       />
       <SliderRow
         label="Level"
         value={w.wl.level}
-        min={0}
-        max={255}
+        min={native ? Math.floor(w.dicomLinear?.min ?? 0) : 0}
+        max={native ? Math.ceil(w.dicomLinear?.max ?? 255) : 255}
         onChange={(v) => w.setWl({ ...w.wl, level: v })}
         inputData="level-input"
       />
       <PresetChips
-        options={WL_PRESETS}
+        options={native ? WL_PRESETS_HU : WL_PRESETS}
         isActive={(p) => p.wl.window === w.wl.window && p.wl.level === w.wl.level}
         onSelect={(p) => {
           w.recordAiAction(`Fenêtrage ${p.label} appliqué`);
@@ -244,10 +252,10 @@ function DocumentSection() {
   const doExport = async () => {
     if (!w.imageSrc) return;
     const url = await exportImageDataUrl({
-      imageSrc: w.imageSrc,
+      imageSrc: w.dicomLinear ? w.renderSrc : w.imageSrc,
       dims: w.dims,
       shapes: w.shapes.filter((s) => isShapeVisible(s, w.layers)),
-      filter: buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
+      filter: w.dicomLinear ? "none" : buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
       pixelSpacingMm: w.pixelSpacingMm,
       format: "png",
     });
@@ -259,7 +267,9 @@ function DocumentSection() {
     try {
       const win = window.open("", "_blank");
       if (!win) return;
-      const filter = buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted);
+      const filter = w.dicomLinear
+        ? "none"
+        : buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted);
       const esc = (s: string) =>
         s
           .replace(/&/g, "&amp;")
@@ -269,7 +279,7 @@ function DocumentSection() {
       win.document.write(
         `<!doctype html><html><head><meta charset="utf-8"><title>Print — ${esc(w.imageName)}</title>` +
           `<style>@page{margin:12mm}body{margin:0;background:#fff;font-family:Inter,Arial,sans-serif;display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px}h1{font-size:13px;color:#444;font-weight:600;margin:0}img{max-width:94vw;max-height:84vh;object-fit:contain;filter:${esc(filter)}}p{font-size:10px;color:#999;margin:0}</style></head>` +
-          `<body><h1>${esc(w.imageName)}</h1><img src="${esc(w.imageSrc)}" alt=""><p>${w.dims.w} × ${w.dims.h} px</p>` +
+          `<body><h1>${esc(w.imageName)}</h1><img src="${esc(w.dicomLinear ? w.renderSrc : w.imageSrc)}" alt=""><p>${w.dims.w} × ${w.dims.h} px</p>` +
           `<script>window.addEventListener('load',function(){window.print();});</scr` +
           `ipt></body></html>`,
       );
@@ -283,7 +293,7 @@ function DocumentSection() {
     <Section id="document" title="Document">
       <div className="flex items-center gap-2.5">
         <img
-          src={w.imageSrc}
+          src={w.renderSrc}
           alt=""
           className="h-12 w-12 shrink-0 rounded-lg border border-border object-cover"
         />

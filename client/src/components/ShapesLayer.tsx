@@ -169,6 +169,11 @@ function ShapeElement({
   const sw = shape.strokeWidth;
   const stroke = shape.strokeColor ?? ACCENT;
   const attrs = { "data-shape": shape.id, "data-type": shape.type };
+  /* AI-created shapes are revealed progressively: strokes draw themselves
+     ("trait après trait") and labels sharpen in after the geometry. */
+  const ai = shape.createdBy === "ai";
+  const aiStroke = ai ? ({ pathLength: 1, className: "ai-stroke-draw" } as const) : {};
+  const aiText = ai ? ({ className: "ai-text-reveal" } as const) : {};
   switch (shape.type) {
     case "rectangle":
       return (
@@ -182,6 +187,7 @@ function ShapeElement({
           stroke={stroke}
           strokeWidth={sw}
           strokeDasharray={dash}
+          {...aiStroke}
         />
       );
     case "ellipse":
@@ -196,6 +202,7 @@ function ShapeElement({
           stroke={stroke}
           strokeWidth={sw}
           strokeDasharray={dash}
+          {...aiStroke}
         />
       );
     case "line":
@@ -210,6 +217,7 @@ function ShapeElement({
           strokeWidth={sw}
           strokeLinecap="round"
           strokeDasharray={dash}
+          {...aiStroke}
         />
       );
     case "arrow":
@@ -224,6 +232,7 @@ function ShapeElement({
             strokeWidth={sw}
             strokeLinecap="round"
             strokeDasharray={dash}
+            {...aiStroke}
           />
           <ArrowHead
             x1={shape.x}
@@ -246,6 +255,7 @@ function ShapeElement({
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeDasharray={dash}
+          {...aiStroke}
         />
       );
     case "measure":
@@ -264,6 +274,7 @@ function ShapeElement({
             strokeWidth={sw}
             strokeLinecap="round"
             strokeDasharray={dash}
+            {...aiStroke}
           />
           <circle cx={shape.x} cy={shape.y} r={3.5} fill={stroke} />
           <circle cx={shape.x + shape.w} cy={shape.y + shape.h} r={3.5} fill={stroke} />
@@ -283,10 +294,10 @@ function ShapeElement({
       const r = 20;
       return (
         <g {...attrs}>
-          <line x1={shape.x} y1={shape.y} x2={ex} y2={ey} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} />
-          <line x1={shape.x} y1={shape.y} x2={p2.x} y2={p2.y} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} />
+          <line x1={shape.x} y1={shape.y} x2={ex} y2={ey} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} {...aiStroke} />
+          <line x1={shape.x} y1={shape.y} x2={p2.x} y2={p2.y} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeDasharray={dash} {...aiStroke} />
           <AngleArc vx={shape.x} vy={shape.y} a1={a1} a2={a2} r={r} color={stroke} />
-          <circle cx={shape.x} cy={shape.y} r={3} fill={stroke} />
+          <circle cx={shape.x} cy={shape.y} r={3} fill={stroke} {...aiText} />
           <Chip cx={shape.x + r + 16} cy={shape.y - r - 2} text={`${deg.toFixed(1)}°`} scale={scale} />
         </g>
       );
@@ -299,10 +310,10 @@ function ShapeElement({
       const ty = Math.max(box.y + 4, Math.min(box.y + box.h - 4, anchor.y));
       return (
         <g {...attrs}>
-          <circle cx={anchor.x} cy={anchor.y} r={7} fill="none" stroke={ACCENT} strokeWidth={1} strokeOpacity={0.55} />
+          <circle cx={anchor.x} cy={anchor.y} r={7} fill="none" stroke={ACCENT} strokeWidth={1} strokeOpacity={0.55} {...aiStroke} />
           <circle cx={anchor.x} cy={anchor.y} r={3} fill={ACCENT} />
-          <line x1={anchor.x} y1={anchor.y} x2={tx} y2={ty} stroke={ACCENT} strokeWidth={1.25} />
-          <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} fill="#0e0e0e" fillOpacity={0.94} stroke={ACCENT} strokeWidth={1} />
+          <line x1={anchor.x} y1={anchor.y} x2={tx} y2={ty} stroke={ACCENT} strokeWidth={1.25} {...aiStroke} />
+          <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} fill="#0e0e0e" fillOpacity={0.94} stroke={ACCENT} strokeWidth={1} {...aiStroke} />
           <TextLines
             x={box.x + 10}
             y={box.y + fs + 7}
@@ -312,6 +323,7 @@ function ShapeElement({
             fontFamily={FONT_MAP[shape.fontFamily ?? "sans"]}
             fill="#f5f5f5"
             style={{ userSelect: "none" }}
+            {...aiText}
           />
         </g>
       );
@@ -328,6 +340,7 @@ function ShapeElement({
           fontFamily={FONT_MAP[shape.fontFamily ?? "sans"]}
           fill={shape.color ?? "#ffffff"}
           style={{ userSelect: "none" }}
+          {...aiText}
         />
       );
   }
@@ -577,6 +590,8 @@ export function ShapesLayer({
       (a, b) => paintOrder(shapeLayerId(a)) - paintOrder(shapeLayerId(b)),
     );
   const selectedShape = visibleShapes.find((s) => s.id === selection);
+  /* AI-drawn shapes appear one after another: each gets a staggered delay. */
+  let aiSequence = 0;
   return (
     <svg
       width="100%"
@@ -585,11 +600,20 @@ export function ShapesLayer({
       className="pointer-events-none absolute inset-0"
     >
       <g>
-        {visibleShapes.map((s) => (
-          <g key={s.id} opacity={layerOpacityFor(s, layers) / 100}>
-            <ShapeElement shape={s} scale={scale} pixelSpacingMm={pixelSpacingMm} />
-          </g>
-        ))}
+        {visibleShapes.map((s) => {
+          const ai = s.createdBy === "ai";
+          const aiDelay = ai ? `${aiSequence++ * 0.16}s` : "0s";
+          return (
+            <g key={s.id} opacity={layerOpacityFor(s, layers) / 100}>
+              <g
+                className={ai ? "ai-shape-enter" : undefined}
+                style={ai ? ({ "--ai-delay": aiDelay } as React.CSSProperties) : undefined}
+              >
+                <ShapeElement shape={s} scale={scale} pixelSpacingMm={pixelSpacingMm} />
+              </g>
+            </g>
+          );
+        })}
       </g>
       {draft && <ShapeElement shape={draft} draft scale={scale} pixelSpacingMm={pixelSpacingMm} />}
       {angleDraft && <AngleDraftLayer draft={angleDraft} scale={scale} />}

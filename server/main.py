@@ -209,6 +209,10 @@ class DicomFrameResponse(BaseModel):
     image_data_url: str
     width: int
     height: int
+    linear_data_url: str | None = None
+    linear_min: float | None = None
+    linear_max: float | None = None
+    linear_scale: float | None = None
 
 
 class DicomImportResponse(BaseModel):
@@ -426,6 +430,10 @@ async def parse_dicom(file: UploadFile = File(...)) -> DicomImportResponse:
                 image_data_url=frame.image_data_url,
                 width=frame.width,
                 height=frame.height,
+                linear_data_url=frame.linear_data_url,
+                linear_min=frame.linear_min,
+                linear_max=frame.linear_max,
+                linear_scale=frame.linear_scale,
             )
             for frame in result.frames
         ],

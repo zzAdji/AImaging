@@ -1,17 +1,10 @@
 import { motion } from "framer-motion";
-import {
-  Activity,
-  Download,
-  FileText,
-  Map,
-  MessageSquare,
-  Pencil,
-  Ruler,
-} from "lucide-react";
+import { Activity, Download, FileText, Pencil } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { downloadJson } from "../../lib/exportImage";
-import { formatDistance, shapeBBox, useWorkspace, type AiDiagnosis } from "../../state/workspace";
-import { KV, ProgressBar, Slider } from "../ui";
+import { useWorkspace, type AiDiagnosis } from "../../state/workspace";
+import { ProgressBar } from "../ui";
+import { AnatomyMapCard } from "./AnatomyMap";
 function Card({
   title,
   icon: Icon,
@@ -76,7 +69,21 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
   const w = useWorkspace();
 
   const drawer = variant === "drawer";
-  const measures = w.shapes.filter((s) => s.type === "measure" || s.type === "distance" || s.type === "angle");
+
+  const onResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = w.rightWidth;
+    const move = (ev: PointerEvent) => {
+      w.setRightWidth(Math.min(560, Math.max(300, startW + (startX - ev.clientX))));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   return (
     <motion.aside
@@ -86,12 +93,26 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
       transition={{ duration: 0.3, ease: "easeOut" }}
       data-attr="ai-sidebar-right"
       className={cn(
-        "flex flex-col overflow-y-auto border-l border-border bg-panel",
+        "relative flex flex-col border-l border-border bg-panel",
         drawer
-          ? "fixed inset-y-0 right-0 z-[130] w-[85vw] max-w-[320px] border-l border-border shadow-2xl shadow-black/60"
-          : "w-72 shrink-0 pb-4",
+          ? "fixed inset-y-0 right-0 z-[130] w-[85vw] max-w-[360px] border-l border-border shadow-2xl shadow-black/60"
+          : "shrink-0 pb-0",
       )}
+      style={drawer ? undefined : { width: w.rightWidth }}
     >
+      {!drawer && (
+        <div
+          onPointerDown={onResizeDown}
+          className="group absolute -left-1.5 top-0 z-50 h-full w-3 cursor-ew-resize"
+        >
+          <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-transparent transition-colors duration-150 ease-out group-hover:bg-accent/60" />
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+      {/* Carte anatomique — mini-carte de l'organe avec la Sonde */}
+      <AnatomyMapCard />
+
       {/* Diagnostics */}
       <Card title="Diagnostics" icon={Activity} dataAttr="ai-card-diagnostics" accent>
         {w.aiResults.diagnostics.length === 0 ? (
@@ -111,75 +132,6 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
         )}
       </Card>
 
-      {/* Latest conversational response */}
-      <Card title="Réponse IA" icon={MessageSquare} dataAttr="ai-card-response">
-        {!w.aiResults.lastResponse ? (
-          <p className="px-1 text-[11px] text-ink-3">
-            Posez une question ou donnez une instruction pour recevoir une réponse détaillée.
-          </p>
-        ) : (
-          <div className="space-y-2 px-1">
-            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink-2">{w.aiResults.lastResponse}</p>
-            {w.aiResults.lastLimitations.length > 0 && (
-              <div className="rounded-md border border-border/80 bg-canvas/50 p-2 text-[10px] leading-relaxed text-ink-3">
-                <span className="font-medium text-ink-2">Limites : </span>
-                {w.aiResults.lastLimitations.join(" ")}
-              </div>
-            )}
-            {w.aiResults.lastWarnings.length > 0 && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] leading-relaxed text-amber-200">
-                {w.aiResults.lastWarnings.join(" ")}
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* Grad-CAM */}
-      <Card title="Grad-CAM" icon={Map} dataAttr="ai-card-gradcam">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[11.5px] text-ink-2">Overlay d'activation</span>
-          <button
-            type="button"
-            data-attr="ai-gradcam-toggle"
-            onClick={() => {
-              if (w.gradcamResult) {
-                w.setGradcamOn(!w.gradcamOn);
-              } else {
-                w.runAiCommand("@gradcam");
-              }
-            }}
-            title={w.gradcamResult ? "Afficher ou masquer la Grad-CAM" : "Calculer une Grad-CAM réelle"}
-            className={cn(
-              "flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors duration-300",
-              w.gradcamOn ? "justify-end border-accent/60 bg-accent" : "justify-start border-border bg-hover",
-            )}
-          >
-            <span
-              className={cn(
-                "h-4 w-4 rounded-full shadow-sm transition-colors duration-300",
-                w.gradcamOn ? "bg-white" : "bg-ink-3",
-              )}
-            />
-          </button>
-        </div>
-        {!w.gradcamResult && (
-          <p className="mt-2 px-1 text-[10px] leading-relaxed text-ink-3">
-            Cliquez pour calculer une carte d'activation rÃ©elle sur le serveur.
-          </p>
-        )}
-        {w.gradcamOn && (
-          <div className="mt-2.5">
-            <Slider
-              label="Intensité"
-              value={w.gradcamIntensity}
-              onChange={w.setGradcamIntensity}
-              display={`${w.gradcamIntensity}%`}
-            />
-          </div>
-        )}
-      </Card>
-
       {/* Rapports */}
       <Card title="Rapports" icon={FileText} dataAttr="ai-card-report">
         {!w.aiResults.report ? (
@@ -188,9 +140,9 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
           </p>
         ) : (
           <>
-            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/70 bg-canvas/60 p-2 text-[10.5px] leading-relaxed text-ink-2">
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink-2">
               {w.aiResults.report}
-            </pre>
+            </p>
             <div className="mt-2 grid grid-cols-2 gap-1.5">
               <button
                 type="button"
@@ -219,43 +171,7 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
           </>
         )}
       </Card>
-
-      {/* Mesures */}
-      <Card title="Mesures" icon={Ruler} dataAttr="ai-card-measures">
-        {measures.length === 0 ? (
-          <p className="px-1 text-[11px] text-ink-3">Aucune mesure — commande « Mesure » ou dessinez avec l'outil Ruler.</p>
-        ) : (
-          <div className="space-y-1">
-            {measures.map((s) => {
-              const bb = shapeBBox(s);
-              const measurement = s.type === "angle"
-                ? null
-                : formatDistance(bb.w, bb.h, w.pixelSpacingMm);
-              return (
-                <div key={s.id} className="flex items-center gap-2 px-1">
-                  <span className="truncate text-[11px] text-ink-2">
-                    {s.type === "measure" ? "Mesure" : s.type === "angle" ? "Angle" : "Distance"}
-                  </span>
-                  <span className="ml-auto text-[11px] tabular-nums text-ink">
-                    {s.type === "angle" ? "Angle" : measurement}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      {/* Métadonnées IA */}
-      <Card title="Métadonnées IA" icon={Activity} dataAttr="ai-card-metadata">
-        <div className="space-y-1 px-1">
-          <KV k="Modèle" v={w.aiResults.modelName ?? "En attente d'analyse"} />
-          <KV k="Type" v={w.aiResults.modelCount ? `Ensemble de ${w.aiResults.modelCount} modèles` : "Classification"} />
-          <KV k="Résolution" v={`${w.dims.w} × ${w.dims.h} px`} />
-          <KV k="Statut" v={w.aiResults.lastSummary ?? "En attente"} />
-          <KV k="Image" v={w.imageName} />
-        </div>
-      </Card>
+      </div>
     </motion.aside>
   );
 }

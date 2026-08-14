@@ -1,5 +1,6 @@
 import type { PixelSpacingMm, Shape, WlValue } from "../state/workspace";
 import type { RadiographyPrediction } from "./workspaceApi";
+import type { LinearImageBuffer } from "./dicom";
 import { isDicomFile, parseDicomFile } from "./dicom";
 
 /* ------------------------------ Examination model ------------------------------ */
@@ -33,6 +34,8 @@ export interface ExamImage {
   dims: { w: number; h: number };
   sourceKind?: "browser-image" | "dicom" | "unknown";
   metadata?: ExamImageMetadata;
+  /** Pixels rescalees pour le fenêtrage natif (seulement pour les DICOM monochromes). */
+  linear?: LinearImageBuffer;
   prediction?: RadiographyPrediction;
   gradcam?: GradCamResult;
   state?: ExamImageState;
@@ -201,6 +204,7 @@ export async function readImportedImageFiles(files: File[] | FileList): Promise<
         const parsed = await parseDicomFile(file);
         const baseName = imageStem(file.name);
         const metadata = dicomMetadata(parsed.metadata);
+        const inverted = (metadata.photometricInterpretation ?? "").trim().toUpperCase() === "MONOCHROME1";
         for (const frame of parsed.frames) {
           out.push({
             id: uid(),
@@ -209,6 +213,21 @@ export async function readImportedImageFiles(files: File[] | FileList): Promise<
             dims: { w: frame.width, h: frame.height },
             sourceKind: "dicom",
             metadata: { ...metadata },
+            linear:
+              frame.linear_data_url !== null &&
+              frame.linear_min !== null &&
+              frame.linear_max !== null &&
+              frame.linear_scale !== null
+                ? {
+                    dataUrl: frame.linear_data_url,
+                    min: frame.linear_min,
+                    max: frame.linear_max,
+                    scale: frame.linear_scale,
+                    width: frame.width,
+                    height: frame.height,
+                    inverted,
+                  }
+                : undefined,
           });
         }
         warnings.push(...parsed.warnings.map((warning) => `${file.name} : ${warning}`));

@@ -28,6 +28,8 @@ import {
   type WlValue,
 } from "./workspace";
 import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
+import type { LinearImageBuffer } from "../lib/dicom";
+import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import { amendReportText, mockDiagnostics, mockReport, parseAiCommand, type AiCommandAction, type RegionFrac } from "../lib/aiCommands";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
@@ -312,7 +314,8 @@ export function WorkspaceProvider({
   const [zoomPreset, setZoomPreset] = useState<"fit" | "actual">("fit");
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [rightWidth, setRightWidth] = useState(312);
+  const [rightWidth, setRightWidth] = useState(352);
+  const [probe, setProbe] = useState<{ x: number; y: number } | null>(null);
   const [gridOn, setGridOn] = useState(false);
   const [rulersOn, setRulersOn] = useState(false);
   const [statusBarOpen, setStatusBarOpen] = useState(true);
@@ -419,6 +422,8 @@ export function WorkspaceProvider({
   }, []);
   const [imageSrc, setImageSrc] = useState("");
   const [imageId, setImageId] = useState<string | null>(null);
+  const imageIdRef = useRef<string | null>(null);
+  const imageSrcRef = useRef("");
   const [imageName, setImageName] = useState("Chest X-Ray — PA");
   const [imageMetadata, setImageMetadataState] = useState<ExamImageMetadata | null>(null);
   const setImageMetadata = useCallback((metadata: ExamImageMetadata | null) => {
@@ -426,7 +431,44 @@ export function WorkspaceProvider({
   }, []);
   const [fitSignal, setFitSignal] = useState<{ a: number; b: number }>({ a: 0, b: 0 });
   const [dims, setDims] = useState({ w: 1200, h: 1063 });
+  const imageNameRef = useRef("Chest X-Ray — PA");
+  const dimsRef = useRef({ w: 1200, h: 1063 });
+
+  useEffect(() => {
+    imageIdRef.current = imageId;
+    imageSrcRef.current = imageSrc;
+    imageNameRef.current = imageName;
+    dimsRef.current = dims;
+  }, [imageId, imageSrc, imageName, dims]);
+
+  const [dicomLinear, setDicomLinearState] = useState<LinearImageBuffer | null>(null);
+  const setDicomLinear = useCallback((buffer: LinearImageBuffer | null) => {
+    setDicomLinearState((prev) => (prev === buffer ? prev : buffer));
+    if (buffer) setDims({ w: buffer.width, h: buffer.height });
+  }, []);
   const [crop, setCrop] = useState<WorkspaceState["crop"]>(null);
+
+  /* Rendu prêt à afficher : fenêtrage natif pour les DICOM linéaires, sinon
+     l'image source (le filtre CSS prend le relais). */
+  const renderSrc = useMemo(() => {
+    if (!dicomLinear || !imageSrc) return imageSrc;
+    return linearToDataUrl(dicomLinear, { wl, brightness, contrast, inverted });
+  }, [dicomLinear, imageSrc, wl, brightness, contrast, inverted]);
+
+  const resetImageAdjustments = useCallback(() => {
+    setRotation(0);
+    setFlipH(false);
+    setFlipV(false);
+    setWl({ window: 255, level: 127.5 });
+    setBrightness(50);
+    setContrast(50);
+    setInverted(false);
+    setCrop(null);
+    setGradcamOn(false);
+    setGradcamResult(null);
+    setPixelSpacingMm(null);
+    setSelection(null);
+  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setPixelSpacingMm]);
   const [shapeStyle, setShapeStyle] = useState<ShapeStyle>(loadShapeStyle);
 
   /* ------------------------------ Clipboard ------------------------------ */
@@ -512,7 +554,9 @@ export function WorkspaceProvider({
     const c = crop;
     if (!c || c.w < 1 || c.h < 1) return;
     const oldDims = dims;
-    const src = imageSrc;
+    /* Un DICOM linéaire est rogné sur le rendu fenêtré courant, puis l'image
+       devient une image ordinaire (le buffer linéaire est détaché). */
+    const src = dicomLinear ? renderSrc : imageSrc;
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
@@ -541,11 +585,15 @@ export function WorkspaceProvider({
       setCrop(null);
       setImageSrc(canvas.toDataURL("image/png"));
       setImageName((n) => `${n} (cropped)`);
+      if (dicomLinear) {
+        setDicomLinear(null);
+        resetImageAdjustments();
+      }
       setZoomPreset("fit");
       setFitSignal((s) => ({ a: s.a + 1, b: s.b + 1 }));
     };
     img.src = src;
-  }, [crop, dims, imageSrc, pushHistory, commit]);
+  }, [crop, dims, dicomLinear, renderSrc, imageSrc, pushHistory, commit, resetImageAdjustments, setDicomLinear]);
 
   const toggleSection = useCallback((id: SectionId) => {
     setCollapsed((c) => ({ ...c, [id]: !c[id] }));
@@ -600,6 +648,14 @@ export function WorkspaceProvider({
   const aiThoughtTimers = useRef<number[]>([]);
   const commandResolverRef = useRef<AiCommandResolver | null>(null);
   const executePlanRef = useRef<(plan: AiActionPlan) => { appliedActionIds: string[]; warnings: string[] }>(() => ({ appliedActionIds: [], warnings: [] }));
+  /* Annulation globale des transactions IA multi-images (régistrée par le Shell). */
+  const [aiTransactionUndoable, setAiTransactionUndoable] = useState(false);
+  const aiTransactionUndoRef = useRef<() => boolean>(() => false);
+  const setAiTransactionUndo = useCallback((fn: (() => boolean) | null) => {
+    aiTransactionUndoRef.current = fn ?? (() => false);
+  }, []);
+  const undoAiTransaction = useCallback(() => aiTransactionUndoRef.current(), []);
+
 
   const setAiCommandResolver = useCallback((resolver: AiCommandResolver | null) => {
     commandResolverRef.current = resolver;
@@ -711,12 +767,14 @@ export function WorkspaceProvider({
         setAiBusy(true);
         setAiThought({ id: item.id, text: "Validation de la commande structurée…" });
         void commandResolverRef.current(text)
-          .then((resolution) => {
+.then((resolution) => {
             const result = executePlanRef.current(resolution.plan);
             const warnings = [...(resolution.warnings ?? []), ...result.warnings];
-            const actionSummary = result.appliedActionIds.length
-              ? `${result.appliedActionIds.length} action(s) appliquée(s).`
-              : "Aucune action canvas appliquée.";
+            const actionSummary =
+              resolution.actionSummary ??
+              (result.appliedActionIds.length
+                ? `${result.appliedActionIds.length} action(s) appliquée(s).`
+                : "Aucune action canvas appliquée.");
             const summary = `${actionSummary}${warnings.length ? ` ${warnings[0]}` : ""}`;
             setAiHistory((history) => history.map((entry) => entry.id === item.id ? {
               ...entry,
@@ -802,6 +860,7 @@ export function WorkspaceProvider({
               fontFamily: "sans",
               fontWeight: "normal",
               color: "#ffffff",
+              createdBy: "ai",
             };
             pushHistory();
             commit([...shapesRef.current, ann]);
@@ -846,6 +905,7 @@ export function WorkspaceProvider({
               fontFamily: "sans",
               fontWeight: "normal",
               color: "#ffffff",
+              createdBy: "ai",
             };
             pushHistory();
             commit([...shapesRef.current, ann]);
@@ -863,6 +923,7 @@ export function WorkspaceProvider({
               h: 0,
               points: [],
               strokeWidth: 2,
+              createdBy: "ai",
             };
             pushHistory();
             commit([...shapesRef.current, m]);
@@ -894,7 +955,6 @@ export function WorkspaceProvider({
       reportEditOpen,
       pushHistory,
       commit,
-      setGradcamOn,
       setInverted,
       setWl,
     ],
@@ -910,10 +970,10 @@ export function WorkspaceProvider({
     const actionList = [...plan.actions].sort((a, b) => a.order - b.order);
     const actionShapeIds = new Set<string>();
 
-    pushHistory();
+pushHistory();
     for (const action of actionList) {
       const payload = action as typeof action & Record<string, unknown>;
-      if (action.target_image_id && action.target_image_id !== imageId) {
+      if (action.target_image_id && action.target_image_id !== imageIdRef.current) {
         warnings.push(`Action ${action.id} ignorée : elle cible une autre image.`);
         continue;
       }
@@ -1042,8 +1102,11 @@ export function WorkspaceProvider({
     }
     if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajouté(s) par l'IA.`);
     return { appliedActionIds, warnings };
-  }, [commit, imageId, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setWl]);
-  executePlanRef.current = executeAiActionPlan;
+  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setWl]);
+
+  useEffect(() => {
+    executePlanRef.current = executeAiActionPlan;
+  }, [executeAiActionPlan]);
 
   const requestFit = useCallback((pane?: "A" | "B") => {
     const p = pane ?? activePaneRef.current;
@@ -1053,25 +1116,11 @@ export function WorkspaceProvider({
 
   /* ------------------------------ Document ops ------------------------------ */
 
-  const resetImageAdjustments = useCallback(() => {
-    setRotation(0);
-    setFlipH(false);
-    setFlipV(false);
-    setWl({ window: 255, level: 127.5 });
-    setBrightness(50);
-    setContrast(50);
-    setInverted(false);
-    setCrop(null);
-    setGradcamOn(false);
-    setGradcamResult(null);
-    setPixelSpacingMm(null);
-    setSelection(null);
-  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamResult, setPixelSpacingMm]);
-
-  const openImageData = useCallback(
+const openImageData = useCallback(
     (dataUrl: string, name: string, nextImageId?: string) => {
       resetDocument();
       resetImageAdjustments();
+      setDicomLinear(null);
       setImageSrc(dataUrl);
       setImageId(nextImageId ?? null);
       setImageName(name);
@@ -1080,12 +1129,13 @@ export function WorkspaceProvider({
       setZoomPreset("fit");
       setFitSignal((s) => ({ a: s.a + 1, b: s.b + 1 }));
     },
-    [resetDocument, resetImageAdjustments, setImageMetadata],
+    [resetDocument, resetImageAdjustments, setImageMetadata, setDicomLinear],
   );
 
-  const closeDocument = useCallback(() => {
+const closeDocument = useCallback(() => {
     resetDocument();
     resetImageAdjustments();
+    setDicomLinear(null);
     setImageSrc("");
     setImageId(null);
     setImageName("Untitled");
@@ -1093,24 +1143,24 @@ export function WorkspaceProvider({
     setDims({ w: 0, h: 0 });
     setZoomPreset("fit");
     setFitSignal((s) => ({ a: s.a + 1, b: s.b + 1 }));
-  }, [resetDocument, resetImageAdjustments, setImageMetadata]);
+  }, [resetDocument, resetImageAdjustments, setImageMetadata, setDicomLinear]);
 
   const captureImageState = useCallback((): ImageStateSnapshot & { name: string; dims: { w: number; h: number } } | null => {
-    if (!imageSrc) return null;
+    if (!imageSrcRef.current) return null;
     return {
-      name: imageName,
-      src: imageSrc,
-      dims,
+      name: imageNameRef.current,
+      src: imageSrcRef.current,
+      dims: dimsRef.current,
       shapes: shapesRef.current,
-      wl,
-      brightness,
-      contrast,
-      inverted,
-      rotation,
-      flipH,
-      flipV,
+      wl: wlRef.current,
+      brightness: brightnessRef.current,
+      contrast: contrastRef.current,
+      inverted: invertedRef.current,
+      rotation: rotationRef.current,
+      flipH: flipHRef.current,
+      flipV: flipVRef.current,
     };
-  }, [imageSrc, imageName, dims, shapesRef, wl, brightness, contrast, inverted, rotation, flipH, flipV]);
+  }, []);
 
   const applyImageState = useCallback(
     (s: ImageStateSnapshot) => {
@@ -1292,6 +1342,8 @@ export function WorkspaceProvider({
       setRightPanelOpen,
       rightWidth,
       setRightWidth,
+      probe,
+      setProbe,
       gridOn,
       setGridOn,
       setPixelGrid,
@@ -1343,16 +1395,24 @@ export function WorkspaceProvider({
       runAiCommand,
       setAiCommandResolver,
       executeAiActionPlan,
+      setAiTransactionUndo,
+      undoAiTransaction,
+      aiTransactionUndoable,
+      setAiTransactionUndoable,
       aiThought,
       reportEditOpen, setReportEditOpen,
       reportDraft, setReportDraft,
       openReportEditor,
       saveReportDraft,      cursorPos,
       setCursorPos,
-      imageSrc,
+imageSrc,
       setImageSrc,
+      renderSrc,
+      dicomLinear,
+      setDicomLinear,
       imageId,
       setImageId,
+      imageIdRef,
       imageName,
       setImageName,
       imageMetadata,
@@ -1387,22 +1447,23 @@ export function WorkspaceProvider({
       toolbarOpen,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
-      gradcamOn, gradcamIntensity, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
+      gradcamOn, setGradcamOn, gradcamIntensity, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
+      probe, setProbe,
       collapsed, toggleSection, analysis,
       runAnalysis,
       aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
       aiActionLog, recordAiAction,
-      aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan, aiThought,
+      aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan,
+      setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,
-      cursorPos, setCursorPos, imageSrc, imageId, imageName, imageMetadata, setImageMetadata, openImageData,
+      cursorPos, setCursorPos, imageSrc, renderSrc, dicomLinear, setDicomLinear, imageId, setImageId, imageIdRef, imageName, imageMetadata, setImageMetadata, openImageData,
       closeDocument, saveDocument, captureImageState, applyImageState, fitSignal, requestFit,
       layers, setLayerVisible, setLayerLocked, setLayerName, setLayerOpacity,
       moveLayer, deleteLayerContent,
-      openReportEditor, saveReportDraft, reportEditOpen, reportDraft,
     ],
   );
 

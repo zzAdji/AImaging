@@ -38,6 +38,7 @@ import {
   isRadiographyCompatible,
   readImportedImageFiles,
   saveExaminations,
+  type ExamImage,
   type ExamImageState,
   type Examination,
   type GradCamResult,
@@ -53,6 +54,7 @@ import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
 import { cn } from "./lib/cn";
 import { buildWorkspaceManifest, captureAnnotatedImage, type AiActionPlan } from "./lib/workspaceProtocol";
+import { captureMutableSnapshots, type MutableSnapshotMap } from "./lib/aiTransaction";
 import {
   analyzeWorkspaceImages,
   createWorkspaceExam,
@@ -136,6 +138,7 @@ function Shell({
   exams,
   onBack,
   onSaveImageState,
+  onClearImageState,
   onSavePredictions,
   onSaveGradcams,
 }: {
@@ -143,6 +146,7 @@ function Shell({
   exams: Examination[];
   onBack: () => void;
   onSaveImageState: (examId: string, index: number, state: EditorSnapshot) => void;
+  onClearImageState: (examId: string, index: number) => void;
   onSavePredictions: (examId: string, predictions: Record<string, RadiographyPrediction>) => void;
   onSaveGradcams: (examId: string, gradcams: Record<string, GradCamResult>) => void;
 }) {
@@ -218,6 +222,61 @@ function Shell({
     return () => window.clearTimeout(timer);
   }, [analysisProgress]);
 
+  const transactionStack = useRef<
+    Array<{
+      examId: string;
+      originalIndex: number;
+      snapshots: MutableSnapshotMap;
+    }>
+  >([]);
+
+  const undoLastTransaction = useCallback(() => {
+    const record = transactionStack.current.pop();
+    if (!record || !exam) return false;
+    for (const [imageId, snapshot] of record.snapshots) {
+      const idx = exam.images.findIndex((img) => img.id === imageId);
+      if (idx < 0) continue;
+      if (snapshot.state) {
+        onSaveImageState(record.examId, idx, snapshot.state);
+      } else {
+        onClearImageState(record.examId, idx);
+      }
+    }
+    const currentImg = exam.images[imageIndex];
+    if (currentImg) {
+      const activeSnapshot = record.snapshots.get(currentImg.id);
+      if (activeSnapshot) {
+        if (activeSnapshot.state) w.applyImageState(activeSnapshot.state);
+        w.setDicomLinear(activeSnapshot.linear);
+      }
+    }
+    if (record.originalIndex !== imageIndex) {
+      setImageIndex(record.originalIndex);
+    }
+    w.recordAiAction("Annulation globale de la dernière transaction IA multi-images.");
+    w.setAiTransactionUndoable(transactionStack.current.length > 0);
+    return true;
+  }, [exam, imageIndex, onClearImageState, onSaveImageState, w]);
+
+  useEffect(() => {
+    transactionStack.current = [];
+    w.setAiTransactionUndoable(false);
+    /* Enregistre l'annulation globale auprès du provider (bouton sidebar). */
+    w.setAiTransactionUndo(undoLastTransaction);
+  }, [examCtx?.examId, undoLastTransaction, w]);
+
+  const waitForActiveImage = useCallback(
+    async (targetImageId: string, timeoutMs = 3000): Promise<boolean> => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (w.imageIdRef.current === targetImageId) return true;
+        await new Promise((res) => window.setTimeout(() => res(true), 25));
+      }
+      return w.imageIdRef.current === targetImageId;
+    },
+    [w.imageIdRef],
+  );
+
   useEffect(() => {
     if (!exam) {
       w.setAiCommandResolver(null);
@@ -272,6 +331,119 @@ function Shell({
         }),
       });
 
+      const executePlanAcrossImages = async (
+        planToRun: AiActionPlan,
+        synchronizedImages: ExamImage[],
+      ): Promise<{ plan: AiActionPlan; actionSummary: string; warnings: string[] }> => {
+        const images = [...synchronizedImages];
+        const targetIds: string[] = [];
+        for (const action of planToRun.actions) {
+          const tId = action.target_image_id ?? current.id;
+          if (tId !== current.id && (action.type === "generate_gradcam" || action.type === "show_gradcam")) {
+            continue;
+          }
+          if (!targetIds.includes(tId)) targetIds.push(tId);
+        }
+
+        if (targetIds.length === 0) {
+          return { plan: planToRun, actionSummary: "", warnings: [] };
+        }
+
+        const snapshots = captureMutableSnapshots(images, targetIds);
+        const warnings: string[] = [];
+        const applied: string[] = [];
+        let activeIdx = imageIndex;
+
+        try {
+          for (const targetId of targetIds) {
+            const targetIndex = images.findIndex((img) => img.id === targetId);
+            if (targetIndex < 0) {
+              warnings.push(`Image cible inconnue '${targetId}'.`);
+              continue;
+            }
+            const targetPlan: AiActionPlan = {
+              ...planToRun,
+              actions: planToRun.actions.filter((a) => (a.target_image_id ?? current.id) === targetId),
+            };
+
+            if (w.imageIdRef.current !== targetId) {
+              const snap = w.captureImageState();
+              if (snap) {
+                onSaveImageState(synchronizedExam.id, activeIdx, snap);
+                images[activeIdx] = { ...images[activeIdx], state: snap };
+              }
+              setImageIndex(targetIndex);
+              activeIdx = targetIndex;
+              const ok = await waitForActiveImage(targetId);
+              if (!ok) throw new Error(`Chargement de l'image '${images[targetIndex].name}' impossible.`);
+            }
+
+            const result = w.executeAiActionPlan(targetPlan);
+            applied.push(...result.appliedActionIds);
+            warnings.push(...result.warnings);
+
+            const snap = w.captureImageState();
+            if (snap) {
+              onSaveImageState(synchronizedExam.id, targetIndex, snap);
+              images[targetIndex] = { ...images[targetIndex], state: snap };
+            }
+          }
+        } catch (error) {
+          for (const [imageId, snapshot] of snapshots) {
+            const idx = images.findIndex((img) => img.id === imageId);
+            if (idx < 0) continue;
+            if (snapshot.state) {
+              images[idx] = { ...images[idx], state: snapshot.state, src: snapshot.src, linear: snapshot.linear ?? undefined };
+              onSaveImageState(synchronizedExam.id, idx, snapshot.state);
+            } else {
+              images[idx] = { ...images[idx], src: snapshot.src, linear: snapshot.linear ?? undefined, state: undefined };
+              onClearImageState(synchronizedExam.id, idx);
+            }
+          }
+          if (activeIdx !== imageIndex) {
+            setImageIndex(imageIndex);
+            await waitForActiveImage(current.id);
+          }
+          const own = snapshots.get(current.id);
+          if (own) {
+            if (own.state) w.applyImageState(own.state);
+            w.setDicomLinear(own.linear);
+          }
+          throw new Error(
+            `La commande multi-images a échoué : toutes les images ont été restaurées. ${error instanceof Error ? error.message : ""}`,
+            { cause: error },
+          );
+        }
+
+        if (activeIdx !== imageIndex) {
+          setImageIndex(imageIndex);
+          await waitForActiveImage(current.id);
+        }
+
+        transactionStack.current.push({
+          examId: synchronizedExam.id,
+          originalIndex: imageIndex,
+          snapshots,
+        });
+        w.setAiTransactionUndoable(true);
+
+        return {
+          plan: { ...planToRun, actions: [] },
+          actionSummary: `${applied.length} action(s) exécutée(s) sur ${targetIds.length} image(s) de l'examen.`,
+          warnings,
+        };
+      };
+
+      const routeExecution = async (p: AiActionPlan) => {
+        const hasForeign = p.actions.some((a) => {
+          const tId = a.target_image_id ?? current.id;
+          if (tId === current.id) return false;
+          return a.type !== "generate_gradcam" && a.type !== "show_gradcam";
+        });
+        if (!hasForeign) return { plan: p, actionSummary: undefined, warnings: [] as string[] };
+        return executePlanAcrossImages(p, synchronizedExam.images);
+      };
+
       if (!text.startsWith("@")) {
         const activeCapture = await captureCanvasContext(synchronizedExam.images, [current.id]);
         const predictions = Object.fromEntries(
@@ -318,9 +490,10 @@ function Shell({
         }
         const gradcamWarnings = await generatePlanGradcams(turnRequest.workspaceId, turn.validation.plan);
         const localPlan = withoutHandledForeignGradcams(turn.validation.plan);
+        const routed = await routeExecution(localPlan);
 
         return {
-          plan: localPlan,
+          plan: routed.plan,
           assistantMessage: turn.clarifying_question
             ? `${turn.assistant_message}\n\n${turn.clarifying_question}`
             : turn.assistant_message,
@@ -331,8 +504,10 @@ function Shell({
             ...turn.warnings,
             ...turn.validation.warnings,
             ...turn.validation.errors,
+            ...routed.warnings,
           ],
           limitations: turn.limitations,
+          ...(routed.actionSummary ? { actionSummary: routed.actionSummary } : {}),
         };
       }
 
@@ -360,20 +535,19 @@ function Shell({
         return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
       }
       const gradcamWarnings = await generatePlanGradcams(session.workspace_id, parsed.plan);
-      const foreignTargets = parsed.plan.actions
-        .filter((action) => action.type !== "generate_gradcam" && action.type !== "show_gradcam")
-        .map((action) => action.target_image_id)
-        .filter((target): target is string => Boolean(target && target !== current.id));
-      if (foreignTargets.length > 0) {
-        throw new Error("Cette version exécute les commandes uniquement sur l'image active. Sélectionnez l'image ciblée puis relancez la commande.");
-      }
       const localPlan = withoutHandledForeignGradcams(parsed.plan);
-      return { plan: localPlan, assistantMessage: parsed.plan.summary, warnings: [...consistencyWarnings, ...gradcamWarnings] };
+      const routed = await routeExecution(localPlan);
+      return {
+        plan: routed.plan,
+        assistantMessage: parsed.plan.summary,
+        warnings: [...consistencyWarnings, ...gradcamWarnings, ...routed.warnings],
+        ...(routed.actionSummary ? { actionSummary: routed.actionSummary } : {}),
+      };
     });
     return () => w.setAiCommandResolver(null);
-  }, [analyzeExamImages, exam, imageIndex, onSaveGradcams, w]);
+  }, [analyzeExamImages, exam, imageIndex, onSaveGradcams, onSaveImageState, onClearImageState, waitForActiveImage, w]);
 
-  /* Load / restore the examination image into the editor */
+/* Load / restore the examination image into the editor */
   useEffect(() => {
     if (!exam) return;
     const img = exam.images[imageIndex];
@@ -383,9 +557,13 @@ function Shell({
       w.setImageId(img.id);
     } else {
       w.openImageData(img.src, img.name, img.id);
+      if (img.metadata?.windowWidth && img.metadata.windowWidth > 1) {
+        w.setWl({ window: img.metadata.windowWidth, level: img.metadata.windowCenter ?? 127.5 });
+      }
     }
     if (img.prediction) applyPrediction(img.prediction);
     w.setImageMetadata(img.metadata ?? null);
+    w.setDicomLinear(img.linear ?? null);
     w.setPixelSpacingMm(img.metadata?.pixelSpacingMm ?? null);
     w.setGradcamResult(img.gradcam ?? null);
     w.setGradcamOn(Boolean(img.gradcam));
@@ -400,10 +578,12 @@ function Shell({
       w.recordAiAction("Analyse automatique ignorée : aucun DICOM CR/DX compatible avec le modèle radiographique.");
       return;
     }
-    void analyzeExamImages("all").catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : "Analyse automatique impossible.";
-      w.recordAiAction(`Analyse automatique : ${message}`);
-    });
+    window.setTimeout(() => {
+      void analyzeExamImages("all").catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Analyse automatique impossible.";
+        w.recordAiAction(`Analyse automatique : ${message}`);
+      });
+    }, 0);
   }, [analyzeExamImages, exam, w]);
 
   const switchImage = (i: number) => {
@@ -435,8 +615,12 @@ function Shell({
     if (!image) {
       throw new Error(imported.warnings[0] ?? `Impossible d'ouvrir '${file.name}'.`);
     }
-    w.openImageData(image.src, image.name);
+w.openImageData(image.src, image.name);
     w.setImageMetadata(image.metadata ?? null);
+    w.setDicomLinear(image.linear ?? null);
+    if (image.metadata?.windowWidth && image.metadata.windowWidth > 1) {
+      w.setWl({ window: image.metadata.windowWidth, level: image.metadata.windowCenter ?? 127.5 });
+    }
     w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
     imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
     if (imported.images.length > 1) {
@@ -495,13 +679,13 @@ function Shell({
     setSaveAsOpen(false);
   };
 
-  const doExport = async () => {
+const doExport = async () => {
     if (!w.imageSrc) return;
     const url = await exportImageDataUrl({
-      imageSrc: w.imageSrc,
+      imageSrc: w.dicomLinear ? w.renderSrc : w.imageSrc,
       dims: w.dims,
       shapes: w.shapes,
-      filter: buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
+      filter: w.dicomLinear ? "none" : buildImageFilter(w.wl, w.brightness, w.contrast, w.inverted),
       pixelSpacingMm: w.pixelSpacingMm,
       format,
       quality,
@@ -551,8 +735,12 @@ function Shell({
       }
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        if (e.shiftKey) w.redo();
-        else w.undo();
+        if (e.shiftKey) {
+          w.redo();
+        } else if (!undoLastTransaction()) {
+          /* Pas de transaction IA multi-images en attente : undo classique. */
+          w.undo();
+        }
         return;
       }
       if (mod && e.key.toLowerCase() === "x") {
@@ -694,7 +882,7 @@ function Shell({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [w, openImage, save, togglePixelGrid]);
+  }, [w, openImage, save, togglePixelGrid, undoLastTransaction]);
 
   useEffect(() => {
     if (aiMode && splitOn) setSplitOn(false);
@@ -707,8 +895,10 @@ function Shell({
           <div className="w-[min(420px,calc(100vw-48px))] rounded-2xl border border-border bg-panel p-5 shadow-2xl shadow-black/50">
             <p className="text-[13px] font-semibold text-ink">Analyse de l'examen</p>
             <p className="mt-1 text-[11.5px] text-ink-3">Préparation et prédiction par l'ensemble radiographique.</p>
-            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-hover">
-              <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(8, (analysisProgress.completed / Math.max(1, analysisProgress.total)) * 100)}%` }} />
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-hover">
+              <div className="relative flex h-full overflow-hidden rounded-full bg-gradient-to-r from-accent to-accent-2 transition-[width] duration-500 ease-out" style={{ width: `${Math.max(8, (analysisProgress.completed / Math.max(1, analysisProgress.total)) * 100)}%` }}>
+                <span className="absolute inset-0 aim-progress-shimmer bg-[linear-gradient(100deg,transparent_25%,rgba(255,255,255,0.4)_50%,transparent_75%)]" />
+              </div>
             </div>
             <p className="mt-2 text-right text-[11px] tabular-nums text-ink-3">{analysisProgress.completed} / {analysisProgress.total} image(s)</p>
           </div>
@@ -1187,6 +1377,25 @@ export default function App() {
     [mutateExams],
   );
 
+  const clearImageState = useCallback(
+    (examId: string, index: number) => {
+      mutateExams((list) =>
+        list.map((e) =>
+          e.id === examId
+            ? {
+                ...e,
+                lastOpenedAt: new Date().toISOString(),
+                images: e.images.map((img, i) =>
+                  i === index ? { ...img, state: undefined } : img,
+                ),
+              }
+            : e,
+        ),
+      );
+    },
+    [mutateExams],
+  );
+
   const savePredictions = useCallback((examId: string, predictions: Record<string, RadiographyPrediction>) => {
     mutateExams((list) => list.map((exam) => exam.id !== examId ? exam : {
       ...exam,
@@ -1256,6 +1465,7 @@ export default function App() {
               setPage("exams");
             }}
             onSaveImageState={saveImageState}
+            onClearImageState={clearImageState}
             onSavePredictions={savePredictions}
             onSaveGradcams={saveGradcams}
           />
