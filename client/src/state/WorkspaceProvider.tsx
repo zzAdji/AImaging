@@ -14,6 +14,8 @@ import {
   type AiCommandResolver,
   type AiFocus,
   type AiHistoryItem,
+  type AiPrompt,
+  type AiRecordedAction,
   type AiResults,
   type LayerDef,
   type LayerId,
@@ -355,6 +357,7 @@ export function WorkspaceProvider({
     );
   }, []);
   const [gradcamIntensity, setGradcamIntensity] = useState(62);
+  const [gradcamMode, setGradcamMode] = useState<"blue" | "heatmap">("blue");
 
   const setLayerVisible = useCallback(
     (id: LayerId, visible: boolean) => {
@@ -611,16 +614,31 @@ export function WorkspaceProvider({
   const [aiDisclaimerDismissed, setAiDisclaimerDismissed] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiHistory, setAiHistory] = useState<AiHistoryItem[]>([]);
-  const [aiCustomPrompts, setAiCustomPrompts] = useState<string[]>(() => {
+  const [aiCustomPrompts, setAiCustomPrompts] = useState<AiPrompt[]>(() => {
     try {
       const raw = localStorage.getItem("aimaging.aiPrompts");
       const arr = raw ? JSON.parse(raw) : [];
-      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string").slice(0, 12) : [];
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((x: unknown): AiPrompt | null => {
+          if (typeof x === "string") return { id: randomId(), text: x, actions: [], at: Date.now() };
+          if (x && typeof x === "object" && typeof (x as AiPrompt).text === "string") {
+            return {
+              id: (x as AiPrompt).id ?? randomId(),
+              text: (x as AiPrompt).text,
+              actions: Array.isArray((x as AiPrompt).actions) ? (x as AiPrompt).actions : [],
+              at: Number((x as AiPrompt).at) || Date.now(),
+            };
+          }
+          return null;
+        })
+        .filter((p: AiPrompt | null): p is AiPrompt => p !== null)
+        .slice(0, 24);
     } catch {
       return [];
     }
   });
-  const [aiActionLog, setAiActionLog] = useState<string[]>([]);
+  const [aiActionLog, setAiActionLog] = useState<AiRecordedAction[]>([]);
   const [aiResults, setAiResults] = useState<AiResults>({
     diagnostics: [],
     report: null,
@@ -683,20 +701,38 @@ export function WorkspaceProvider({
     }
   }, [aiCustomPrompts]);
 
-  const addAiCustomPrompt = useCallback((text: string) => {
+  const addAiCustomPrompt = useCallback((text: string, actions: AiRecordedAction[] = []) => {
     const t = text.trim();
     if (!t) return;
-    setAiCustomPrompts((p) => (p.includes(t) ? p : [t, ...p].slice(0, 12)));
+    setAiCustomPrompts((prompts) => [
+      { id: randomId(), text: t, actions: actions.slice(0, 10), at: Date.now() },
+      ...prompts.filter((p) => p.text !== t),
+    ].slice(0, 24));
   }, []);
 
-  const removeAiCustomPrompt = useCallback((text: string) => {
-    setAiCustomPrompts((p) => p.filter((t) => t !== text));
+  const removeAiCustomPrompt = useCallback((id: string) => {
+    setAiCustomPrompts((prompts) => prompts.filter((p) => p.id !== id));
   }, []);
 
-  const recordAiAction = useCallback((text: string) => {
+  const recordAiAction = useCallback((text: string, action?: { type: string; payload: Record<string, unknown> }) => {
     const t = text.trim();
     if (!t) return;
-    setAiActionLog((l) => (l[0] === t ? l : [t, ...l.filter((x) => x !== t)].slice(0, 30)));
+    const rec: AiRecordedAction = {
+      id: randomId(),
+      label: t,
+      type: action?.type ?? "",
+      payload: action?.payload ?? {},
+      at: Date.now(),
+    };
+    setAiActionLog((log) => [rec, ...log.filter((x) => !(x.label === t && x.type === rec.type))].slice(0, 30));
+  }, []);
+
+  const removeAiHistory = useCallback((id: string) => {
+    setAiHistory((history) => history.filter((h) => h.id !== id));
+  }, []);
+
+  const clearAiHistory = useCallback(() => {
+    setAiHistory([]);
   }, []);
 
   useEffect(
@@ -996,7 +1032,7 @@ pushHistory();
             continue;
           }
           setGradcamOn(Boolean(payload.visible));
-          setGradcamIntensity(Number(payload.opacity));
+          setGradcamIntensity(Math.min(100, Math.max(0, Math.round(Number(payload.opacity) * 100))));
           break;
         case "zoom_to_region": {
           const region = payload.region as { x: number; y: number; w: number; h: number };
@@ -1107,6 +1143,101 @@ pushHistory();
   useEffect(() => {
     executePlanRef.current = executeAiActionPlan;
   }, [executeAiActionPlan]);
+
+  /** Rejoue les actions enregistrées d'un prompt (déterministe, une seule
+   *  transaction Ctrl+Z). Sans action rejouable, retombe sur la commande IA. */
+  const runAiPrompt = useCallback((prompt: AiPrompt) => {
+    const replayable = prompt.actions.filter((a) => a.type);
+    if (replayable.length === 0) {
+      runAiCommand(prompt.text);
+      return;
+    }
+    pushHistory();
+    const warnings: string[] = [];
+    let applied = 0;
+    for (const a of replayable) {
+      const p = a.payload;
+      switch (a.type) {
+        case "invert":
+          setInverted(Boolean(p.value));
+          applied++;
+          break;
+        case "set_window_level":
+          setWl({ window: Number(p.window), level: Number(p.level) });
+          applied++;
+          break;
+        case "set_brightness":
+          setBrightness(Number(p.value));
+          applied++;
+          break;
+        case "set_contrast":
+          setContrast(Number(p.value));
+          applied++;
+          break;
+        case "brightness_contrast":
+          setBrightness(Number(p.brightness));
+          setContrast(Number(p.contrast));
+          applied++;
+          break;
+        case "show_gradcam":
+          if (gradcamResultRef.current) {
+            setGradcamOn(Boolean(p.visible));
+            if (typeof p.opacity === "number") {
+              setGradcamIntensity(Math.min(100, Math.max(0, Math.round(p.opacity * 100))));
+            }
+            applied++;
+          } else {
+            warnings.push("Aucune Grad-CAM n'est disponible pour cette image : action ignorée.");
+          }
+          break;
+        case "probe": {
+          const x = Math.min(1, Math.max(0, Number(p.x)));
+          const y = Math.min(1, Math.max(0, Number(p.y)));
+          setProbe({ x, y });
+          applied++;
+          break;
+        }
+        case "create_shape": {
+          const source = p.shape as { type: Shape["type"]; x: number; y: number; w: number; h: number; points?: Array<{ x: number; y: number }>; label?: string; visible?: boolean; style?: { color?: string; stroke_color?: string; fill_color?: string; stroke_width?: number; font_size?: number; font_family?: Shape["fontFamily"]; font_weight?: Shape["fontWeight"] } };
+          const style = source.style ?? {};
+          const shape: Shape = {
+            id: randomId(),
+            type: source.type,
+            x: Number(source.x),
+            y: Number(source.y),
+            w: Number(source.w),
+            h: Number(source.h),
+            points: source.points ?? [],
+            label: source.label,
+            visible: source.visible,
+            strokeWidth: style.stroke_width ?? 2,
+            strokeColor: style.stroke_color,
+            fillColor: style.fill_color,
+            color: style.color,
+            fontSize: style.font_size,
+            fontFamily: style.font_family,
+            fontWeight: style.font_weight,
+            createdBy: "ai",
+            actionId: `replay-${a.id}`,
+          };
+          commit([...shapesRef.current, shape]);
+          setSelection(shape.id);
+          applied++;
+          break;
+        }
+      }
+    }
+    if (applied === 0) {
+      pastRef.current.pop();
+      setCanUndo(pastRef.current.length > 0);
+      runAiCommand(prompt.text);
+      return;
+    }
+    const summary = `${applied} action(s) rejouée(s) depuis le prompt.${warnings.length ? ` ${warnings[0]}` : ""}`;
+    const item: AiHistoryItem = { id: randomId(), text: prompt.text, summary, at: Date.now() };
+    setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
+    setAiResults((results) => ({ ...results, lastSummary: summary }));
+  }, [commit, gradcamResultRef, pastRef, pushHistory, runAiCommand, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setProbe, setSelection, setWl, shapesRef]);
 
   const requestFit = useCallback((pane?: "A" | "B") => {
     const p = pane ?? activePaneRef.current;
@@ -1356,6 +1487,8 @@ const closeDocument = useCallback(() => {
       setGradcamOn,
       gradcamIntensity,
       setGradcamIntensity,
+      gradcamMode,
+      setGradcamMode,
       gradcamResult,
       setGradcamResult,
       pixelSpacingMm,
@@ -1388,6 +1521,9 @@ const closeDocument = useCallback(() => {
       removeAiCustomPrompt,
       aiActionLog,
       recordAiAction,
+      runAiPrompt,
+      removeAiHistory,
+      clearAiHistory,
       aiResults,
       setAiDiagnostics,
       aiFocus,
@@ -1447,7 +1583,7 @@ imageSrc,
       toolbarOpen,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
-      gradcamOn, setGradcamOn, gradcamIntensity, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
+      gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       probe, setProbe,
       collapsed, toggleSection, analysis,
@@ -1455,7 +1591,7 @@ imageSrc,
       aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
-      aiActionLog, recordAiAction,
+      aiActionLog, recordAiAction, runAiPrompt, removeAiHistory, clearAiHistory,
       aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan,
       setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,

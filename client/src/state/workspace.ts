@@ -363,6 +363,24 @@ export interface AiHistoryItem {
   at: number;
 }
 
+/** Action réelle capturée pendant l'utilisation normale (réglages, dessin…).
+ *  `type` vide = simple libellé non rejouable. */
+export interface AiRecordedAction {
+  id: string;
+  label: string;
+  type: string;
+  payload: Record<string, unknown>;
+  at: number;
+}
+
+/** Prompt enregistré : une phrase attribuée à une série d'actions capturées. */
+export interface AiPrompt {
+  id: string;
+  text: string;
+  actions: AiRecordedAction[];
+  at: number;
+}
+
 export interface AiResults {
   diagnostics: AiDiagnosis[];
   report: string | null;
@@ -500,6 +518,9 @@ export interface WorkspaceState {
   setGradcamOn: (o: boolean) => void;
   gradcamIntensity: number;
   setGradcamIntensity: (v: number) => void;
+  /** Affichage du calque Grad-CAM : nuance de bleu uniforme ou carte de chaleur (JET). */
+  gradcamMode: "blue" | "heatmap";
+  setGradcamMode: (m: "blue" | "heatmap") => void;
   /** Server-computed Grad-CAM for the image currently loaded in the canvas. */
   gradcamResult: GradCamResult | null;
   setGradcamResult: (result: GradCamResult | null) => void;
@@ -560,13 +581,20 @@ export interface WorkspaceState {
   aiTransactionUndoable: boolean;
   setAiTransactionUndoable: (v: boolean) => void;
 
-  /** User-saved prompt texts, persisted to localStorage (`aimaging.aiPrompts`) */
-  aiCustomPrompts: string[];
-  addAiCustomPrompt: (text: string) => void;
-  removeAiCustomPrompt: (text: string) => void;
+  /** User-saved prompts (phrase + actions capturées), persisted to localStorage (`aimaging.aiPrompts`) */
+  aiCustomPrompts: AiPrompt[];
+  addAiCustomPrompt: (text: string, actions?: AiRecordedAction[]) => void;
+  removeAiCustomPrompt: (id: string) => void;
   /** Recent user actions recorded in normal mode (drawing, windowing…) — source for new prompts */
-  aiActionLog: string[];
-  recordAiAction: (text: string) => void;
+  aiActionLog: AiRecordedAction[];
+  recordAiAction: (text: string, action?: { type: string; payload: Record<string, unknown> }) => void;
+  /** Exécute un prompt : rejoue ses actions enregistrées, ou envoie sa phrase
+   *  à la commande IA si aucune action rejouable n'est disponible. */
+  runAiPrompt: (prompt: AiPrompt) => void;
+  /** Supprime une entrée de l'historique des commandes. */
+  removeAiHistory: (id: string) => void;
+  /** Vide l'historique des commandes. */
+  clearAiHistory: () => void;
   /** Current reflection step shown above the command bar, null when idle */
   aiThought: { id: string; text: string } | null;
   /** Report editor modal state */

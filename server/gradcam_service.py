@@ -27,13 +27,15 @@ class EnsembleGradcamResult:
     per_model: list[dict[str, Any]]
 
 
-def _encode_transparent_heatmap(cam: np.ndarray) -> str:
-    """Encode la carte normalisée dans une PNG RGBA, sans modifier l'image source."""
-    heatmap_bgr = cv2.applyColorMap(np.uint8(np.clip(cam, 0, 1) * 255), cv2.COLORMAP_JET)
-    heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
-    # Les activations faibles restent visibles sans masquer la radiographie.
-    alpha = np.uint8(np.clip(cam, 0, 1) ** 0.7 * 230)
-    rgba = np.dstack((heatmap_rgb, alpha))
+def _encode_heatmap_values(cam: np.ndarray) -> str:
+    """Encode la carte normalisée (valeurs brutes 0..255, canaux R=G=B) en PNG.
+
+    Le colormap et le seuillage d'intensité sont appliqués côté client (canvas) :
+    le client peut ainsi re-colorer en nuances de bleu uniformes et révéler les
+    zones de façon progressive (seuil = 100 - intensité) sans refetch serveur.
+    """
+    values = np.uint8(np.clip(cam, 0, 1) * 255)
+    rgba = np.dstack((values, values, values, np.full_like(values, 255)))
     output = BytesIO()
     Image.fromarray(rgba, mode="RGBA").save(output, format="PNG", optimize=True)
     return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
@@ -166,7 +168,7 @@ def generate_ensemble_gradcam(
     return EnsembleGradcamResult(
         class_name=class_name,
         model_count=len(loaded_models),
-        heatmap_data_url=_encode_transparent_heatmap(ensemble_cam),
+        heatmap_data_url=_encode_heatmap_values(ensemble_cam),
         peak_region=_find_peak_region(ensemble_cam),
         generated_at=datetime.now(UTC).isoformat(),
         per_model=per_model,

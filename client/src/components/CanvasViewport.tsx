@@ -27,6 +27,29 @@ import { paintLinearFrame } from "../lib/dicomRenderer";
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 16;
 
+/** Sérialise une forme pour son enregistrement dans un prompt (rejeu `create_shape`). */
+function serializeShapeForReplay(shape: Shape) {
+  return {
+    type: shape.type,
+    x: shape.x,
+    y: shape.y,
+    w: shape.w,
+    h: shape.h,
+    points: shape.points,
+    label: shape.label,
+    visible: shape.visible,
+    style: {
+      stroke_width: shape.strokeWidth,
+      stroke_color: shape.strokeColor,
+      fill_color: shape.fillColor,
+      color: shape.color,
+      font_size: shape.fontSize,
+      font_family: shape.fontFamily,
+      font_weight: shape.fontWeight,
+    },
+  };
+}
+
 interface Dims {
   w: number;
   h: number;
@@ -239,29 +262,144 @@ const bboxOf = (s: Shape): Rect => {
 
 /* ------------------------------ Grad-CAM overlay ----------------------------- */
 
+/** Décode une valeur 0..1 depuis une PNG JET (anciens examens enregistrés).
+ *  Nouveau format serveur : canaux R=G=B (valeur brute). JET : LUT exacte cv2. */
+const BLUE_TONE: readonly [number, number, number] = [64, 132, 255];
+
+/** LUT exacte cv2.COLORMAP_JET (256 entrées, RGB) : rendu pixel-identique à
+ *  celui que le serveur produisait, pour le mode « carte de chaleur ». */
+const JET_LUT: ReadonlyArray<readonly [number, number, number]> = [
+  [0, 0, 128], [0, 0, 132], [0, 0, 136], [0, 0, 140], [0, 0, 144], [0, 0, 148], [0, 0, 152], [0, 0, 156],
+  [0, 0, 160], [0, 0, 164], [0, 0, 168], [0, 0, 172], [0, 0, 176], [0, 0, 180], [0, 0, 184], [0, 0, 188],
+  [0, 0, 192], [0, 0, 196], [0, 0, 200], [0, 0, 204], [0, 0, 208], [0, 0, 212], [0, 0, 216], [0, 0, 220],
+  [0, 0, 224], [0, 0, 228], [0, 0, 232], [0, 0, 236], [0, 0, 240], [0, 0, 244], [0, 0, 248], [0, 0, 252],
+  [0, 0, 255], [0, 4, 255], [0, 8, 255], [0, 12, 255], [0, 16, 255], [0, 20, 255], [0, 24, 255], [0, 28, 255],
+  [0, 32, 255], [0, 36, 255], [0, 40, 255], [0, 44, 255], [0, 48, 255], [0, 52, 255], [0, 56, 255], [0, 60, 255],
+  [0, 64, 255], [0, 68, 255], [0, 72, 255], [0, 76, 255], [0, 80, 255], [0, 84, 255], [0, 88, 255], [0, 92, 255],
+  [0, 96, 255], [0, 100, 255], [0, 104, 255], [0, 108, 255], [0, 112, 255], [0, 116, 255], [0, 120, 255], [0, 124, 255],
+  [0, 128, 255], [0, 132, 255], [0, 136, 255], [0, 140, 255], [0, 144, 255], [0, 148, 255], [0, 152, 255], [0, 156, 255],
+  [0, 160, 255], [0, 164, 255], [0, 168, 255], [0, 172, 255], [0, 176, 255], [0, 180, 255], [0, 184, 255], [0, 188, 255],
+  [0, 192, 255], [0, 196, 255], [0, 200, 255], [0, 204, 255], [0, 208, 255], [0, 212, 255], [0, 216, 255], [0, 220, 255],
+  [0, 224, 255], [0, 228, 255], [0, 232, 255], [0, 236, 255], [0, 240, 255], [0, 244, 255], [0, 248, 255], [0, 252, 255],
+  [2, 255, 254], [6, 255, 250], [10, 255, 246], [14, 255, 242], [18, 255, 238], [22, 255, 234], [26, 255, 230], [30, 255, 226],
+  [34, 255, 222], [38, 255, 218], [42, 255, 214], [46, 255, 210], [50, 255, 206], [54, 255, 202], [58, 255, 198], [62, 255, 194],
+  [66, 255, 190], [70, 255, 186], [74, 255, 182], [78, 255, 178], [82, 255, 174], [86, 255, 170], [90, 255, 166], [94, 255, 162],
+  [98, 255, 158], [102, 255, 154], [106, 255, 150], [110, 255, 146], [114, 255, 142], [118, 255, 138], [122, 255, 134], [126, 255, 130],
+  [130, 255, 126], [134, 255, 122], [138, 255, 118], [142, 255, 114], [146, 255, 110], [150, 255, 106], [154, 255, 102], [158, 255, 98],
+  [162, 255, 94], [166, 255, 90], [170, 255, 86], [174, 255, 82], [178, 255, 78], [182, 255, 74], [186, 255, 70], [190, 255, 66],
+  [194, 255, 62], [198, 255, 58], [202, 255, 54], [206, 255, 50], [210, 255, 46], [214, 255, 42], [218, 255, 38], [222, 255, 34],
+  [226, 255, 30], [230, 255, 26], [234, 255, 22], [238, 255, 18], [242, 255, 14], [246, 255, 10], [250, 255, 6], [254, 255, 1],
+  [255, 252, 0], [255, 248, 0], [255, 244, 0], [255, 240, 0], [255, 236, 0], [255, 232, 0], [255, 228, 0], [255, 224, 0],
+  [255, 220, 0], [255, 216, 0], [255, 212, 0], [255, 208, 0], [255, 204, 0], [255, 200, 0], [255, 196, 0], [255, 192, 0],
+  [255, 188, 0], [255, 184, 0], [255, 180, 0], [255, 176, 0], [255, 172, 0], [255, 168, 0], [255, 164, 0], [255, 160, 0],
+  [255, 156, 0], [255, 152, 0], [255, 148, 0], [255, 144, 0], [255, 140, 0], [255, 136, 0], [255, 132, 0], [255, 128, 0],
+  [255, 124, 0], [255, 120, 0], [255, 116, 0], [255, 112, 0], [255, 108, 0], [255, 104, 0], [255, 100, 0], [255, 96, 0],
+  [255, 92, 0], [255, 88, 0], [255, 84, 0], [255, 80, 0], [255, 76, 0], [255, 72, 0], [255, 68, 0], [255, 64, 0],
+  [255, 60, 0], [255, 56, 0], [255, 52, 0], [255, 48, 0], [255, 44, 0], [255, 40, 0], [255, 36, 0], [255, 32, 0],
+  [255, 28, 0], [255, 24, 0], [255, 20, 0], [255, 16, 0], [255, 12, 0], [255, 8, 0], [255, 4, 0], [255, 0, 0],
+  [252, 0, 0], [248, 0, 0], [244, 0, 0], [240, 0, 0], [236, 0, 0], [232, 0, 0], [228, 0, 0], [224, 0, 0],
+  [220, 0, 0], [216, 0, 0], [212, 0, 0], [208, 0, 0], [204, 0, 0], [200, 0, 0], [196, 0, 0], [192, 0, 0],
+  [188, 0, 0], [184, 0, 0], [180, 0, 0], [176, 0, 0], [172, 0, 0], [168, 0, 0], [164, 0, 0], [160, 0, 0],
+  [156, 0, 0], [152, 0, 0], [148, 0, 0], [144, 0, 0], [140, 0, 0], [136, 0, 0], [132, 0, 0], [128, 0, 0],
+];
+
+/** Inverse exact de la LUT JET (256 triplets RGB uniquement) : valeur 0..1
+ *  reconstituée pour les anciens examens enregistrés en PNG JET. */
+const JET_INVERSE: ReadonlyMap<number, number> = (() => {
+  const map = new Map<number, number>();
+  JET_LUT.forEach(([r, g, b], i) => map.set((r << 16) | (g << 8) | b, i / 255));
+  return map;
+})();
+
+function jetValue(r: number, g: number, b: number): number {
+  return JET_INVERSE.get((r << 16) | (g << 8) | b) ?? 0.875;
+}
+
 function GradCamOverlay({
   dims,
   src,
   intensity,
+  mode,
   layerOpacity = 1,
   transform,
 }: {
   dims: Dims;
   src: string;
   intensity: number;
+  mode: "blue" | "heatmap";
   layerOpacity?: number;
   transform?: string;
 }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [heat, setHeat] = useState<{ values: Float32Array; w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = src;
+    image.onload = () => {
+      const buffer = document.createElement("canvas");
+      buffer.width = image.naturalWidth;
+      buffer.height = image.naturalHeight;
+      const bufferCtx = buffer.getContext("2d");
+      if (!bufferCtx) return;
+      bufferCtx.drawImage(image, 0, 0);
+      let data: Uint8ClampedArray;
+      try {
+        data = bufferCtx.getImageData(0, 0, buffer.width, buffer.height).data;
+      } catch {
+        return;
+      }
+      const values = new Float32Array(buffer.width * buffer.height);
+      for (let i = 0; i < values.length; i++) {
+        const r = data[i * 4];
+        const g = data[i * 4 + 1];
+        const b = data[i * 4 + 2];
+        values[i] = r === g && g === b ? r / 255 : jetValue(r, g, b);
+      }
+      setHeat({ values, w: buffer.width, h: buffer.height });
+    };
+  }, [src]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx || !heat) return;
+    canvas.width = heat.w;
+    canvas.height = heat.h;
+    const image = ctx.createImageData(heat.w, heat.h);
+    const out = image.data;
+    /* Mode carte de chaleur : rendu JET d'origine, identique à celui fourni par
+       le serveur (alpha = v^0.7 * 230) — l'intensité règle l'opacité, comme sur
+       l'<img> d'origine. Mode bleu : seuil progressif avec révélation graduelle
+       des zones froides. */
+    const heatmap = mode === "heatmap";
+    const opacityFactor = heatmap ? intensity / 100 : 1;
+    const threshold = 1 - intensity / 100 - 0.005;
+    const span = Math.max(1 - threshold, 0.02);
+    for (let i = 0; i < heat.values.length; i++) {
+      const v = heat.values[i];
+      const a = heatmap
+        ? (Math.pow(v, 0.7) * 230 / 255) * opacityFactor * layerOpacity
+        : v <= threshold ? 0 : Math.min(1, (v - threshold) / span) * layerOpacity;
+      const color = heatmap
+        ? JET_LUT[Math.min(255, Math.max(0, Math.round(v * 255)))]
+        : BLUE_TONE;
+      out[i * 4] = color[0];
+      out[i * 4 + 1] = color[1];
+      out[i * 4 + 2] = color[2];
+      out[i * 4 + 3] = Math.round(a * 255);
+    }
+    ctx.putImageData(image, 0, 0);
+  }, [heat, intensity, mode, layerOpacity]);
+
   return (
-    <img
-      src={src}
-      alt="Grad-CAM"
-      width={dims.w}
-      height={dims.h}
-      draggable={false}
+    <canvas
+      ref={canvasRef}
+      width={heat?.w ?? dims.w}
+      height={heat?.h ?? dims.h}
+      aria-label="Grad-CAM"
       className="pointer-events-none absolute inset-0 h-full w-full select-none object-fill"
       style={{
-        opacity: (intensity / 100) * layerOpacity,
         mixBlendMode: "screen",
         transform,
         transformOrigin: "50% 50%",
@@ -843,8 +981,12 @@ export function CanvasViewport({
     if (w.tool === "probe") {
       e.preventDefault();
       const p = screenToDoc(px, py);
-      w.setProbe({ x: p.x / dims.w, y: p.y / dims.h });
-      w.recordAiAction("Sonde posée sur l'image — zone affichée sur la carte anatomique.");
+      const frac = { x: p.x / dims.w, y: p.y / dims.h };
+      w.setProbe(frac);
+      w.recordAiAction("Sonde posée sur l'image — zone affichée sur la carte anatomique.", {
+        type: "probe",
+        payload: frac,
+      });
       e.currentTarget.setPointerCapture(e.pointerId);
       return;
     }
@@ -1033,7 +1175,10 @@ export function CanvasViewport({
         if (g.pushed && size > 4) {
           const shape = { ...g.draft, id: randomId() };
           w.addShape(shape);
-          w.recordAiAction(DRAW_ACTION_LABEL[shape.type]);
+          w.recordAiAction(DRAW_ACTION_LABEL[shape.type], {
+            type: "create_shape",
+            payload: { shape: serializeShapeForReplay(shape) },
+          });
           w.setSelection(shape.id);
         }
         setDraft(null);
@@ -1044,7 +1189,10 @@ export function CanvasViewport({
           const shape = makeShape("freedraw", 0, 0, 0, 0, [...g.points]);
           shape.id = randomId();
           w.addShape(shape);
-          w.recordAiAction("Traçage libre");
+          w.recordAiAction("Traçage libre", {
+            type: "create_shape",
+            payload: { shape: serializeShapeForReplay(shape) },
+          });
           w.setSelection(shape.id);
         }
         setDraft(null);
@@ -1428,15 +1576,10 @@ export function CanvasViewport({
               dims={dims}
               src={w.gradcamResult.heatmapDataUrl}
               intensity={w.gradcamIntensity}
+              mode={w.gradcamMode}
               layerOpacity={gradcamOpacity}
               transform={imgTransform}
             />
-          )}
-          {w.gradcamOn && w.gradcamResult && (
-            <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
-              Grad-CAM · {w.gradcamResult.className} · {w.gradcamResult.modelCount} modèles
-            </div>
           )}
 
           {/* Document image selection */}
@@ -1454,6 +1597,54 @@ export function CanvasViewport({
             </div>
           )}
         </div>
+        </div>
+      )}
+
+      {/* Grad-CAM badge + intensity/mode control — viewport space (fixed size) */}
+      {w.gradcamOn && w.gradcamResult && (
+        <div className="pointer-events-none absolute left-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
+          Grad-CAM · {w.gradcamResult.className} · {w.gradcamResult.modelCount} modèles
+        </div>
+      )}
+      {w.gradcamOn && w.gradcamResult && (
+        <div
+          data-attr="gradcam-intensity-bar"
+          className="absolute top-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-border bg-[#0e0e0e]/95 px-3 py-1.5 shadow-xl shadow-black/40"
+        >
+          <span className="text-[11px] leading-none text-ink-2">Intensité</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={w.gradcamIntensity}
+            onChange={(e) => w.setGradcamIntensity(Number(e.target.value))}
+            data-attr="gradcam-intensity"
+            className="h-1 w-36 cursor-pointer accent-blue-500"
+          />
+          <span className="w-9 text-right text-[11px] tabular-nums leading-none text-ink">
+            {w.gradcamIntensity}%
+          </span>
+          <span className="h-3.5 w-px bg-border" />
+          <div className="flex items-center gap-0.5 rounded-md border border-border bg-btn p-0.5">
+            <button
+              type="button"
+              data-attr="gradcam-mode-blue"
+              onClick={() => w.setGradcamMode("blue")}
+              className={`rounded px-2 py-0.5 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "blue" ? "bg-blue-500/25 text-blue-300" : "text-ink-3 hover:text-ink"}`}
+            >
+              Bleu
+            </button>
+            <button
+              type="button"
+              data-attr="gradcam-mode-heatmap"
+              onClick={() => w.setGradcamMode("heatmap")}
+              className={`rounded px-2 py-0.5 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "heatmap" ? "bg-accent/25 text-accent" : "text-ink-3 hover:text-ink"}`}
+            >
+              Chaleur
+            </button>
+          </div>
         </div>
       )}
 

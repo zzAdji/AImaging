@@ -490,7 +490,32 @@ function Shell({
         }
         const gradcamWarnings = await generatePlanGradcams(turnRequest.workspaceId, turn.validation.plan);
         const localPlan = withoutHandledForeignGradcams(turn.validation.plan);
-        const routed = await routeExecution(localPlan);
+
+        /* generate_report : le moteur d'actions local ne peut pas exécuter ce
+           type — on le convertit en replace_report avec le vrai rapport serveur,
+           comme dans la voie @report (sinon warning « backend non relié »). */
+        const reportPlanActions = localPlan.actions.filter((action) => action.type === "generate_report");
+        let reportWarnings: string[] = [];
+        let planToRoute = localPlan;
+        if (reportPlanActions.length > 0) {
+          if (current.prediction) {
+            const generated = await generateRadiographyReport(current.prediction);
+            reportWarnings = generated.coherence_issues ?? [];
+            planToRoute = {
+              ...localPlan,
+              summary: generated.coherence_passed
+                ? "Rapport Gemini généré à partir de la prédiction de l'image active."
+                : "Rapport généré avec avertissements de cohérence.",
+              actions: localPlan.actions.map((action) => action.type === "generate_report"
+                ? { ...action, type: "replace_report" as const, text: generated.rendered_text }
+                : action),
+            };
+          } else {
+            reportWarnings = ["Rapport demandé mais aucune prédiction n'est disponible. Lancez d'abord une analyse."];
+            planToRoute = { ...localPlan, actions: localPlan.actions.filter((action) => action.type !== "generate_report") };
+          }
+        }
+        const routed = await routeExecution(planToRoute);
 
         return {
           plan: routed.plan,
@@ -504,6 +529,7 @@ function Shell({
             ...turn.warnings,
             ...turn.validation.warnings,
             ...turn.validation.errors,
+            ...reportWarnings,
             ...routed.warnings,
           ],
           limitations: turn.limitations,

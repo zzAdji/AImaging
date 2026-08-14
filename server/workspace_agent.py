@@ -130,6 +130,32 @@ def _empty_plan(summary: str) -> ActionPlan:
     return ActionPlan(summary=summary, actions=[])
 
 
+def _as_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp_region(region: dict[str, Any], width: float, height: float) -> dict[str, Any]:
+    """Ramène une région hors des limites de l'image cible dans l'image.
+
+    Gemini hallucine parfois des coordonnées en pixels au-delà des dimensions
+    réelles (ou des fractions 0..1 sur de petites images) : plutôt que de
+    rejeter tout le lot par la validation, on borne la région sur l'image.
+    """
+    w = min(max(_as_number(region.get("w"), 0.0), 1.0), max(width, 1.0))
+    h = min(max(_as_number(region.get("h"), 0.0), 1.0), max(height, 1.0))
+    x = min(max(_as_number(region.get("x"), 0.0), 0.0), max(0.0, width - w))
+    y = min(max(_as_number(region.get("y"), 0.0), 0.0), max(0.0, height - h))
+    return {"x": round(x, 2), "y": round(y, 2), "w": round(w, 2), "h": round(h, 2)}
+
+
+def _clamp_anchor(value: Any, limit: float) -> float:
+    v = _as_number(value, 0.0)
+    return round(min(max(v, 0.0), max(limit, 0.0)), 2)
+
+
 def _compile_one_action(
     action: AgentActionProposal,
     index: int,
@@ -150,6 +176,13 @@ def _compile_one_action(
             raise ValueError("Cette action exige une image cible, mais aucune image active n'est définie.")
         inferred_target_warning = f"Action {action_id} appliquée à l'image active '{target_image_id}'."
 
+    target_image = next((image for image in manifest.images if image.image_id == target_image_id), None)
+
+    if action.type is ActionType.ZOOM_TO_REGION:
+        raw_region = payload.get("region")
+        if isinstance(raw_region, dict) and target_image is not None:
+            payload["region"] = _clamp_region(raw_region, target_image.width, target_image.height)
+
     if action.type is ActionType.CREATE_SHAPE:
         raw_shape = payload.get("shape")
         if not isinstance(raw_shape, dict):
@@ -158,6 +191,11 @@ def _compile_one_action(
         shape["id"] = str(shape.get("id") or f"{prefix}-shape-{index:03d}")
         shape["created_by"] = "ai"
         shape["action_id"] = action_id
+        if target_image is not None:
+            shape["x"] = _clamp_anchor(shape.get("x"), target_image.width)
+            shape["y"] = _clamp_anchor(shape.get("y"), target_image.height)
+            shape["w"] = min(max(_as_number(shape.get("w"), 0.0), 0.0), float(target_image.width))
+            shape["h"] = min(max(_as_number(shape.get("h"), 0.0), 0.0), float(target_image.height))
         payload["shape"] = shape
 
     data: dict[str, Any] = {
