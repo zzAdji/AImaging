@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Crosshair, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { useWorkspace } from "../../state/workspace";
 
@@ -106,27 +106,15 @@ const OVERVIEW_DESC =
 
 /* ------------------------------- Silhouette ------------------------------- */
 
-type SilhouetteView = "AP" | "PA";
-
-const SILHOUETTE: Record<SilhouetteView, { body: string; heart: string; lungR: string; lungL: string }> = {
-  AP: {
-    body:
-      "M17 18 C21 4 47 2 60 3 C73 2 99 4 103 18 C109 38 112 66 109 97 C106 128 100 147 60 148 " +
-      "C20 147 14 128 11 97 C8 66 11 38 17 18 Z",
-    heart:
-      "M58 66 C72 62 84 66 88 74 C92 82 89 94 82 103 C75 111 66 112 60 107 C55 101 54 78 58 66 Z",
-    lungR: "M20 22 C16 52 14 92 22 124 C34 138 46 138 52 130 C58 118 52 44 20 22 Z",
-    lungL: "M100 22 C104 52 106 92 98 124 C86 138 74 138 68 130 C62 118 68 44 100 22 Z",
-  },
-  PA: {
-    body:
-      "M16 20 C20 6 47 3 60 4 C73 3 100 6 104 20 C110 40 112 66 109 97 C106 128 100 147 60 148 " +
-      "C20 147 14 128 11 97 C8 66 10 40 16 20 Z",
-    heart:
-      "M58 68 C70 65 80 68 83 76 C86 83 84 92 78 100 C72 107 65 108 60 104 C56 99 55 78 58 68 Z",
-    lungR: "M19 24 C16 54 14 94 22 126 C34 140 46 140 52 132 C58 120 52 46 19 24 Z",
-    lungL: "M101 24 C104 54 106 94 98 126 C86 140 74 140 68 132 C62 120 68 46 101 24 Z",
-  },
+/* La vue suit celle de l'image (aucune sélection AP/PA). */
+const SILHOUETTE_AP = {
+  body:
+    "M17 18 C21 4 47 2 60 3 C73 2 99 4 103 18 C109 38 112 66 109 97 C106 128 100 147 60 148 " +
+    "C20 147 14 128 11 97 C8 66 11 38 17 18 Z",
+  heart:
+    "M58 66 C72 62 84 66 88 74 C92 82 89 94 82 103 C75 111 66 112 60 107 C55 101 54 78 58 66 Z",
+  lungR: "M20 22 C16 52 14 92 22 124 C34 138 46 138 52 130 C58 118 52 44 20 22 Z",
+  lungL: "M100 22 C104 52 106 92 98 124 C86 138 74 138 68 130 C62 118 68 44 100 22 Z",
 };
 
 /* --------------------------------- Card ---------------------------------- */
@@ -153,7 +141,6 @@ const POINT_COLOR: Record<ActionPoint["kind"], string> = {
 
 export function AnatomyMapCard() {
   const w = useWorkspace();
-  const [view, setView] = useState<SilhouetteView>("AP");
   const [selected, setSelected] = useState<{ kind: "zone" | "point"; id: string } | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -185,35 +172,28 @@ export function AnatomyMapCard() {
     return out;
   }, [w.aiResults.diagnostics, w.shapes, w.probe, w.dims]);
 
-  const sil = SILHOUETTE[view];
+  const sil = SILHOUETTE_AP;
   const toSvg = (xF: number, yF: number) => ({ x: xF * 120, y: yF * 160 });
 
   function computeEffective() {
     if (selected?.kind === "point") {
       const pt = points.find((p) => p.id === selected.id);
-      if (pt) {
-        const zone = zoneAt(pt.x, pt.y);
-        return { title: pt.label, zone, point: pt };
-      }
+      if (pt) return zoneAt(pt.x, pt.y);
     }
     if (selected?.kind === "zone") {
-      const zone = THORAX_ZONES.find((z) => z.id === selected.id) ?? null;
-      return { title: zone?.label ?? "Carte anatomique", zone, point: null };
+      return THORAX_ZONES.find((z) => z.id === selected.id) ?? null;
     }
-    if (w.probe) {
-      const zone = zoneAt(w.probe.x, w.probe.y);
-      return { title: zone ? `Sonde — ${zone.label}` : "Sonde anatomique", zone, point: null };
-    }
+    if (w.probe) return zoneAt(w.probe.x, w.probe.y);
     for (const d of w.aiResults.diagnostics) {
       if (!d.region) continue;
       const cx = (d.region.x + d.region.w / 2) / (w.dims.w || 1);
       const cy = (d.region.y + d.region.h / 2) / (w.dims.h || 1);
       const zone = zoneAt(cx, cy);
-      if (zone) return { title: zone.label, zone, point: null };
+      if (zone) return zone;
     }
-    return { title: "Vue d'ensemble", zone: null, point: null };
+    return null;
   }
-  const effective = computeEffective();
+  const effectiveZone = computeEffective();
 
   const zoneFindings = (zone: AnatomyZone | null) =>
     zone
@@ -225,34 +205,13 @@ export function AnatomyMapCard() {
         })
       : w.aiResults.diagnostics;
 
-  const findings = zoneFindings(effective.zone);
-  const gradcamPending =
-    !w.gradcamResult &&
-    /grad[\s-]?cam|carte/i.test(`${w.aiResults.lastSummary ?? ""} ${w.aiResults.lastResponse ?? ""} ${w.aiResults.lastWarnings.join(" ")}`);
+  const findings = zoneFindings(effectiveZone);
 
   return (
     <section data-attr="ai-card-anatomy" className="mx-3 mt-3 overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex items-center gap-1.5 px-3 pt-2.5">
         <MapPin size={13} strokeWidth={2.2} className="text-icon" />
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2">Carte anatomique</h3>
-        <div className="ml-auto flex items-center gap-1">
-          {(["AP", "PA"] as SilhouetteView[]).map((v) => (
-            <button
-              key={v}
-              type="button"
-              data-attr={`ai-anatomy-view-${v.toLowerCase()}`}
-              onClick={() => setView(v)}
-              className={cn(
-                "rounded-md border px-1.5 py-0.5 text-[9.5px] font-semibold transition-colors duration-150 ease-out",
-                view === v
-                  ? "border-accent/60 bg-accent/10 text-accent"
-                  : "border-border bg-btn text-ink-3 hover:text-ink",
-              )}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="flex items-start gap-2.5 px-3 pb-3 pt-2">
@@ -275,7 +234,7 @@ export function AnatomyMapCard() {
 
             {THORAX_ZONES.map((z) => {
               const r = toSvg(z.fx + z.fw / 2, z.fy + z.fh / 2);
-              const isSel = effective.zone?.id === z.id;
+              const isSel = effectiveZone?.id === z.id;
               const isHov = hovered === z.id;
               return (
                 <ellipse
@@ -323,47 +282,20 @@ export function AnatomyMapCard() {
               );
             })}
           </svg>
-
-          <button
-            type="button"
-            data-attr="ai-sonde-toggle"
-            onClick={() => w.setTool(w.tool === "probe" ? "move" : "probe")}
-            className={cn(
-              "absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border px-2 py-0.5 text-[9.5px] font-medium transition-colors duration-150 ease-out",
-              w.tool === "probe"
-                ? "border-accent/70 bg-accent/15 text-accent"
-                : "border-border bg-btn text-ink-3 hover:text-ink",
-            )}
-            title="Sonde : cliquez sur l'image pour pointer une zone précise"
-          >
-            <Crosshair size={10} strokeWidth={2.4} />
-            Sonde
-          </button>
         </div>
 
         {/* Texte — droite */}
         <div data-attr="ai-anatomy-text" className="min-w-0 flex-1 space-y-1.5">
-          <p className="text-[11px] font-semibold text-ink">{effective.title}</p>
-          {w.aiResults.lastWarnings.length > 0 && (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-1.5 text-[9.5px] leading-relaxed text-amber-200">
-              {w.aiResults.lastWarnings.join(" ")}
-            </div>
-          )}
-          {gradcamPending && (
-            <p className="rounded-md border border-border/70 bg-canvas/40 px-1.5 py-1 text-[9.5px] leading-relaxed text-ink-3">
-              Grad-CAM : ouvrez un examen pour calculer une carte d'activation réelle sur le serveur.
-            </p>
-          )}
           <p className="whitespace-pre-wrap text-[10.5px] leading-relaxed text-ink-2">
-            {effective.zone ? effective.zone.desc : OVERVIEW_DESC}
+            {effectiveZone ? effectiveZone.desc : OVERVIEW_DESC}
           </p>
           <div className="border-t border-border/70 pt-1.5">
             <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-              {effective.zone ? "Ce que montre votre image — cette zone" : "Résultats sur l'ensemble"}
+              {effectiveZone ? "Ce que montre votre image — cette zone" : "Résultats sur l'ensemble"}
             </p>
             {findings.length === 0 ? (
               <p className="mt-0.5 text-[10px] italic text-ink-3">
-                Rien d'anormal signalé {effective.zone ? "dans cette zone" : "pour l'instant"}.
+                Rien d'anormal signalé {effectiveZone ? "dans cette zone" : "pour l'instant"}.
               </p>
             ) : (
               <ul className="mt-0.5 space-y-0.5">

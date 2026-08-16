@@ -6,6 +6,7 @@ export const WORKSPACE_PROTOCOL_VERSION = "1.0" as const;
 
 export type AiActionType =
   | "analyze_image" | "analyze_exam" | "predict" | "generate_gradcam" | "show_gradcam"
+  | "generate_3d" | "show_3d"
   | "zoom_to_region" | "set_window_level" | "set_brightness" | "set_contrast" | "invert"
   | "create_shape" | "update_shape" | "delete_shape" | "set_layer_visibility"
   | "set_layer_opacity" | "generate_report" | "replace_report" | "notify";

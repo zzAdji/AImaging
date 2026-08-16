@@ -113,6 +113,8 @@ _TARGETED_ACTIONS = {
     ActionType.PREDICT,
     ActionType.GENERATE_GRADCAM,
     ActionType.SHOW_GRADCAM,
+    ActionType.GENERATE_3D,
+    ActionType.SHOW_3D,
     ActionType.ZOOM_TO_REGION,
     ActionType.SET_WINDOW_LEVEL,
     ActionType.SET_BRIGHTNESS,

@@ -42,6 +42,15 @@ from workspace_commands import COMMAND_CATALOG, CommandError, CommandRequest, Co
 from workspace_agent import AgentProposal, AgentTurnResponse, build_agent_turn, fallback_agent_turn  # noqa: E402
 from workspace_agent_prompt import WORKSPACE_AGENT_SYSTEM_INSTRUCTION  # noqa: E402
 from gradcam_service import generate_ensemble_gradcam  # noqa: E402
+from three_d_service import (  # noqa: E402
+    ReconstructionBusyError,
+    RemoteThreeDUnavailable,
+    get_job,
+    get_remote_url,
+    probe_remote_backend,
+    set_remote_url,
+    start_reconstruction,
+)
 from dicom_service import DicomImportError, parse_dicom_bytes  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +67,17 @@ DICOM_GEMINI_PRIVATE_FIELDS = (
     "frame_of_reference_uid",
     "patient_pseudonym",
 )
+
+
+def _three_d_default_iterations() -> int:
+    """Itérations par défaut du pipeline 3D (n_iter de la config, pas 150).
+
+    Import paresseux : ``three_d_maker`` n'est importable qu'après
+    ``bootstrap_all()`` ; on le charge à la première requête, pas à l'import.
+    """
+    from three_d_maker.config import MODEL_CONFIG  # noqa: PLC0415
+
+    return int(MODEL_CONFIG["reconstruction"]["n_iter"])
 
 
 def _is_radiography_compatible(image) -> bool:
@@ -180,6 +200,34 @@ class WorkspaceGradcamResponse(BaseModel):
     peak_region: dict[str, float] | None = None
     generated_at: str
     per_model: List[dict]
+
+
+class WorkspaceThreeDJobResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    job_id: str
+    status: str
+    progress: dict = {}
+    error: str | None = None
+
+
+class WorkspaceThreeDStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: dict = {}
+    result: dict | None = None
+    error: str | None = None
+
+
+class ThreeDBackendInfo(BaseModel):
+    mode: str = "local"  # local | remote
+    remote_url: str | None = None
+    reachable: bool | None = None
+    backend: dict | None = None
+
+
+class ThreeDBackendUpdate(BaseModel):
+    remote_url: str = ""
 
 
 class DicomMetadataResponse(BaseModel):
@@ -386,6 +434,98 @@ async def generate_workspace_gradcam(
         raise HTTPException(status_code=500, detail="Échec du calcul Grad-CAM.") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/workspace/exams/{workspace_id}/3d", response_model=WorkspaceThreeDJobResponse, status_code=202)
+async def generate_workspace_3d(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+    iterations: int | None = Form(default=None, ge=1, le=1500),
+) -> WorkspaceThreeDJobResponse:
+    """Lance la reconstruction DeepScan3D d'une radio et retourne un job.
+
+    La reconstruction s'exécute en arrière-plan (plusieurs minutes sur CPU) :
+    interroger GET /workspace/exams/{id}/3d/jobs/{job_id} pour la progression.
+    """
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not _is_radiography_compatible(workspace_image):
+        raise HTTPException(status_code=422, detail=_radiography_modality_message(workspace_image))
+    try:
+        job = start_reconstruction(
+            await image.read(),
+            workspace_id=workspace_id,
+            image_id=image_id,
+            image_name=workspace_image.name,
+            # Défaut aligné sur la config du pipeline (n_iter=600) plutôt que 150 :
+            # 150 itérations sous-entraînent la reconstruction (résultat flou).
+            # Ce défaut est aussi celui envoyé au backend distant (GPU) : c'est le
+            # levier de qualité principal pour le tunnel actif.
+            iterations=iterations or _three_d_default_iterations(),
+        )
+    except ReconstructionBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RemoteThreeDUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return WorkspaceThreeDJobResponse(
+        workspace_id=workspace_id,
+        image_id=image_id,
+        job_id=job["job_id"],
+        status=job["status"],
+        progress=job["progress"],
+        error=job["error"],
+    )
+
+
+@app.get("/workspace/exams/{workspace_id}/3d/jobs/{job_id}", response_model=WorkspaceThreeDStatusResponse)
+async def workspace_three_d_job_status(
+    workspace_id: str,
+    job_id: str,
+) -> WorkspaceThreeDStatusResponse:
+    """Progression et résultat d'un job de reconstruction 3D."""
+    try:
+        job = get_job(job_id)
+    except RemoteThreeDUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if job is None or job["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Job 3D introuvable ou expiré.")
+    return WorkspaceThreeDStatusResponse(
+        job_id=job["job_id"],
+        status=job["status"],
+        progress=job["progress"],
+        result=job["result"],
+        error=job["error"],
+    )
+
+
+@app.get("/workspace/3d/backend", response_model=ThreeDBackendInfo)
+async def workspace_three_d_backend() -> ThreeDBackendInfo:
+    """État du backend 3D (local CPU ou service distant GPU) + sonde de santé."""
+    remote_url = get_remote_url()
+    info = ThreeDBackendInfo(mode="remote" if remote_url else "local", remote_url=remote_url or None)
+    if remote_url:
+        info.backend = probe_remote_backend()
+        info.reachable = info.backend is not None
+    return info
+
+
+@app.put("/workspace/3d/backend", response_model=ThreeDBackendInfo)
+async def workspace_three_d_backend_update(payload: ThreeDBackendUpdate) -> ThreeDBackendInfo:
+    """Change le backend 3D à chaud (URL du tunnel) ; vide = retour au CPU local."""
+    try:
+        remote_url = set_remote_url(payload.remote_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    info = ThreeDBackendInfo(mode="remote" if remote_url else "local", remote_url=remote_url or None)
+    if remote_url:
+        info.backend = probe_remote_backend()
+        info.reachable = info.backend is not None
+    return info
 
 
 @app.post("/dicom/parse", response_model=DicomImportResponse)

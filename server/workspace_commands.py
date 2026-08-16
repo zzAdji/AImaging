@@ -28,6 +28,7 @@ COMMAND_CATALOG = [
     {"name": "analyze", "usage": "@analyze [image:<id>|all]", "description": "Analyse une image ou tout l'examen."},
     {"name": "predict", "usage": "@predict [image:<id>|all]", "description": "Lance la classification radiographique."},
     {"name": "gradcam", "usage": "@gradcam [image:<id>|all] [class:<nom>] [opacity:0-100]", "description": "Calcule et affiche une Grad-CAM."},
+    {"name": "3d", "usage": "@3d [image:<id>]", "description": "Reconstruit le volume 3D de la radio et l'affiche."},
     {"name": "wl", "usage": "@wl [image:<id>] preset:<lung|bone|soft|default> | window:<n> level:<n>", "description": "Applique un fenêtrage."},
     {"name": "brightness", "usage": "@brightness value:0-100 [image:<id>]", "description": "Règle la luminosité."},
     {"name": "contrast", "usage": "@contrast value:0-100 [image:<id>]", "description": "Règle le contraste."},
@@ -127,6 +128,11 @@ def parse_explicit_command(text: str, manifest: WorkspaceManifest) -> CommandRes
             else:
                 actions.append(_new_action("generate_gradcam", len(actions), "Grad-CAM demandée par l'utilisateur.", target_image_id=image_id, class_name=options.get("class")))
                 actions.append(_new_action("show_gradcam", len(actions), "Afficher la Grad-CAM demandée.", target_image_id=image_id, opacity=int(options.get("opacity", "62"))))
+
+    elif command == "3d":
+        image_id = _target_ids(manifest, options, allow_all=False)[0]
+        actions.append(_new_action("generate_3d", 0, "Reconstruction 3D demandée par l'utilisateur.", target_image_id=image_id))
+        actions.append(_new_action("show_3d", 1, "Afficher le volume 3D reconstruit.", target_image_id=image_id, visible=True))
 
     elif command == "wl":
         image_id = _target_ids(manifest, options, allow_all=False)[0]

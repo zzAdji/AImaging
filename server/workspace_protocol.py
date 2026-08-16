@@ -218,6 +218,8 @@ class ActionType(StrEnum):
     PREDICT = "predict"
     GENERATE_GRADCAM = "generate_gradcam"
     SHOW_GRADCAM = "show_gradcam"
+    GENERATE_3D = "generate_3d"
+    SHOW_3D = "show_3d"
     ZOOM_TO_REGION = "zoom_to_region"
     SET_WINDOW_LEVEL = "set_window_level"
     SET_BRIGHTNESS = "set_brightness"
@@ -266,6 +268,17 @@ class ShowGradcamAction(ActionBase):
     target_image_id: str
     visible: bool = True
     opacity: int = Field(default=62, ge=0, le=100)
+
+
+class Generate3dAction(ActionBase):
+    type: Literal[ActionType.GENERATE_3D]
+    target_image_id: str
+
+
+class Show3dAction(ActionBase):
+    type: Literal[ActionType.SHOW_3D]
+    target_image_id: str
+    visible: bool = True
 
 
 class ZoomToRegionAction(ActionBase):
@@ -366,7 +379,7 @@ class NotifyAction(ActionBase):
 
 WorkspaceAction = Annotated[Union[
     AnalyzeImageAction, AnalyzeExamAction, PredictAction, GenerateGradcamAction,
-    ShowGradcamAction, ZoomToRegionAction, SetWindowLevelAction, SetBrightnessAction,
+    ShowGradcamAction, Generate3dAction, Show3dAction, ZoomToRegionAction, SetWindowLevelAction, SetBrightnessAction,
     SetContrastAction, InvertAction, CreateShapeAction, UpdateShapeAction,
     DeleteShapeAction, SetLayerVisibilityAction, SetLayerOpacityAction,
     GenerateReportAction, ReplaceReportAction, NotifyAction,

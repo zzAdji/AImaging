@@ -5,9 +5,12 @@
 /models/
 /FetalCLIP/
 /outputs/
+/DeepScan3D/
+/kaggle/
 
 # Optional common Python/IDE artifacts
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 .vscode/
+.runtime/

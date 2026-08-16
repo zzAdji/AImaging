@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Loader2, Mic, Paperclip, Send, Square } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Mic, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { commandSuggestions, completeCommand } from "../../lib/aiCommandSyntax";
@@ -31,6 +31,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState(false);
+  const [open, setOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const waveProfile = mobile ? WAVE_PROFILE.filter((_, i) => i % 3 === 0) : WAVE_PROFILE;
@@ -87,7 +88,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
       >
         {/* Suggestions open ABOVE the bar so the bar itself never moves */}
         <AnimatePresence initial={false}>
-          {!voice && suggestions.length > 0 && (
+          {open && !voice && suggestions.length > 0 && (
             <motion.div
               key="suggestions"
               data-attr="ai-command-suggestions"
@@ -134,12 +135,19 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             </motion.div>
           ) : null}
         </AnimatePresence>
-        <div
-          className={cn(
-            "pointer-events-auto w-full overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl shadow-black/50 backdrop-blur",
-            mobile ? "max-w-none" : "max-w-[700px]",
-          )}
-        >
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="ai-input-card"
+              initial={{ y: 180, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 180, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 33, mass: 1 }}
+              className={cn(
+                "pointer-events-auto w-full overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl shadow-black/50 backdrop-blur",
+                mobile ? "max-w-none" : "max-w-[700px]",
+              )}
+            >
         <AnimatePresence mode="popLayout" initial={false}>
           {!voice ? (
             <motion.div
@@ -152,11 +160,12 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             >
               <button
                 type="button"
-                data-attr="ai-command-attach"
-                title="Joindre un fichier (bientôt disponible)"
+                data-attr="ai-command-toggle"
+                onClick={() => setOpen(false)}
+                title="Masquer la barre de saisie"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-icon transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
               >
-                <Paperclip size={16} strokeWidth={2} />
+                <ChevronDown size={18} strokeWidth={2} />
               </button>
               {w.aiBusy ? (
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -271,7 +280,24 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             </motion.div>
           )}
         </AnimatePresence>
-        </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {!open && (
+          <motion.button
+            key="ai-command-reopen"
+            type="button"
+            data-attr="ai-command-reopen"
+            onClick={() => setOpen(true)}
+            title="Afficher la barre de saisie"
+            initial={{ opacity: 0, y: 12, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card/95 text-icon shadow-lg shadow-black/40 backdrop-blur transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
+          >
+            <ChevronUp size={18} strokeWidth={2} />
+          </motion.button>
+        )}
       </div>
     </motion.div>
   );

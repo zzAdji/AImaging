@@ -12,6 +12,12 @@ RADIOGRAPHY_TRAINING_ROOT = SCRIPTS_ROOT / "radiography" / "training"
 RADIOGRAPHY_PREPROCESSING_ROOT = SCRIPTS_ROOT / "radiography" / "preprocessing"
 RADIOGRAPHY_RUNNING_ROOT = SCRIPTS_ROOT / "radiography" / "running"
 SHARED_LLM_ROOT = SCRIPTS_ROOT / "shared" / "llm"
+THREE_D_MAKER_ROOT = SCRIPTS_ROOT / "three_d_maker"
+
+# URL du service 3D externe (ex. tunnel Cloudflare vers un notebook Kaggle GPU).
+# Vide => la reconstruction 3D s'exécute en local (CPU). Renseigné => le
+# serveur local forwarde les requêtes 3D vers ce service distant.
+THREE_D_REMOTE_URL = os.environ.get("THREE_D_REMOTE_URL", "").strip().rstrip("/")
 
 
 @dataclass
@@ -31,7 +37,7 @@ class RadiographyServerConfig:
 @dataclass
 class GeminiConfig:
     api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
-    model_name: str = "gemini-3.6-flash"
+    model_name: str = "gemini-3.7-flash"
 
 def validate_gemini_config(config: GeminiConfig) -> None:
     if not config.api_key:

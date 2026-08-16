@@ -29,12 +29,13 @@ import {
   type WorkspaceState,
   type WlValue,
 } from "./workspace";
-import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
+import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
 import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import { amendReportText, mockDiagnostics, mockReport, parseAiCommand, type AiCommandAction, type RegionFrac } from "../lib/aiCommands";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
+import type { WorkspaceThreeDProgress } from "../lib/workspaceApi";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -317,7 +318,7 @@ export function WorkspaceProvider({
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [rightWidth, setRightWidth] = useState(352);
-  const [probe, setProbe] = useState<{ x: number; y: number } | null>(null);
+  const [probe, setProbe] = useState<{ x: number; y: number; ts: number } | null>(null);
   const [gridOn, setGridOn] = useState(false);
   const [rulersOn, setRulersOn] = useState(false);
   const [statusBarOpen, setStatusBarOpen] = useState(true);
@@ -358,6 +359,19 @@ export function WorkspaceProvider({
   }, []);
   const [gradcamIntensity, setGradcamIntensity] = useState(62);
   const [gradcamMode, setGradcamMode] = useState<"blue" | "heatmap">("blue");
+
+  const threeDResultRef = useRef<ThreeDResult | null>(null);
+  const [threeDResult, setThreeDResultState] = useState<ThreeDResult | null>(null);
+  const setThreeDResult = useCallback((result: ThreeDResult | null) => {
+    threeDResultRef.current = result;
+    setThreeDResultState(result);
+  }, []);
+  const [threeDOn, setThreeDOnState] = useState(false);
+  const setThreeDOn = useCallback((v: boolean) => setThreeDOnState(v), []);
+  const [threeDRunning, setThreeDRunningState] = useState(false);
+  const setThreeDRunning = useCallback((v: boolean) => setThreeDRunningState(v), []);
+  const [threeDProgress, setThreeDProgressState] = useState<WorkspaceThreeDProgress | null>(null);
+  const setThreeDProgress = useCallback((p: WorkspaceThreeDProgress | null) => setThreeDProgressState(p), []);
 
   const setLayerVisible = useCallback(
     (id: LayerId, visible: boolean) => {
@@ -469,9 +483,13 @@ export function WorkspaceProvider({
     setCrop(null);
     setGradcamOn(false);
     setGradcamResult(null);
+    setThreeDOn(false);
+    setThreeDResult(null);
+    setThreeDRunning(false);
+    setThreeDProgress(null);
     setPixelSpacingMm(null);
     setSelection(null);
-  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setPixelSpacingMm]);
+  }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setThreeDOn, setThreeDResult, setThreeDRunning, setThreeDProgress, setPixelSpacingMm]);
   const [shapeStyle, setShapeStyle] = useState<ShapeStyle>(loadShapeStyle);
 
   /* ------------------------------ Clipboard ------------------------------ */
@@ -1034,6 +1052,13 @@ pushHistory();
           setGradcamOn(Boolean(payload.visible));
           setGradcamIntensity(Math.min(100, Math.max(0, Math.round(Number(payload.opacity) * 100))));
           break;
+        case "show_3d":
+          if (!threeDResultRef.current) {
+            warnings.push("Aucune reconstruction 3D n'est disponible pour cette image. Lancez d'abord @3d.");
+            continue;
+          }
+          setThreeDOn(payload.visible !== false);
+          break;
         case "zoom_to_region": {
           const region = payload.region as { x: number; y: number; w: number; h: number };
           setAiFocus({ ...region, ts: Date.now() });
@@ -1138,7 +1163,7 @@ pushHistory();
     }
     if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajouté(s) par l'IA.`);
     return { appliedActionIds, warnings };
-  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setWl]);
+  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl]);
 
   useEffect(() => {
     executePlanRef.current = executeAiActionPlan;
@@ -1193,7 +1218,7 @@ pushHistory();
         case "probe": {
           const x = Math.min(1, Math.max(0, Number(p.x)));
           const y = Math.min(1, Math.max(0, Number(p.y)));
-          setProbe({ x, y });
+          setProbe({ x, y, ts: Date.now() });
           applied++;
           break;
         }
@@ -1491,6 +1516,14 @@ const closeDocument = useCallback(() => {
       setGradcamMode,
       gradcamResult,
       setGradcamResult,
+      threeDResult,
+      setThreeDResult,
+      threeDOn,
+      setThreeDOn,
+      threeDRunning,
+      setThreeDRunning,
+      threeDProgress,
+      setThreeDProgress,
       pixelSpacingMm,
       setPixelSpacingMm,
       wl,
@@ -1583,7 +1616,7 @@ imageSrc,
       toolbarOpen,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
-      gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
+      gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, threeDResult, setThreeDResult, threeDOn, setThreeDOn, threeDRunning, setThreeDRunning, threeDProgress, setThreeDProgress, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       probe, setProbe,
       collapsed, toggleSection, analysis,

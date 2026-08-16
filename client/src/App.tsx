@@ -6,6 +6,7 @@ import { AiSidebarRight } from "./components/ai/AiSidebarRight";
 import { FloatingCommandBar } from "./components/ai/FloatingCommandBar";
 import { ReportEditorModal } from "./components/ai/ReportEditor";
 import { CanvasViewport } from "./components/CanvasViewport";
+import { ThreeDBusyBanner, VolumeViewer } from "./components/ai/VolumeViewer";
 import {
   AboutModal,
   DocumentationModal,
@@ -42,6 +43,8 @@ import {
   type ExamImageState,
   type Examination,
   type GradCamResult,
+  type ThreeDResult,
+  THREE_D_FEATURE_ENABLED,
 } from "./lib/examinations";
 import {
   getLastFileHandle,
@@ -59,6 +62,7 @@ import {
   analyzeWorkspaceImages,
   createWorkspaceExam,
   generateWorkspaceGradcam,
+  generateWorkspaceThreeD,
   generateRadiographyReport,
   parseExplicitCommand,
   runWorkspaceAgentTurn,
@@ -141,6 +145,7 @@ function Shell({
   onClearImageState,
   onSavePredictions,
   onSaveGradcams,
+  onSaveThreeD,
 }: {
   examCtx: { examId: string; index: number } | null;
   exams: Examination[];
@@ -149,6 +154,7 @@ function Shell({
   onClearImageState: (examId: string, index: number) => void;
   onSavePredictions: (examId: string, predictions: Record<string, RadiographyPrediction>) => void;
   onSaveGradcams: (examId: string, gradcams: Record<string, GradCamResult>) => void;
+  onSaveThreeD: (examId: string, results: Record<string, ThreeDResult>) => void;
 }) {
   const w = useWorkspace();
   const { aiMode, splitOn, setSplitOn } = w;
@@ -323,11 +329,60 @@ function Shell({
         if (Object.keys(generated).length > 0) onSaveGradcams(exam.id, generated);
         return warnings;
       };
+      const generatePlanThreeD = async (workspaceId: string, plan: AiActionPlan) => {
+        const warnings: string[] = [];
+        if (!THREE_D_FEATURE_ENABLED) {
+          const count = plan.actions.filter((item) => item.type === "generate_3d").length;
+          if (count > 0) warnings.push(`Reconstruction 3D désactivée pour le moment (${count} action(s) ignorée(s)).`);
+          return warnings;
+        }
+        const generated: Record<string, ThreeDResult> = {};
+        for (const action of plan.actions.filter((item) => item.type === "generate_3d")) {
+          const targetImageId = action.target_image_id ?? current.id;
+          const targetImage = synchronizedExam.images.find((image) => image.id === targetImageId);
+          if (!targetImage) {
+            warnings.push(`Reconstruction 3D ignorée : image inconnue '${targetImageId}'.`);
+            continue;
+          }
+          if (!isRadiographyCompatible(targetImage)) {
+            warnings.push(`Reconstruction 3D ignorée pour '${targetImage.name}' : le modèle n'accepte que les DICOM CR ou DX.`);
+            continue;
+          }
+          if (targetImage.threeD) {
+            generated[targetImageId] = targetImage.threeD;
+            if (targetImageId === current.id) w.setThreeDResult(targetImage.threeD);
+            continue;
+          }
+          w.setThreeDRunning(true);
+          w.setThreeDProgress({ fraction: 0, message: "Envoi de la radio au serveur…" });
+          try {
+            const response = await generateWorkspaceThreeD(
+              workspaceId,
+              targetImage,
+              undefined,
+              (progress) => w.setThreeDProgress(progress),
+            );
+            generated[targetImageId] = response.result;
+            if (targetImageId === current.id) {
+              w.setThreeDResult(response.result);
+              w.recordAiAction(`Reconstruction 3D terminée (${Math.round(response.result.elapsedSec / 60)} min, ${response.result.device}).`);
+            }
+          } catch (error) {
+            warnings.push(error instanceof Error ? error.message : "Échec de la reconstruction 3D.");
+          } finally {
+            w.setThreeDRunning(false);
+            w.setThreeDProgress(null);
+          }
+        }
+        if (Object.keys(generated).length > 0) onSaveThreeD(exam.id, generated);
+        return warnings;
+      };
       const withoutHandledForeignGradcams = (plan: AiActionPlan): AiActionPlan => ({
         ...plan,
         actions: plan.actions.filter((action) => {
           if (!action.target_image_id || action.target_image_id === current.id) return true;
-          return action.type !== "generate_gradcam" && action.type !== "show_gradcam";
+          return action.type !== "generate_gradcam" && action.type !== "show_gradcam"
+            && action.type !== "generate_3d" && action.type !== "show_3d";
         }),
       });
 
@@ -339,7 +394,10 @@ function Shell({
         const targetIds: string[] = [];
         for (const action of planToRun.actions) {
           const tId = action.target_image_id ?? current.id;
-          if (tId !== current.id && (action.type === "generate_gradcam" || action.type === "show_gradcam")) {
+          if (tId !== current.id && (
+            action.type === "generate_gradcam" || action.type === "show_gradcam"
+            || action.type === "generate_3d" || action.type === "show_3d"
+          )) {
             continue;
           }
           if (!targetIds.includes(tId)) targetIds.push(tId);
@@ -438,7 +496,8 @@ function Shell({
         const hasForeign = p.actions.some((a) => {
           const tId = a.target_image_id ?? current.id;
           if (tId === current.id) return false;
-          return a.type !== "generate_gradcam" && a.type !== "show_gradcam";
+          return a.type !== "generate_gradcam" && a.type !== "show_gradcam"
+            && a.type !== "generate_3d" && a.type !== "show_3d";
         });
         if (!hasForeign) return { plan: p, actionSummary: undefined, warnings: [] as string[] };
         return executePlanAcrossImages(p, synchronizedExam.images);
@@ -489,6 +548,7 @@ function Shell({
           }
         }
         const gradcamWarnings = await generatePlanGradcams(turnRequest.workspaceId, turn.validation.plan);
+        const threeDWarnings = await generatePlanThreeD(turnRequest.workspaceId, turn.validation.plan);
         const localPlan = withoutHandledForeignGradcams(turn.validation.plan);
 
         /* generate_report : le moteur d'actions local ne peut pas exécuter ce
@@ -526,6 +586,7 @@ function Shell({
             ...captureWarnings,
             ...turnRequest.consistencyWarnings,
             ...gradcamWarnings,
+            ...threeDWarnings,
             ...turn.warnings,
             ...turn.validation.warnings,
             ...turn.validation.errors,
@@ -561,17 +622,18 @@ function Shell({
         return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
       }
       const gradcamWarnings = await generatePlanGradcams(session.workspace_id, parsed.plan);
+      const threeDWarnings = await generatePlanThreeD(session.workspace_id, parsed.plan);
       const localPlan = withoutHandledForeignGradcams(parsed.plan);
       const routed = await routeExecution(localPlan);
       return {
         plan: routed.plan,
         assistantMessage: parsed.plan.summary,
-        warnings: [...consistencyWarnings, ...gradcamWarnings, ...routed.warnings],
+        warnings: [...consistencyWarnings, ...gradcamWarnings, ...threeDWarnings, ...routed.warnings],
         ...(routed.actionSummary ? { actionSummary: routed.actionSummary } : {}),
       };
     });
     return () => w.setAiCommandResolver(null);
-  }, [analyzeExamImages, exam, imageIndex, onSaveGradcams, onSaveImageState, onClearImageState, waitForActiveImage, w]);
+  }, [analyzeExamImages, exam, imageIndex, onSaveGradcams, onSaveThreeD, onSaveImageState, onClearImageState, waitForActiveImage, w]);
 
 /* Load / restore the examination image into the editor */
   useEffect(() => {
@@ -593,6 +655,9 @@ function Shell({
     w.setPixelSpacingMm(img.metadata?.pixelSpacingMm ?? null);
     w.setGradcamResult(img.gradcam ?? null);
     w.setGradcamOn(Boolean(img.gradcam));
+    w.setThreeDResult(img.threeD ?? null);
+    // Vue 3D désactivée tant que la reconstruction n'est pas au point.
+    w.setThreeDOn(THREE_D_FEATURE_ENABLED && Boolean(img.threeD));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examCtx?.examId, imageIndex]);
 
@@ -941,6 +1006,14 @@ const doExport = async () => {
           if (file) openFile(file);
         }}
       />
+      {THREE_D_FEATURE_ENABLED && w.threeDRunning && (
+        <div className="pointer-events-none fixed bottom-16 left-1/2 z-[120] -translate-x-1/2" data-attr="ai-3d-running">
+          <ThreeDBusyBanner progress={w.threeDProgress} />
+        </div>
+      )}
+      {THREE_D_FEATURE_ENABLED && w.threeDResult && w.threeDOn && (
+        <VolumeViewer result={w.threeDResult} onClose={() => w.setThreeDOn(false)} />
+      )}
       <TitleBar
         onOpenImage={openImage}
         onOpenRecent={openRecent}
@@ -1436,6 +1509,13 @@ export default function App() {
     }));
   }, [mutateExams]);
 
+  const saveThreeD = useCallback((examId: string, results: Record<string, ThreeDResult>) => {
+    mutateExams((list) => list.map((exam) => exam.id !== examId ? exam : {
+      ...exam,
+      images: exam.images.map((image) => results[image.id] ? { ...image, threeD: results[image.id] } : image),
+    }));
+  }, [mutateExams]);
+
   const autoRestore = page === "editor" && examCtx === null;
 
   return (
@@ -1494,6 +1574,7 @@ export default function App() {
             onClearImageState={clearImageState}
             onSavePredictions={savePredictions}
             onSaveGradcams={saveGradcams}
+            onSaveThreeD={saveThreeD}
           />
         ))}
     </WorkspaceProvider>

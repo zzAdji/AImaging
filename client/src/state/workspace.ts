@@ -1,5 +1,5 @@
 import { createContext, useContext, type RefObject } from "react";
-import type { ExamImageMetadata, GradCamResult } from "../lib/examinations";
+import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
@@ -524,6 +524,18 @@ export interface WorkspaceState {
   /** Server-computed Grad-CAM for the image currently loaded in the canvas. */
   gradcamResult: GradCamResult | null;
   setGradcamResult: (result: GradCamResult | null) => void;
+  /** Server-computed DeepScan3D reconstruction for the active image. */
+  threeDResult: ThreeDResult | null;
+  setThreeDResult: (result: ThreeDResult | null) => void;
+  /** Volume viewer panel visibility (show_3d action, sidebar button). */
+  threeDOn: boolean;
+  setThreeDOn: (on: boolean) => void;
+  /** True while the backend is reconstructing the volume. */
+  threeDRunning: boolean;
+  setThreeDRunning: (running: boolean) => void;
+  /** Latest progress report of the running reconstruction job. */
+  threeDProgress: { fraction: number; message: string } | null;
+  setThreeDProgress: (progress: { fraction: number; message: string } | null) => void;
   /** DICOM calibration for the active image; absent means measurements stay in px. */
   pixelSpacingMm: PixelSpacingMm | null;
   setPixelSpacingMm: (spacing: PixelSpacingMm | null) => void;
@@ -537,9 +549,10 @@ export interface WorkspaceState {
   inverted: boolean;
   setInverted: (o: boolean) => void;
 
-  /** Sonde anatomique : point posé sur l'image (fractions 0..1) — relie le canvas à la carte anatomique. */
-  probe: { x: number; y: number } | null;
-  setProbe: (p: { x: number; y: number } | null) => void;
+  /** Sonde anatomique : point posé sur l'image (fractions 0..1) — relie le canvas à la carte anatomique.
+   *  `ts` rafraîchi à chaque pose (rejoue la vague d'animation côté canvas). */
+  probe: { x: number; y: number; ts: number } | null;
+  setProbe: (p: { x: number; y: number; ts: number } | null) => void;
 
   collapsed: Record<SectionId, boolean>;
   toggleSection: (id: SectionId) => void;

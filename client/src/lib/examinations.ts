@@ -27,6 +27,24 @@ export interface GradCamResult {
   perModel: Array<{ architecture: string; className: string; classIndex: number }>;
 }
 
+/** Reconstruction DeepScan3D d'une radio : vues rotatives + volume densité brut. */
+export interface ThreeDResult {
+  frames: Array<{ angle: number; data_url: string }>;
+  volume?: { nx: number; ny: number; nz: number; spacing: number; data_b64: string };
+  device: string;
+  elapsedSec: number;
+  generatedAt: string;
+}
+
+/**
+ * Interrupteur global de la vue/reconstruction 3D côté client.
+ * Mis à `false` tant que la qualité de la reconstruction 3D (DeepScan3D/GRAF)
+ * n'est pas au point : le bouton « 3D » est grisé/inactif et aucune vue ou
+ * reconstruction ne peut être déclenchée depuis le client. Remettre à `true`
+ * une fois la 3D jugée correcte.
+ */
+export const THREE_D_FEATURE_ENABLED = false;
+
 export interface ExamImage {
   id: string;
   name: string;
@@ -38,6 +56,7 @@ export interface ExamImage {
   linear?: LinearImageBuffer;
   prediction?: RadiographyPrediction;
   gradcam?: GradCamResult;
+  threeD?: ThreeDResult;
   state?: ExamImageState;
 }
 

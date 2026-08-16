@@ -249,6 +249,52 @@ input[type="range"]::-moz-range-thumb {
   animation: aim-voice-wave 0.85s ease-in-out infinite;
 }
 
+/* Sonde anatomique : vague (ondes concentriques) qui se pose au point pointé */
+@keyframes aim-probe-ripple {
+  0% {
+    transform: scale(0.2);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+.ai-probe-ripple {
+  animation: aim-probe-ripple 0.85s cubic-bezier(0.25, 0.6, 0.35, 1) forwards;
+}
+@keyframes aim-probe-settle {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.7);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.ai-probe-settle {
+  animation: aim-probe-settle 0.7s ease-out forwards;
+}
+
+/* Marquage au repos du point de sonde — pulsation douce */
+@keyframes aim-probe-rest {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+.ai-probe-rest {
+  animation: aim-probe-rest 2.2s ease-in-out infinite;
+}
+
 /* ---------- AI auto-draw reveal (shapes drawn by the model) ---------- */
 @keyframes aim-shape-enter {
   from {

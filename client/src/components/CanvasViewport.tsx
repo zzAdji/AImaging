@@ -520,6 +520,11 @@ export function CanvasViewport({
 
   const dims = w.dims;
 
+  /* Taille de la sonde anatomique : proportionnelle à l'image (grande image = grande sonde) */
+  const probeSize = Math.round(
+    Math.min(Math.max(Math.sqrt(dims.w * dims.h) * 0.03, 20), 76),
+  );
+
   const isEditable = (t: EventTarget | null) =>
     t instanceof HTMLElement &&
     (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable);
@@ -981,7 +986,7 @@ export function CanvasViewport({
     if (w.tool === "probe") {
       e.preventDefault();
       const p = screenToDoc(px, py);
-      const frac = { x: p.x / dims.w, y: p.y / dims.h };
+      const frac = { x: p.x / dims.w, y: p.y / dims.h, ts: Date.now() };
       w.setProbe(frac);
       w.recordAiAction("Sonde posée sur l'image — zone affichée sur la carte anatomique.", {
         type: "probe",
@@ -1580,6 +1585,43 @@ export function CanvasViewport({
               layerOpacity={gradcamOpacity}
               transform={imgTransform}
             />
+          )}
+
+          {/* Sonde anatomique — vague qui se pose au point pointé, puis marqueur au repos */}
+          {w.probe && (
+            <div
+              className="pointer-events-none absolute left-0 top-0 z-10"
+              style={{ width: dims.w, height: dims.h, transform: imgTransform }}
+            >
+              <div className="absolute" style={{ left: w.probe.x * dims.w, top: w.probe.y * dims.h }}>
+                {/* key = ts : chaque pose (même au même point) rejoue la vague */}
+                <div
+                  key={w.probe.ts}
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                  style={{ width: probeSize, height: probeSize }}
+                >
+                  <span className="ai-probe-ripple absolute inset-0 rounded-full border border-amber-400/90" />
+                  <span
+                    className="ai-probe-ripple absolute inset-0 rounded-full border border-amber-400/60"
+                    style={{ animationDelay: "0.16s" }}
+                  />
+                  <span
+                    className="ai-probe-settle absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.9)]"
+                    style={{ width: probeSize * 0.22, height: probeSize * 0.22 }}
+                  />
+                </div>
+                <div
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                  style={{ width: probeSize * 0.78, height: probeSize * 0.78 }}
+                >
+                  <span className="ai-probe-rest absolute inset-0 rounded-full border border-amber-400/50" />
+                  <span
+                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400"
+                    style={{ width: probeSize * 0.16, height: probeSize * 0.16 }}
+                  />
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Document image selection */}

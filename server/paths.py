@@ -9,6 +9,7 @@ from config import (  # noqa: E402
     RADIOGRAPHY_TRAINING_ROOT,
     SCRIPTS_ROOT,
     SHARED_LLM_ROOT,
+    THREE_D_MAKER_ROOT,
 )
 
 
@@ -32,3 +33,11 @@ def bootstrap_all() -> None:
     _add_to_path(RADIOGRAPHY_RUNNING_ROOT, "Dossier running (radiographie)")
     _add_to_path(RADIOGRAPHY_TRAINING_ROOT, "Dossier training (radiographie)")
     _add_to_path(SCRIPTS_ROOT / "radiography", "Dossier radiography")
+    # Le paquet three_d_maker s'importe depuis `scripts` (sys.path), pas depuis
+    # son propre dossier : sys.path doit pointer sur le parent du paquet.
+    if not THREE_D_MAKER_ROOT.is_dir():
+        raise FileNotFoundError(
+            f"Paquet three_d_maker introuvable : {THREE_D_MAKER_ROOT}. "
+            "Vérifier config.py si l'arborescence du projet diffère de celle supposée."
+        )
+    _add_to_path(SCRIPTS_ROOT, "Dossier scripts")

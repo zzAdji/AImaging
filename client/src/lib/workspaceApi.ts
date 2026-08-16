@@ -1,4 +1,4 @@
-import type { ExamImage, GradCamResult } from "./examinations";
+import type { ExamImage, GradCamResult, ThreeDResult } from "./examinations";
 import type { ActionValidationResult, AiActionPlan, WorkspaceManifest, WorkspaceSession } from "./workspaceProtocol";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -138,6 +138,23 @@ export interface WorkspaceGradcamResponse {
   result: GradCamResult;
 }
 
+interface WorkspaceThreeDResponseWire {
+  workspace_id: string;
+  image_id: string;
+  frames: Array<{ angle: number; data_url: string }>;
+  volume?: { nx: number; ny: number; nz: number; spacing: number; data_b64: string };
+  loss_history: number[];
+  device: string;
+  elapsed_sec: number;
+  generated_at: string;
+}
+
+export interface WorkspaceThreeDResponse {
+  workspaceId: string;
+  imageId: string;
+  result: ThreeDResult;
+}
+
 export interface PatientReportContext {
   nom_prenom: string;
   prescripteur?: string;
@@ -197,6 +214,109 @@ export async function generateWorkspaceGradcam(
       })),
     },
   };
+}
+
+interface WorkspaceThreeDJobWire {
+  workspace_id: string;
+  image_id: string;
+  job_id: string;
+  status: "queued" | "running" | "done" | "error";
+  progress: { fraction: number; message: string };
+  error?: string | null;
+}
+
+interface WorkspaceThreeDStatusWire extends WorkspaceThreeDJobWire {
+  result?: WorkspaceThreeDResponseWire | null;
+}
+
+export interface WorkspaceThreeDProgress {
+  fraction: number;
+  message: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** Starts a DeepScan3D reconstruction job (returns immediately with a job id). */
+export async function startWorkspaceThreeD(
+  workspaceId: string,
+  image: ExamImage,
+  iterations?: number,
+): Promise<{ workspaceId: string; imageId: string; jobId: string }> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), image.name || `${image.id}.png`);
+  if (iterations !== undefined) body.append("iterations", String(iterations));
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/3d`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  const raw = await response.json() as WorkspaceThreeDJobWire;
+  return { workspaceId: raw.workspace_id, imageId: raw.image_id, jobId: raw.job_id };
+}
+
+/** Polls a reconstruction job; returns the raw wire payload. */
+export async function pollWorkspaceThreeD(
+  workspaceId: string,
+  jobId: string,
+): Promise<WorkspaceThreeDStatusWire> {
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/3d/jobs/${jobId}`);
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  return response.json() as Promise<WorkspaceThreeDStatusWire>;
+}
+
+/**
+ * Reconstructs the DeepScan3D volume of a radiograph as a background job and
+ * waits for completion, reporting progress through `onProgress`.
+ */
+export async function generateWorkspaceThreeD(
+  workspaceId: string,
+  image: ExamImage,
+  iterations?: number,
+  onProgress?: (progress: WorkspaceThreeDProgress) => void,
+): Promise<WorkspaceThreeDResponse> {
+  const started = await startWorkspaceThreeD(workspaceId, image, iterations);
+  for (;;) {
+    await sleep(2500);
+    const status = await pollWorkspaceThreeD(workspaceId, started.jobId);
+    onProgress?.(status.progress);
+    if (status.status === "done" && status.result) {
+      const raw = status.result;
+      return {
+        workspaceId: raw.workspace_id,
+        imageId: raw.image_id,
+        result: {
+          frames: raw.frames,
+          volume: raw.volume,
+          device: raw.device,
+          elapsedSec: raw.elapsed_sec,
+          generatedAt: raw.generated_at,
+        },
+      };
+    }
+    if (status.status === "error") {
+      throw new Error(status.error || "La reconstruction 3D a échoué côté serveur.");
+    }
+  }
+}
+
+export interface WorkspaceThreeDBackend {
+  mode: "local" | "remote";
+  remote_url: string | null;
+  reachable: boolean | null;
+  backend: { status?: string; cuda?: boolean; gpu?: string | null; device?: string } | null;
+}
+
+/** Current 3D backend (local CPU or remote GPU service) + liveness probe. */
+export function getWorkspaceThreeDBackend(): Promise<WorkspaceThreeDBackend> {
+  return request<WorkspaceThreeDBackend>("/workspace/3d/backend", { method: "GET" });
+}
+
+/** Switches the 3D backend at runtime ('' = local CPU); returns refreshed info. */
+export function updateWorkspaceThreeDBackend(remoteUrl: string): Promise<WorkspaceThreeDBackend> {
+  return request<WorkspaceThreeDBackend>("/workspace/3d/backend", {
+    method: "PUT",
+    body: JSON.stringify({ remote_url: remoteUrl }),
+  });
 }
 
 /** Uploads original image bytes; canvas captures and metadata stay in the JSON manifest. */
