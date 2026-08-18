@@ -68,7 +68,7 @@ export type AgentIntent =
 export type VisualContextNeed = "none" | "active_image" | "target_images" | "all_exam_images";
 
 export interface WorkspaceAgentEvidence {
-  source: "prediction" | "visual" | "gradcam" | "metadata" | "annotation" | "measurement" | "analysis";
+  source: "prediction" | "visual" | "gradcam" | "metadata" | "annotation" | "measurement" | "analysis" | "anatomy";
   image_id: string | null;
   detail: string;
 }
@@ -90,16 +90,45 @@ export interface WorkspaceVisualContext {
   image_ids: string[];
 }
 
+/** Contexte CXAS compact envoyé à l'agent : mesures + structures, jamais les masques. */
+export interface WorkspaceAnatomyContext {
+  status: "ok" | "error";
+  error: string | null;
+  measurements: Record<string, AnatomyMeasurementValue>;
+  labels: Record<string, string>;
+  areas_px: Record<string, number>;
+  mask_shape: [number, number] | null;
+  file_size: [number, number] | null;
+  mask_downscaled: boolean;
+  generated_at: string;
+}
+
+/** Construit le contexte agent depuis un résultat d'analyse CXAS du serveur. */
+export function toAnatomyContext(result: WorkspaceAnatomyResult): WorkspaceAnatomyContext {
+  return {
+    status: result.status,
+    error: result.error,
+    measurements: result.measurements,
+    labels: result.segmentation.labels,
+    areas_px: result.segmentation.areas_px,
+    mask_shape: result.segmentation.mask_shape,
+    file_size: result.segmentation.file_size,
+    mask_downscaled: result.segmentation.mask_downscaled,
+    generated_at: result.generated_at,
+  };
+}
+
 /** Runs one free-form IA turn. Its answer stays useful even when actions are empty. */
 export function runWorkspaceAgentTurn(
   workspaceId: string,
   instruction: string,
   predictions: Record<string, RadiographyPrediction>,
   visualContext: WorkspaceVisualContext,
+  anatomy: Record<string, WorkspaceAnatomyContext> = {},
 ): Promise<WorkspaceAgentTurnResponse> {
   return request<WorkspaceAgentTurnResponse>(`/workspace/exams/${workspaceId}/ai/turn`, {
     method: "POST",
-    body: JSON.stringify({ instruction, predictions, visual_context: visualContext }),
+    body: JSON.stringify({ instruction, predictions, visual_context: visualContext, anatomy }),
   });
 }
 
@@ -329,4 +358,76 @@ export async function analyzeWorkspaceImages(workspaceId: string, images: ExamIm
   const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/analyze`, { method: "POST", body });
   if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
   return response.json() as Promise<WorkspaceAnalysisResponse>;
+}
+
+/* --------------------------- Anatomie (CXAS) ------------------------------ */
+
+/* --------------------------- Anatomie CXAS --------------------------- */
+
+export interface AnatomyMeasurementValue {
+  available: boolean;
+  reason?: string;
+  value?: number;
+  value_px_512?: number;
+  value_px_original?: number;
+  value_mm?: number | null;
+  unit?: "ratio" | "px" | "mm";
+  note?: string;
+}
+
+export interface WorkspaceAnatomyResult {
+  status: "ok" | "error";
+  error: string | null;
+  measurements: Record<string, AnatomyMeasurementValue>;
+  segmentation: {
+    labels: Record<string, string>;
+    label_ids_available: number[];
+    file_size: [number, number];
+    mask_shape: [number, number];
+    areas_px: Record<string, number>;
+    mask_downscaled: boolean;
+    /** Masque PNG (data URL) par label, résolution mask_shape. */
+    masks_b64_png: Record<string, string>;
+    /** Overlay composite serveur (data URL PNG) : structures clés teintées
+     *  en couleurs officielles sur l'image, en pleine résolution. */
+    overlay_png?: string;
+  };
+  warnings: string[];
+  inference_time_ms: number | null;
+  generated_at: string;
+}
+
+interface WorkspaceAnatomyWire {
+  workspace_id: string;
+  image_id: string;
+  status: "ok" | "error";
+  error: string | null;
+  measurements: WorkspaceAnatomyResult["measurements"];
+  segmentation: WorkspaceAnatomyResult["segmentation"];
+  warnings: string[];
+  inference_time_ms: number | null;
+  generated_at: string;
+}
+
+export interface WorkspaceAnatomyResponse {
+  workspaceId: string;
+  imageId: string;
+  result: WorkspaceAnatomyResult;
+}
+
+/** Segmente une image (CXAS, 159 classes PAXRay) et mesure CTR/SCD. */
+export async function generateWorkspaceAnatomy(
+  workspaceId: string,
+  image: ExamImage,
+): Promise<WorkspaceAnatomyResponse> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), image.name || `${image.id}.png`);
+  if (image.metadata?.pixelSpacingMm) {
+    body.append("pixel_spacing_mm", image.metadata.pixelSpacingMm.join(","));
+  }
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/anatomy`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  const raw = await response.json() as WorkspaceAnatomyWire;
+  return { workspaceId: raw.workspace_id, imageId: raw.image_id, result: raw };
 }

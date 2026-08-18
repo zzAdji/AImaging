@@ -29,13 +29,14 @@ import {
   type WorkspaceState,
   type WlValue,
 } from "./workspace";
-import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
+import type { ExamImage, Examination, ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
 import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
-import { amendReportText, mockDiagnostics, mockReport, parseAiCommand, type AiCommandAction, type RegionFrac } from "../lib/aiCommands";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
-import type { WorkspaceThreeDProgress } from "../lib/workspaceApi";
+import { buildWorkspaceManifest } from "../lib/workspaceProtocol";
+import type { WorkspaceAnatomyResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
+import { createWorkspaceExam, generateWorkspaceAnatomy } from "../lib/workspaceApi";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -48,16 +49,7 @@ const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   metadata: true,
 };
 
-/** Converts a fraction-based region into image px */
-const fracToPx = (r: RegionFrac, dims: { w: number; h: number }) => ({
-  x: r.x * dims.w,
-  y: r.y * dims.h,
-  w: r.w * dims.w,
-  h: r.h * dims.h,
-});
 
-const pxDiag = (d: AiDiagnosis, dims: { w: number; h: number }): AiDiagnosis =>
-  d.region ? { ...d, region: fracToPx(d.region, dims) } : d;
 
 const cloneShape = (s: Shape): Shape => ({
   ...s,
@@ -360,6 +352,16 @@ export function WorkspaceProvider({
   const [gradcamIntensity, setGradcamIntensity] = useState(62);
   const [gradcamMode, setGradcamMode] = useState<"blue" | "heatmap">("blue");
 
+  /* --------------------------- Segmentation anatomique --------------------------- */
+  const [anatomyResult, setAnatomyResultState] = useState<WorkspaceAnatomyResult | null>(null);
+  const anatomyResultRef = useRef<WorkspaceAnatomyResult | null>(null);
+  const [anatomyLoading, setAnatomyLoading] = useState(false);
+  const anatomyLoadingRef = useRef(false);
+  const [anatomyError, setAnatomyError] = useState<string | null>(null);
+  const [anatomyCardOpen, setAnatomyCardOpenState] = useState(false);
+  const anatomyCardOpenRef = useRef(false);
+  const [anatomySelected, setAnatomySelectedState] = useState<string | null>(null);
+
   const threeDResultRef = useRef<ThreeDResult | null>(null);
   const [threeDResult, setThreeDResultState] = useState<ThreeDResult | null>(null);
   const setThreeDResult = useCallback((result: ThreeDResult | null) => {
@@ -441,22 +443,38 @@ export function WorkspaceProvider({
   const [imageId, setImageId] = useState<string | null>(null);
   const imageIdRef = useRef<string | null>(null);
   const imageSrcRef = useRef("");
-  const [imageName, setImageName] = useState("Chest X-Ray — PA");
+  const [imageName, setImageName] = useState("Chest X-Ray ÔÇö PA");
   const [imageMetadata, setImageMetadataState] = useState<ExamImageMetadata | null>(null);
   const setImageMetadata = useCallback((metadata: ExamImageMetadata | null) => {
     setImageMetadataState(metadata);
   }, []);
+  const imageMetadataRef = useRef<ExamImageMetadata | null>(null);
   const [fitSignal, setFitSignal] = useState<{ a: number; b: number }>({ a: 0, b: 0 });
   const [dims, setDims] = useState({ w: 1200, h: 1063 });
-  const imageNameRef = useRef("Chest X-Ray — PA");
+  const imageNameRef = useRef("Chest X-Ray ÔÇö PA");
   const dimsRef = useRef({ w: 1200, h: 1063 });
 
   useEffect(() => {
     imageIdRef.current = imageId;
     imageSrcRef.current = imageSrc;
     imageNameRef.current = imageName;
+    imageMetadataRef.current = imageMetadata;
     dimsRef.current = dims;
-  }, [imageId, imageSrc, imageName, dims]);
+  }, [imageId, imageSrc, imageName, imageMetadata, dims]);
+
+  /* Changement d'image : le résultat de segmentation et la sélection du
+     canvas précédent ne s'appliquent plus à la nouvelle image.
+     (Réinitialisation volontaire dans un effet de synchronisation —
+     l'appel direct des setters dans l'effet est requis ici, sans effet
+     d'indirection possible sur des setters bruts de useState.) */
+  useEffect(() => {
+    if (!imageId) return;
+    anatomyResultRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAnatomyResultState(null);
+    setAnatomySelectedState(null);
+    setAnatomyError(null);
+  }, [imageId]);
 
   const [dicomLinear, setDicomLinearState] = useState<LinearImageBuffer | null>(null);
   const setDicomLinear = useCallback((buffer: LinearImageBuffer | null) => {
@@ -465,7 +483,7 @@ export function WorkspaceProvider({
   }, []);
   const [crop, setCrop] = useState<WorkspaceState["crop"]>(null);
 
-  /* Rendu prêt à afficher : fenêtrage natif pour les DICOM linéaires, sinon
+  /* Rendu pr├¬t ├á afficher : fen├¬trage natif pour les DICOM lin├®aires, sinon
      l'image source (le filtre CSS prend le relais). */
   const renderSrc = useMemo(() => {
     if (!dicomLinear || !imageSrc) return imageSrc;
@@ -489,6 +507,10 @@ export function WorkspaceProvider({
     setThreeDProgress(null);
     setPixelSpacingMm(null);
     setSelection(null);
+    anatomyResultRef.current = null;
+    setAnatomyResultState(null);
+    setAnatomySelectedState(null);
+    setAnatomyError(null);
   }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setThreeDOn, setThreeDResult, setThreeDRunning, setThreeDProgress, setPixelSpacingMm]);
   const [shapeStyle, setShapeStyle] = useState<ShapeStyle>(loadShapeStyle);
 
@@ -575,8 +597,8 @@ export function WorkspaceProvider({
     const c = crop;
     if (!c || c.w < 1 || c.h < 1) return;
     const oldDims = dims;
-    /* Un DICOM linéaire est rogné sur le rendu fenêtré courant, puis l'image
-       devient une image ordinaire (le buffer linéaire est détaché). */
+    /* Un DICOM lin├®aire est rogn├® sur le rendu fen├¬tr├® courant, puis l'image
+       devient une image ordinaire (le buffer lin├®aire est d├®tach├®). */
     const src = dicomLinear ? renderSrc : imageSrc;
     const img = new Image();
     img.onload = () => {
@@ -684,7 +706,7 @@ export function WorkspaceProvider({
   const aiThoughtTimers = useRef<number[]>([]);
   const commandResolverRef = useRef<AiCommandResolver | null>(null);
   const executePlanRef = useRef<(plan: AiActionPlan) => { appliedActionIds: string[]; warnings: string[] }>(() => ({ appliedActionIds: [], warnings: [] }));
-  /* Annulation globale des transactions IA multi-images (régistrée par le Shell). */
+  /* Annulation globale des transactions IA multi-images (r├®gistr├®e par le Shell). */
   const [aiTransactionUndoable, setAiTransactionUndoable] = useState(false);
   const aiTransactionUndoRef = useRef<() => boolean>(() => false);
   const setAiTransactionUndo = useCallback((fn: (() => boolean) | null) => {
@@ -715,7 +737,7 @@ export function WorkspaceProvider({
     try {
       localStorage.setItem("aimaging.aiPrompts", JSON.stringify(aiCustomPrompts));
     } catch {
-      /* localStorage unavailable — prompts stay in memory */
+      /* localStorage unavailable ÔÇö prompts stay in memory */
     }
   }, [aiCustomPrompts]);
 
@@ -745,6 +767,89 @@ export function WorkspaceProvider({
     setAiActionLog((log) => [rec, ...log.filter((x) => !(x.label === t && x.type === rec.type))].slice(0, 30));
   }, []);
 
+  /* --------------------------- Segmentation anatomique --------------------------- */
+  const setAnatomyCardOpen = useCallback((open: boolean) => {
+    anatomyCardOpenRef.current = open;
+    setAnatomyCardOpenState(open);
+  }, []);
+
+  const setAnatomySelected = useCallback((label: string | null) => {
+    setAnatomySelectedState(label);
+  }, []);
+
+  const runAnatomyAnalysis = useCallback(async (waitForImage = false) => {
+    /* Ouverture d'un espace de travail : l'image peut ne pas être encore
+       prête (elle est chargée juste après). On patiente un peu avant
+       d'abandonner, pour lancer la segmentation en même temps que la
+       classification automatique. */
+    if (waitForImage) {
+      let waited = 0;
+      while (!imageIdRef.current || !imageSrcRef.current) {
+        if (waited >= 8000) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        waited += 250;
+      }
+    }
+    const imageIdValue = imageIdRef.current;
+    const imageSrcValue = imageSrcRef.current;
+    if (!imageIdValue || !imageSrcValue) {
+      const message = "Chargez une radiographie avant de lancer la segmentation.";
+      setAnatomyError(message);
+      recordAiAction(`Segmentation anatomique : ${message}`);
+      return;
+    }
+    if (anatomyLoadingRef.current) return;
+    anatomyLoadingRef.current = true;
+    setAnatomyLoading(true);
+    setAnatomyError(null);
+    try {
+      const metadata = imageMetadataRef.current;
+      const image: ExamImage = {
+        id: imageIdValue,
+        name: imageNameRef.current || "Image",
+        src: imageSrcValue,
+        dims: dimsRef.current,
+        sourceKind: metadata?.modality ? "dicom" : "browser-image",
+        metadata: metadata ?? undefined,
+      };
+      const exam: Examination = {
+        id: `anatomy-${imageIdValue}`,
+        name: "Analyse anatomique",
+        modality: metadata?.modality ?? "image",
+        images: [image],
+        createdAt: new Date().toISOString(),
+        lastOpenedAt: new Date().toISOString(),
+        archived: false,
+      };
+      const manifest = buildWorkspaceManifest(exam, image.id, {});
+      const session = await createWorkspaceExam(manifest);
+      const response = await generateWorkspaceAnatomy(session.workspace_id, image);
+      if (imageIdRef.current !== imageIdValue) return;
+      anatomyResultRef.current = response.result;
+      setAnatomyResultState(response.result);
+      recordAiAction(
+        `Segmentation anatomique : ${response.result.segmentation.label_ids_available.length} structures détectées, ` +
+          `CTR=${response.result.measurements["Cardio-Thoracic Ratio"]?.available ? "oui" : "n.d."}, ` +
+          `SCD=${response.result.measurements["Spine-Center Distance"]?.available ? "oui" : "n.d."}.`,
+      );
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : "Segmentation anatomique impossible.";
+      setAnatomyError(message);
+      recordAiAction(`Segmentation anatomique : ${message}`);
+    } finally {
+      anatomyLoadingRef.current = false;
+      setAnatomyLoading(false);
+    }
+  }, [recordAiAction]);
+
+  const toggleAnatomyCard = useCallback(() => {
+    const next = !anatomyCardOpenRef.current;
+    setAnatomyCardOpen(next);
+    if (next && !anatomyResultRef.current && !anatomyLoadingRef.current && imageIdRef.current && imageSrcRef.current) {
+      void runAnatomyAnalysis();
+    }
+  }, [runAnatomyAnalysis, setAnatomyCardOpen]);
+
   const removeAiHistory = useCallback((id: string) => {
     setAiHistory((history) => history.filter((h) => h.id !== id));
   }, []);
@@ -761,65 +866,15 @@ export function WorkspaceProvider({
     [],
   );
 
-  /** Reflection steps shown above the command bar while an action runs. */
-  const thoughtSteps = (kind: AiCommandAction["kind"]): string[] => {
-    switch (kind) {
-      case "analysis":
-        return [
-          "Interprétation de la requête…",
-          "Analyse des pixels de l'image…",
-          "Détection des anomalies, annotation des zones…",
-        ];
-      case "report":
-        return [
-          "Interprétation de la requête…",
-          "Collecte des mesures et constats…",
-          "Rédaction du rapport…",
-        ];
-      case "amendReport":
-        return [
-          "Interprétation de la requête…",
-          "Révision du rapport en cours…",
-          "Application des modifications…",
-        ];
-      case "gradcam":
-        return [
-          "Interprétation de la requête…",
-          "Calcul de la carte d'activation…",
-          "Superposition de la heatmap sur l'image…",
-        ];
-      case "explain":
-      case "focus":
-      case "focusDiagnosis":
-        return [
-          "Interprétation de la requête…",
-          "Localisation de la région suspecte…",
-          "Recentrage et zoom sur la zone…",
-        ];
-      case "annotation":
-        return ["Interprétation de la requête…", "Placement de l'annotation…"];
-      case "measure":
-        return ["Interprétation de la requête…", "Mesure de la longueur…"];
-      case "wl":
-        return ["Interprétation de la requête…", "Application du fenêtrage…"];
-      case "invert":
-        return ["Interprétation de la requête…", "Inversion des niveaux de gris…"];
-      case "compare":
-        return ["Interprétation de la requête…", "Préparation de la comparaison…"];
-      default:
-        return ["Interprétation de la requête…", "Exécution de la commande…"];
-    }
-  };
-
   const runAiCommand = useCallback(
     (raw: string) => {
       const text = raw.trim();
       if (!text) return;
       if (commandResolverRef.current) {
-        const item: AiHistoryItem = { id: randomId(), text, summary: "Commande en cours…", at: Date.now() };
+        const item: AiHistoryItem = { id: randomId(), text, summary: "Commande en coursÔÇª", at: Date.now() };
         setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
         setAiBusy(true);
-        setAiThought({ id: item.id, text: "Validation de la commande structurée…" });
+        setAiThought({ id: item.id, text: "Validation de la commande structur├®eÔÇª" });
         void commandResolverRef.current(text)
 .then((resolution) => {
             const result = executePlanRef.current(resolution.plan);
@@ -827,8 +882,8 @@ export function WorkspaceProvider({
             const actionSummary =
               resolution.actionSummary ??
               (result.appliedActionIds.length
-                ? `${result.appliedActionIds.length} action(s) appliquée(s).`
-                : "Aucune action canvas appliquée.");
+                ? `${result.appliedActionIds.length} action(s) appliqu├®e(s).`
+                : "Aucune action canvas appliqu├®e.");
             const summary = `${actionSummary}${warnings.length ? ` ${warnings[0]}` : ""}`;
             setAiHistory((history) => history.map((entry) => entry.id === item.id ? {
               ...entry,
@@ -846,7 +901,7 @@ export function WorkspaceProvider({
             }));
           })
           .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : "Commande impossible à traiter.";
+            const message = error instanceof Error ? error.message : "Commande impossible ├á traiter.";
             setAiHistory((history) => history.map((entry) => entry.id === item.id ? { ...entry, summary: message } : entry));
             setAiResults((results) => ({
               ...results,
@@ -862,156 +917,18 @@ export function WorkspaceProvider({
           });
         return;
       }
-      const action = parseAiCommand(text);
-      const item: AiHistoryItem = { id: randomId(), text, summary: "En cours…", at: Date.now() };
-      setAiHistory((h) => [{ ...item }, ...h].slice(0, 20));
-      setAiBusy(true);
-      if (aiTimer.current) window.clearTimeout(aiTimer.current);
-      aiThoughtTimers.current.forEach((t) => window.clearTimeout(t));
-      aiThoughtTimers.current = [];
-      const steps = thoughtSteps(action.kind);
-      steps.forEach((s, i) => {
-        aiThoughtTimers.current.push(
-          window.setTimeout(() => setAiThought({ id: item.id + "-" + i, text: s }), i * 300),
-        );
-      });
-      aiTimer.current = window.setTimeout(() => {
-        setAiBusy(false);
-        setAiThought(null);
-        const done: AiHistoryItem = { ...item, summary: action.summary };
-        setAiHistory((h) => h.map((i) => (i.id === item.id ? done : i)));
-        setAiResults((r) => ({ ...r, lastSummary: action.summary }));
-
-        switch (action.kind) {
-          case "analysis":
-            setAnalysis("running");
-            window.setTimeout(() => setAnalysis("done"), 1400);
-            setAiResults((r) => ({ ...r, diagnostics: mockDiagnostics().map((d) => pxDiag(d, dims)) }));
-            break;
-          case "explain":
-            setAiFocus({ ...fracToPx(action.region, dims), ts: Date.now() });
-            break;
-          case "focus":
-            setAiFocus({ ...fracToPx(action.region, dims), ts: Date.now() });
-            break;
-          case "focusDiagnosis": {
-            setAiResults((r) => ({
-              ...r,
-              diagnostics: mockDiagnostics().map((d) => pxDiag(d, dims)),
-            }));
-            const r = fracToPx(action.region, dims);
-            const ann: Shape = {
-              id: randomId(),
-              type: "annotation",
-              x: r.x + r.w / 2,
-              y: r.y,
-              w: 0,
-              h: 0,
-              points: [{ x: r.x + r.w / 2, y: r.y }],
-              strokeWidth: 2,
-              label: action.label,
-              fontSize: 14,
-              fontFamily: "sans",
-              fontWeight: "normal",
-              color: "#ffffff",
-              createdBy: "ai",
-            };
-            pushHistory();
-            commit([...shapesRef.current, ann]);
-            setSelection(ann.id);
-            setAiFocus({ ...r, ts: Date.now() });
-            setAnalysis("done");
-            break;
-          }
-          case "gradcam":
-            setAiResults((r) => ({
-              ...r,
-              lastWarnings: ["Ouvrez un examen pour calculer une Grad-CAM rÃ©elle sur le serveur."],
-            }));
-            break;
-          case "report": {
-            const fresh = mockReport(imageName);
-            setAiResults((r) => ({ ...r, report: fresh }));
-            if (reportEditOpen) setReportDraft(fresh);
-            break;
-          }
-          case "amendReport": {
-            if (reportEditOpen) {
-              setReportDraft(action.text);
-            } else {
-              setAiResults((r) => ({ ...r, report: amendReportText(item.text, r.report ?? "") }));
-            }
-            break;
-          }
-          case "annotation": {
-            const r = fracToPx(action.region, dims);
-            const ann: Shape = {
-              id: randomId(),
-              type: "annotation",
-              x: r.x + r.w / 2,
-              y: r.y,
-              w: 0,
-              h: 0,
-              points: [{ x: r.x + r.w / 2, y: r.y }],
-              strokeWidth: 2,
-              label: "Note IA",
-              fontSize: 14,
-              fontFamily: "sans",
-              fontWeight: "normal",
-              color: "#ffffff",
-              createdBy: "ai",
-            };
-            pushHistory();
-            commit([...shapesRef.current, ann]);
-            setSelection(ann.id);
-            break;
-          }
-          case "measure": {
-            const r = fracToPx(action.region, dims);
-            const m: Shape = {
-              id: randomId(),
-              type: "measure",
-              x: r.x,
-              y: r.y + r.h / 2,
-              w: r.w,
-              h: 0,
-              points: [],
-              strokeWidth: 2,
-              createdBy: "ai",
-            };
-            pushHistory();
-            commit([...shapesRef.current, m]);
-            setSelection(m.id);
-            break;
-          }
-          case "wl":
-            setWl(action.wl);
-            break;
-          case "invert":
-            setInverted(!inverted);
-            break;
-          case "compare":
-            break;
-          case "unknown":
-            /* While the report editor is open, any unrecognised instruction is
-               treated as a free-form amendment of the draft. */
-            if (reportEditOpen) {
-              setReportDraft((d) => `${d}\n\nNote IA : « ${item.text} » — complément ajouté.\n${amendReportText(item.text, "")}`);
-            }
-            break;
-        }
-      }, 1250);
+      const message = "Aucun espace de travail actif : ouvrez un examen pour utiliser l'assistant IA.";
+      const item: AiHistoryItem = { id: randomId(), text, summary: message, at: Date.now() };
+      setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
+      setAiResults((results) => ({
+        ...results,
+        lastSummary: message,
+        lastResponse: message,
+        lastWarnings: [],
+        lastLimitations: [],
+      }));
     },
-    [
-      dims,
-      imageName,
-      inverted,
-      reportEditOpen,
-      pushHistory,
-      commit,
-      setInverted,
-      setWl,
-    ],
+    [],
   );
 
   /** Executes only actions that target the image currently loaded in this provider.
@@ -1028,7 +945,7 @@ pushHistory();
     for (const action of actionList) {
       const payload = action as typeof action & Record<string, unknown>;
       if (action.target_image_id && action.target_image_id !== imageIdRef.current) {
-        warnings.push(`Action ${action.id} ignorée : elle cible une autre image.`);
+        warnings.push(`Action ${action.id} ignor├®e : elle cible une autre image.`);
         continue;
       }
       switch (action.type) {
@@ -1046,7 +963,7 @@ pushHistory();
           break;
         case "show_gradcam":
           if (!gradcamResultRef.current) {
-            warnings.push("Aucune Grad-CAM réelle n'est disponible pour cette image.");
+            warnings.push("Aucune Grad-CAM r├®elle n'est disponible pour cette image.");
             continue;
           }
           setGradcamOn(Boolean(payload.visible));
@@ -1146,22 +1063,22 @@ pushHistory();
           break;
         case "generate_gradcam":
           if (!gradcamResultRef.current) {
-            warnings.push("La génération Grad-CAM n'a pas fourni de carte exploitable.");
+            warnings.push("La g├®n├®ration Grad-CAM n'a pas fourni de carte exploitable.");
             continue;
           }
           break;
         case "generate_report":
-          warnings.push(`Action ${action.type} planifiée mais son service backend n'est pas encore relié.`);
+          warnings.push(`Action ${action.type} planifi├®e mais son service backend n'est pas encore reli├®.`);
           continue;
       }
       appliedActionIds.push(action.id);
     }
     if (appliedActionIds.length === 0) {
-      /* Aucun changement : retire l'instantané inutile créé pour cette transaction. */
+      /* Aucun changement : retire l'instantan├® inutile cr├®├® pour cette transaction. */
       pastRef.current.pop();
       setCanUndo(pastRef.current.length > 0);
     }
-    if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajouté(s) par l'IA.`);
+    if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajout├®(s) par l'IA.`);
     return { appliedActionIds, warnings };
   }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl]);
 
@@ -1169,7 +1086,7 @@ pushHistory();
     executePlanRef.current = executeAiActionPlan;
   }, [executeAiActionPlan]);
 
-  /** Rejoue les actions enregistrées d'un prompt (déterministe, une seule
+  /** Rejoue les actions enregistr├®es d'un prompt (d├®terministe, une seule
    *  transaction Ctrl+Z). Sans action rejouable, retombe sur la commande IA. */
   const runAiPrompt = useCallback((prompt: AiPrompt) => {
     const replayable = prompt.actions.filter((a) => a.type);
@@ -1212,7 +1129,7 @@ pushHistory();
             }
             applied++;
           } else {
-            warnings.push("Aucune Grad-CAM n'est disponible pour cette image : action ignorée.");
+            warnings.push("Aucune Grad-CAM n'est disponible pour cette image : action ignor├®e.");
           }
           break;
         case "probe": {
@@ -1258,7 +1175,7 @@ pushHistory();
       runAiCommand(prompt.text);
       return;
     }
-    const summary = `${applied} action(s) rejouée(s) depuis le prompt.${warnings.length ? ` ${warnings[0]}` : ""}`;
+    const summary = `${applied} action(s) rejou├®e(s) depuis le prompt.${warnings.length ? ` ${warnings[0]}` : ""}`;
     const item: AiHistoryItem = { id: randomId(), text: prompt.text, summary, at: Date.now() };
     setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
     setAiResults((results) => ({ ...results, lastSummary: summary }));
@@ -1430,7 +1347,7 @@ const closeDocument = useCallback(() => {
         if (isPixelSpacingMm(d.pixelSpacingMm)) setPixelSpacingMm(d.pixelSpacingMm);
         setSelection(null);
       } catch {
-        /* corrupt snapshot — ignore */
+        /* corrupt snapshot ÔÇö ignore */
       }
     });
     return () => {
@@ -1528,6 +1445,15 @@ const closeDocument = useCallback(() => {
       setPixelSpacingMm,
       wl,
       setWl,
+      anatomyResult,
+      anatomyLoading,
+      anatomyError,
+      anatomyCardOpen,
+      setAnatomyCardOpen,
+      toggleAnatomyCard,
+      anatomySelected,
+      setAnatomySelected,
+      runAnatomyAnalysis,
       brightness,
       setBrightness,
       contrast,
@@ -1617,6 +1543,7 @@ imageSrc,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
       gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, threeDResult, setThreeDResult, threeDOn, setThreeDOn, threeDRunning, setThreeDRunning, threeDProgress, setThreeDProgress, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
+      anatomyResult, anatomyLoading, anatomyError, anatomyCardOpen, setAnatomyCardOpen, toggleAnatomyCard, anatomySelected, setAnatomySelected, runAnatomyAnalysis,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       probe, setProbe,
       collapsed, toggleSection, analysis,

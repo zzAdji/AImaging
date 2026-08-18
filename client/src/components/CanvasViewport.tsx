@@ -23,6 +23,15 @@ import { useWorkspace, type ToolId } from "../state/workspace";
 import { ShapesLayer, type AngleDraft } from "./ShapesLayer";
 import type { LinearImageBuffer } from "../lib/dicom";
 import { paintLinearFrame } from "../lib/dicomRenderer";
+import {
+  ANATOMY_KEY_INDEX,
+  anatomyKeyColor,
+  anatomyKeyRgb,
+  anatomyMaskSrc,
+  decodeMaskToCanvas,
+  paintAnatomyMask,
+  prepareAnatomyMask,
+} from "../lib/anatomy";
 
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 16;
@@ -405,6 +414,73 @@ function GradCamOverlay({
         transformOrigin: "50% 50%",
       }}
     />
+  );
+}
+
+/* ------------------------- Segmentation anatomique ------------------------- */
+
+/** Illumine la structure sélectionnée de la carte de segmentation sur l'image
+ *  de base : même recette que la carte (aplat discret + contour net dans la
+ *  couleur officielle CXAS + halo), tirée en blend "screen" — plutôt que
+ *  l'ancien aplat unique, qui (avant correctif) teintait toute l'image faute
+ *  de canal alpha exploitable sur le masque brut. */
+function AnatomySelectedOverlay({
+  dims,
+  src,
+  rgb,
+  label,
+  transform,
+}: {
+  dims: Dims;
+  src: string;
+  rgb: [number, number, number];
+  label: string;
+  transform?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    let cancelled = false;
+    /* decodeMaskToCanvas reporte la luminance du PNG serveur (mode "L", sans
+       canal alpha) dans le canal alpha : sans cette étape, un <img> brut est
+       opaque sur tout le rectangle (fond compris), et tout compositing
+       source-in en aval teinterait l'image entière au lieu de la silhouette
+       de la structure sélectionnée. */
+    decodeMaskToCanvas(src).then((mask) => {
+      if (cancelled || !mask) return;
+      canvas.width = dims.w;
+      canvas.height = dims.h;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const geometry = prepareAnatomyMask(mask, dims.w, dims.h);
+      if (!geometry) return;
+      paintAnatomyMask(ctx, geometry, dims.w, dims.h, rgb, {
+        fillAlpha: 0.3,
+        edgeAlpha: 1,
+        glow: { blur: 30, alpha: 0.05 },
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, rgb[0], rgb[1], rgb[2], dims.w, dims.h]);
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-[5]"
+      style={{ transform, transformOrigin: "50% 50%" }}
+    >
+      <canvas
+        ref={canvasRef}
+        width={dims.w}
+        height={dims.h}
+        aria-label={`Segment anatomique : ${label}`}
+        className="absolute inset-0 h-full w-full select-none object-fill"
+        style={{ mixBlendMode: "screen" }}
+      />
+    </div>
   );
 }
 
@@ -1587,6 +1663,22 @@ export function CanvasViewport({
             />
           )}
 
+          {w.anatomySelected &&
+            w.anatomyResult &&
+            w.anatomyResult.status === "ok" &&
+            anatomyMaskSrc(w.anatomyResult.segmentation, w.anatomySelected) && (
+              <AnatomySelectedOverlay
+                dims={dims}
+                src={anatomyMaskSrc(w.anatomyResult.segmentation, w.anatomySelected) ?? ""}
+                rgb={anatomyKeyRgb(w.anatomySelected) ?? [255, 255, 255]}
+                label={
+                  w.anatomyResult.segmentation.labels[ANATOMY_KEY_INDEX[w.anatomySelected]] ??
+                  w.anatomySelected
+                }
+                transform={imgTransform}
+              />
+            )}
+
           {/* Sonde anatomique — vague qui se pose au point pointé, puis marqueur au repos */}
           {w.probe && (
             <div
@@ -1643,6 +1735,18 @@ export function CanvasViewport({
       )}
 
       {/* Grad-CAM badge + intensity/mode control — viewport space (fixed size) */}
+      {w.anatomySelected && w.anatomyResult && w.anatomyResult.status === "ok" && (
+        <div
+          data-attr="anatomy-selected-badge"
+          className="pointer-events-none absolute right-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink"
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ backgroundColor: anatomyKeyColor(w.anatomySelected) ?? "#fff" }}
+          />
+          {w.anatomyResult.segmentation.labels[ANATOMY_KEY_INDEX[w.anatomySelected]] ?? w.anatomySelected}
+        </div>
+      )}
       {w.gradcamOn && w.gradcamResult && (
         <div className="pointer-events-none absolute left-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />

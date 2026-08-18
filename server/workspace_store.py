@@ -1,18 +1,37 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
 from uuid import uuid4
 
 from workspace_protocol import WorkspaceManifest
 
+MAX_TURNS_KEPT = 12
+MAX_AUDIT_KEPT = 50
 
-@dataclass(frozen=True)
+
+@dataclass
+class AgentTurnRecord:
+    """Un tour d'agent exécuté : sert de mémoire conversationnelle compacte."""
+
+    turn_id: str
+    instruction: str
+    intent: str
+    assistant_message: str
+    action_types: list[str] = field(default_factory=list)
+    validation_accepted: bool = True
+    warnings: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
 class WorkspaceSession:
     id: str
     manifest: WorkspaceManifest
     created_at: datetime
+    turns: list[AgentTurnRecord] = field(default_factory=list)
+    audit: list[dict] = field(default_factory=list)
 
 
 class WorkspaceStore:
@@ -37,6 +56,35 @@ class WorkspaceStore:
             current = self._sessions.get(session_id)
             if current is None:
                 return None
-            session = WorkspaceSession(id=session_id, manifest=manifest, created_at=current.created_at)
+            session = WorkspaceSession(
+                id=session_id,
+                manifest=manifest,
+                created_at=current.created_at,
+                turns=current.turns,
+                audit=current.audit,
+            )
             self._sessions[session_id] = session
             return session
+
+    def record_turn(self, session_id: str, turn: AgentTurnRecord) -> None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return
+            session.turns.append(turn)
+            del session.turns[:-MAX_TURNS_KEPT]
+
+    def record_audit(self, session_id: str, entry: dict) -> None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return
+            session.audit.append(entry)
+            del session.audit[:-MAX_AUDIT_KEPT]
+
+    def conversation_turns(self, session_id: str, limit: int = 6) -> list[AgentTurnRecord]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return []
+            return list(session.turns[-limit:])

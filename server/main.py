@@ -7,8 +7,10 @@ import logging
 import re
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,7 @@ import paths as server_paths
 
 server_paths.bootstrap_all()  # doit precéder tout import des packages métier ci-dessous
 
-from config import GeminiConfig, RadiographyServerConfig  # noqa: E402
+from config import CxasServerConfig, GeminiConfig, RadiographyServerConfig  # noqa: E402
 from model_registry import ModelRegistry  # noqa: E402
 
 from main_predict import predict_with_loaded_models  # noqa: E402
@@ -37,7 +39,12 @@ from workspace_protocol import (  # noqa: E402
     inspect_manifest_consistency,
     validate_plan_against_manifest,
 )
-from workspace_store import WorkspaceStore  # noqa: E402
+from workspace_store import AgentTurnRecord, WorkspaceStore  # noqa: E402
+from agent_context import (  # noqa: E402
+    WorkspaceAnatomyContext,
+    compact_anatomy_context,
+    conversation_context,
+)
 from workspace_commands import COMMAND_CATALOG, CommandError, CommandRequest, CommandResponse, parse_explicit_command  # noqa: E402
 from workspace_agent import AgentProposal, AgentTurnResponse, build_agent_turn, fallback_agent_turn  # noqa: E402
 from workspace_agent_prompt import WORKSPACE_AGENT_SYSTEM_INSTRUCTION  # noqa: E402
@@ -202,6 +209,18 @@ class WorkspaceGradcamResponse(BaseModel):
     per_model: List[dict]
 
 
+class WorkspaceAnatomyResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    status: str = "ok"  # ok | error
+    error: str | None = None
+    measurements: dict = {}
+    segmentation: dict = {}
+    warnings: List[str] = []
+    inference_time_ms: float | None = None
+    generated_at: str
+
+
 class WorkspaceThreeDJobResponse(BaseModel):
     workspace_id: str
     image_id: str
@@ -284,10 +303,32 @@ class WorkspaceVisualContextRequest(BaseModel):
     image_ids: List[str] = Field(default_factory=list)
 
 
+class WorkspaceAnatomyContext(BaseModel):
+    """Contexte compact de la segmentation CXAS d'une image (jamais les masques binaires).
+
+    Ce qui est transmis : état, mesures (CTR, SCD...), structures clés avec
+    leur aire en pixels, labels, dimensions du masque, provenance. Les data
+    URLs (masques/overlay) sont exclues pour ne pas gonfler le prompt.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    status: str = "ok"
+    error: str | None = None
+    measurements: dict[str, dict] = Field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
+    areas_px: dict[str, float] = Field(default_factory=dict)
+    mask_shape: List[int] | None = None
+    file_size: List[int] | None = None
+    mask_downscaled: bool | None = None
+    generated_at: str | None = None
+
+
 class WorkspaceAgentTurnRequest(BaseModel):
     instruction: str
     predictions: dict[str, dict] = Field(default_factory=dict)
     visual_context: WorkspaceVisualContextRequest = Field(default_factory=WorkspaceVisualContextRequest)
+    anatomy: dict[str, WorkspaceAnatomyContext] = Field(default_factory=dict)
 
 
 @app.post("/workspace/exams", response_model=WorkspaceSessionResponse, status_code=201)
@@ -482,6 +523,64 @@ async def generate_workspace_3d(
     )
 
 
+@app.post("/workspace/exams/{workspace_id}/anatomy", response_model=WorkspaceAnatomyResponse)
+async def generate_workspace_anatomy(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+    pixel_spacing_mm: str | None = Form(default=None),
+) -> WorkspaceAnatomyResponse:
+    """Segmente anatomiquement une image (CXAS) et mesure CTR/SCD.
+
+    CXAS est chargé paresseusement à la première demande (poids
+    téléchargés au premier appel) ; le serveur reste disponible sans.
+    """
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not _is_radiography_compatible(workspace_image):
+        raise HTTPException(status_code=422, detail=_radiography_modality_message(workspace_image))
+
+    # (ligne,col) du DICOM source ; les JPG n'en ont pas -> reste en pixels.
+    spacing = None
+    if pixel_spacing_mm:
+        try:
+            values = tuple(float(x) for x in pixel_spacing_mm.split(","))
+            spacing = values if len(values) == 2 else None
+        except ValueError:
+            raise HTTPException(status_code=422, detail="pixel_spacing_mm attend R,C (ex: 0.1688,0.1688)") from None
+
+    suffix = Path(image.filename or "image.png").suffix or ".png"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(await image.read())
+        tmp_path = Path(tmp.name)
+    try:
+        from anatomy_service import analyze_anatomy_image  # noqa: PLC0415
+
+        result = analyze_anatomy_image(
+            tmp_path, CxasServerConfig(), pixel_spacing_mm=spacing
+        )
+        return WorkspaceAnatomyResponse(
+            workspace_id=workspace_id,
+            image_id=image_id,
+            status=result["status"],
+            error=result["error"],
+            measurements=result["measurements"],
+            segmentation=result["segmentation"],
+            warnings=result["warnings"],
+            inference_time_ms=result["inference_time_ms"],
+            generated_at=datetime.now(UTC).isoformat(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Échec de l'analyse anatomique pour l'image %s.", image_id)
+        raise HTTPException(status_code=500, detail=f"Échec de l'analyse anatomique : {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @app.get("/workspace/exams/{workspace_id}/3d/jobs/{job_id}", response_model=WorkspaceThreeDStatusResponse)
 async def workspace_three_d_job_status(
     workspace_id: str,
@@ -638,6 +737,16 @@ async def plan_workspace_instruction(workspace_id: str, request: WorkspaceInstru
         ) from exc
 
     validation = validate_plan_against_manifest(plan, session.manifest)
+    workspace_store.record_audit(workspace_id, {
+        "at": datetime.now(UTC).isoformat(),
+        "endpoint": "/ai/plan",
+        "instruction": instruction[:500],
+        "actions_count": len(plan.actions),
+        "actions_types": [action.type.value for action in plan.actions],
+        "accepted": validation.accepted,
+        "errors_count": len(validation.errors),
+        "warnings_count": len(validation.warnings),
+    })
     if not validation.accepted:
         raise HTTPException(status_code=422, detail={"message": "Plan IA invalide.", "errors": validation.errors})
     return WorkspacePlanResponse(validation=validation)
@@ -731,6 +840,12 @@ async def run_workspace_agent_turn(
         for image_id, prediction in request.predictions.items()
         if image_id in known_image_ids
     }
+    unknown_anatomy_ids = sorted(set(request.anatomy) - known_image_ids)
+    anatomy_context = {
+        image_id: compact_anatomy_context(context)
+        for image_id, context in request.anatomy.items()
+        if image_id in known_image_ids
+    }
     visual_parts, attached_visual_image_ids, visual_warnings = _build_visual_parts(
         session.manifest,
         request.visual_context,
@@ -742,6 +857,8 @@ async def run_workspace_agent_turn(
         "image_ids": attached_visual_image_ids,
         "kind": "annotated_canvas_capture" if attached_visual_image_ids else "none",
     }
+    recent_turns = workspace_store.conversation_turns(workspace_id)
+    conversation_memory = conversation_context(recent_turns)
     prompt = (
         "Instruction utilisateur :\n"
         f"{instruction}\n\n"
@@ -749,13 +866,18 @@ async def run_workspace_agent_turn(
         f"{json.dumps(manifest_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "Résultats de prédiction disponibles, indexés par image_id :\n"
         f"{json.dumps(predictions, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "Résultats de segmentation anatomique CXAS (mesures et structures), indexés par image_id :\n"
+        f"{json.dumps(anatomy_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "Contexte visuel réellement joint :\n"
         f"{json.dumps(visual_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "Conversation récente (tours précédents, ordre chronologique) :\n"
+        f"{json.dumps(conversation_memory, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "Contrôles de cohérence déterministes :\n"
         f"{json.dumps([issue.model_dump(mode='json') for issue in consistency_issues], ensure_ascii=False, separators=(',', ':'))}\n\n"
         "Capacités disponibles :\n"
         f"{json.dumps({'available_action_types': [action.value for action in ActionType]}, ensure_ascii=False)}"
     )
+    turn_started_at = datetime.now(UTC)
     try:
         proposal = registry.gemini_client.generate_json_validated(
             system_instruction=WORKSPACE_AGENT_SYSTEM_INSTRUCTION,
@@ -765,10 +887,20 @@ async def run_workspace_agent_turn(
         )
     except Exception:  # noqa: BLE001
         logger.exception("Échec de la génération du tour IA.")
-        return fallback_agent_turn(
+        fallback = fallback_agent_turn(
             "Je n'ai pas pu produire une réponse fiable pour cette demande. Réessayez dans quelques secondes.",
             "La réponse de Gemini n'a pas pu être validée ; aucune action n'a été exécutée.",
         )
+        workspace_store.record_turn(workspace_id, AgentTurnRecord(
+            turn_id=str(uuid4().hex[:12]),
+            instruction=instruction,
+            intent=fallback.intent.value,
+            assistant_message=fallback.assistant_message,
+            action_types=[],
+            validation_accepted=False,
+            warnings=fallback.warnings,
+        ))
+        return fallback
 
     turn = build_agent_turn(proposal, session.manifest)
     blocking_consistency_issues = [issue for issue in consistency_issues if issue.level == "error"]
@@ -777,19 +909,55 @@ async def run_workspace_agent_turn(
             "Je ne peux pas comparer ces images comme un même examen, car les contrôles DICOM ont détecté une incohérence bloquante.",
             "Aucune action de comparaison n'a été exécutée.",
         )
-        return blocked_turn.model_copy(update={
+        blocked_turn = blocked_turn.model_copy(update={
             "warnings": [
                 *blocked_turn.warnings,
                 *(issue.message for issue in blocking_consistency_issues),
             ],
         })
+        workspace_store.record_turn(workspace_id, AgentTurnRecord(
+            turn_id=str(uuid4().hex[:12]),
+            instruction=instruction,
+            intent=turn.intent.value,
+            assistant_message=blocked_turn.assistant_message,
+            action_types=[],
+            validation_accepted=False,
+            warnings=blocked_turn.warnings,
+        ))
+        return blocked_turn
     extra_warnings = [
         *visual_warnings,
         *(issue.message for issue in consistency_issues),
         *(f"Prédiction ignorée : image inconnue '{image_id}'." for image_id in unknown_prediction_ids),
+        *(f"Anatomie ignorée : image inconnue '{image_id}'." for image_id in unknown_anatomy_ids),
     ]
     if extra_warnings:
         turn = turn.model_copy(update={"warnings": [*turn.warnings, *extra_warnings]})
+
+    workspace_store.record_turn(workspace_id, AgentTurnRecord(
+        turn_id=str(uuid4().hex[:12]),
+        instruction=instruction,
+        intent=turn.intent.value,
+        assistant_message=turn.assistant_message,
+        action_types=[action.type.value for action in turn.validation.plan.actions],
+        validation_accepted=turn.validation.accepted,
+        warnings=turn.warnings,
+    ))
+    workspace_store.record_audit(workspace_id, {
+        "at": datetime.now(UTC).isoformat(),
+        "endpoint": "/ai/turn",
+        "instruction": instruction[:500],
+        "prompt_chars": len(prompt),
+        "intent": turn.intent.value,
+        "actions_count": len(turn.validation.plan.actions),
+        "actions_types": [action.type.value for action in turn.validation.plan.actions],
+        "accepted": turn.validation.accepted,
+        "errors_count": len(turn.validation.errors),
+        "warnings_count": len(turn.warnings),
+        "visual_images": attached_visual_image_ids,
+        "anatomy_images": list(anatomy_context),
+        "elapsed_ms": int((datetime.now(UTC) - turn_started_at).total_seconds() * 1000),
+    })
     return turn
 
 @app.post("/radiography/predict")
@@ -871,9 +1039,16 @@ async def generate_radiography_report(request: ReportRequest) -> ReportResponse:
 
 @app.get("/health")
 async def health() -> dict:
+    try:
+        from anatomy_service import is_available as anatomy_available  # noqa: PLC0415
+
+        anatomy_ready = anatomy_available()
+    except Exception:  # noqa: BLE001
+        anatomy_ready = False
     return {
         "status": "ok" if not startup_errors else "degraded",
         "radiography_models_loaded": len(registry.radiography_models),
         "gemini_ready": registry.gemini_client is not None,
+        "anatomy_ready": anatomy_ready,
         "startup_errors": startup_errors,
     }

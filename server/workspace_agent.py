@@ -52,12 +52,41 @@ class EvidenceSource(StrEnum):
     ANNOTATION = "annotation"
     MEASUREMENT = "measurement"
     ANALYSIS = "analysis"
+    ANATOMY = "anatomy"
+
+
+_EVIDENCE_SOURCE_ALIASES = {
+    "predictions": "prediction",
+    "prediction_ensemble": "prediction",
+    "segmentation": "anatomy",
+    "cxas": "anatomy",
+    "anatomy_cxas": "anatomy",
+    "measure": "measurement",
+    "measurements": "measurement",
+    "metadata_dicom": "metadata",
+    "pixel_metadata": "metadata",
+    "info": "metadata",
+}
 
 
 class AgentEvidence(StrictModel):
     source: EvidenceSource
     image_id: str | None = Field(default=None, max_length=128)
     detail: str = Field(min_length=1, max_length=4_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_source(cls, data):
+        if not isinstance(data, dict):
+            return data
+        evidence = dict(data)
+        source = evidence.get("source")
+        if isinstance(source, str):
+            evidence["source"] = _EVIDENCE_SOURCE_ALIASES.get(source.strip().lower(), source)
+        detail = evidence.get("detail")
+        if detail is None or not str(detail).strip():
+            evidence["detail"] = "Détail non fourni par le modèle."
+        return evidence
 
 
 class AgentActionProposal(StrictModel):
@@ -73,6 +102,17 @@ class AgentActionProposal(StrictModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     confidence: float | None = Field(default=None, ge=0, le=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_optional_text(cls, data):
+        if not isinstance(data, dict):
+            return data
+        action = dict(data)
+        reason = action.get("reason")
+        if reason is None or not str(reason).strip():
+            action["reason"] = "Action demandée par l'utilisateur."
+        return action
+
 
 class AgentProposal(StrictModel):
     intent: AgentIntent
@@ -84,6 +124,24 @@ class AgentProposal(StrictModel):
     actions: list[AgentActionProposal] = Field(default_factory=list, max_length=200)
     warnings: list[str] = Field(default_factory=list, max_length=64)
     clarifying_question: str | None = Field(default=None, max_length=4_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        proposal = dict(data)
+        message = proposal.get("assistant_message")
+        if message is None or not str(message).strip():
+            proposal["assistant_message"] = "Réponse générée."
+        targets = proposal.get("target_visual_image_ids")
+        if isinstance(targets, list):
+            seen: list[str] = []
+            for image_id in targets:
+                if image_id not in seen:
+                    seen.append(image_id)
+            proposal["target_visual_image_ids"] = seen
+        return proposal
 
     @model_validator(mode="after")
     def validate_visual_targets(self) -> "AgentProposal":
@@ -134,9 +192,12 @@ def _empty_plan(summary: str) -> ActionPlan:
 
 def _as_number(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    if number != number:  # NaN mappe vers la valeur par défaut
+        return default
+    return number
 
 
 def _clamp_region(region: dict[str, Any], width: float, height: float) -> dict[str, Any]:

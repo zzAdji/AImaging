@@ -7,6 +7,7 @@
 /outputs/
 /DeepScan3D/
 /kaggle/
+/_handoff-anatomy/
 
 # Optional common Python/IDE artifacts
 __pycache__/

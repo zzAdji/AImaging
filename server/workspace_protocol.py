@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Annotated, Literal, Union
 
@@ -16,28 +17,119 @@ class StrictModel(BaseModel):
 
 
 class PixelPoint(StrictModel):
+    """Point en pixels ; le modèle émet parfois des paires [x, y] au lieu d'objets."""
+
     x: float = Field(ge=0)
     y: float = Field(ge=0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_pair_list(cls, data):
+        if isinstance(data, (list, tuple)) and len(data) == 2:
+            return {"x": data[0], "y": data[1]}
+        return data
+
 
 class PixelRegion(StrictModel):
+    """Région en pixels ; les champs superflus émis par le modèle sont ignorés."""
+
+    model_config = ConfigDict(extra="ignore")
+
     x: float = Field(ge=0)
     y: float = Field(ge=0)
     w: float = Field(gt=0)
     h: float = Field(gt=0)
 
 
+_HEX_COLOR = re.compile(r"^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
+_NAMED_COLORS = {
+    "red": "#ff0000",
+    "green": "#00ff00",
+    "blue": "#0000ff",
+    "white": "#ffffff",
+    "black": "#000000",
+    "yellow": "#ffff00",
+    "orange": "#ffa500",
+    "purple": "#800080",
+    "pink": "#ffc0cb",
+    "cyan": "#00ffff",
+    "gray": "#808080",
+    "grey": "#808080",
+}
+_FONT_FAMILIES = {"sans": "sans", "sansserif": "sans", "sans-serif": "sans", "serif": "serif", "mono": "mono", "monospace": "mono"}
+_FONT_WEIGHTS = {"normal": "normal", "regular": "normal", "400": "normal", "500": "normal", "bold": "bold", "bolder": "bold", "700": "bold", "600": "bold"}
+
+
 class ShapeStyle(StrictModel):
+    """Style d'une forme ; le modèle émet souvent des couleurs nommées ou des
+    hex courts : on normalise et on neutralise ce qui ne peut pas être appliqué."""
+
+    model_config = ConfigDict(extra="ignore")
+
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     stroke_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     fill_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    stroke_width: float | None = Field(default=None, gt=0, le=64)
-    font_size: float | None = Field(default=None, ge=6, le=160)
+    stroke_width: float | None = Field(default=None, gt=0, le=256)
+    font_size: float | None = Field(default=None, ge=6, le=512)
     font_family: Literal["sans", "serif", "mono"] | None = None
     font_weight: Literal["normal", "bold"] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_style(cls, data):
+        if not isinstance(data, dict):
+            return data
+        style = dict(data)
+        for key in ("color", "stroke_color", "fill_color"):
+            raw = style.get(key)
+            if raw is None:
+                continue
+            hexed = cls._normalise_color(raw)
+            style[key] = hexed
+        if style.get("font_family") is not None:
+            style["font_family"] = _FONT_FAMILIES.get(str(style["font_family"]).lower().replace(" ", ""))
+        if style.get("font_weight") is not None:
+            style["font_weight"] = _FONT_WEIGHTS.get(str(style["font_weight"]).lower())
+        return style
+
+    @classmethod
+    def _normalise_color(cls, value: object) -> str | None:
+        text = str(value).strip().lower()
+        if text in ("none", "transparent"):
+            return None
+        if text in _NAMED_COLORS:
+            return _NAMED_COLORS[text]
+        if _HEX_COLOR.match(text):
+            if len(text) == 4:
+                text = f"#{text[1]}{text[1]}{text[2]}{text[2]}{text[3]}{text[3]}"
+            return text.lower()
+        return None
+
+
+_SHAPE_TYPE_ALIASES = {
+    "measurement": "measure",
+    "ruler": "measure",
+    "line_measure": "measure",
+    "line_measurement": "measure",
+    "distance_measurement": "distance",
+    "multi_point": "freedraw",
+    "multipoint": "freedraw",
+    "freehand": "freedraw",
+    "circle": "ellipse",
+    "square": "rectangle",
+    "box": "rectangle",
+    "marker": "annotation",
+    "text_box": "text",
+    "label": "text",
+}
+
 
 class CanvasShape(StrictModel):
+    """Forme du canvas ; le modèle ajoute fréquemment des champs hors contrat
+    (color, stroke, fontSize...) : ils sont ignorés, pas rejetés."""
+
+    model_config = ConfigDict(extra="ignore")
+
     id: str = Field(min_length=1, max_length=128)
     type: Literal["rectangle", "ellipse", "arrow", "line", "freedraw", "measure", "distance", "angle", "annotation", "text"]
     x: float
@@ -50,6 +142,19 @@ class CanvasShape(StrictModel):
     created_by: Literal["user", "ai"] = "user"
     action_id: str | None = Field(default=None, max_length=128)
     style: ShapeStyle = Field(default_factory=ShapeStyle)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_type(cls, data):
+        if not isinstance(data, dict):
+            return data
+        shape = dict(data)
+        raw_type = shape.get("type")
+        if isinstance(raw_type, str):
+            alias = _SHAPE_TYPE_ALIASES.get(raw_type.strip().lower())
+            if alias is not None:
+                shape["type"] = alias
+        return shape
 
 
 class GradcamState(StrictModel):
@@ -269,6 +374,24 @@ class ShowGradcamAction(ActionBase):
     visible: bool = True
     opacity: int = Field(default=62, ge=0, le=100)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_opacity(cls, data):
+        """Le modèle émet souvent une fraction 0..1 au lieu d'un pourcentage."""
+        if not isinstance(data, dict):
+            return data
+        action = dict(data)
+        opacity = action.get("opacity")
+        if opacity is not None:
+            try:
+                value = float(opacity)
+            except (TypeError, ValueError):
+                return action
+            if 0.0 <= value <= 1.0:
+                value *= 100
+            action["opacity"] = round(min(max(value, 0.0), 100.0))
+        return action
+
 
 class Generate3dAction(ActionBase):
     type: Literal[ActionType.GENERATE_3D]
@@ -293,17 +416,65 @@ class SetWindowLevelAction(ActionBase):
     window: float = Field(gt=0, le=4096)
     level: float = Field(ge=-2048, le=4096)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _clamp_window_level(cls, data):
+        if not isinstance(data, dict):
+            return data
+        action = dict(data)
+        try:
+            window = float(action.get("window", 1.0))
+            action["window"] = min(max(window if window > 0 else 1.0, 1.0), 4096.0)
+        except (TypeError, ValueError):
+            action["window"] = 1.0
+        try:
+            level = float(action.get("level", 0.0))
+            action["level"] = min(max(level, -2048.0), 4096.0)
+        except (TypeError, ValueError):
+            action["level"] = 0.0
+        return action
+
 
 class SetBrightnessAction(ActionBase):
     type: Literal[ActionType.SET_BRIGHTNESS]
     target_image_id: str
     value: int = Field(ge=0, le=100)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_value(cls, data):
+        if isinstance(data, dict):
+            return SetContrastAction._normalise_percent(dict(data))
+        return data
+
 
 class SetContrastAction(ActionBase):
     type: Literal[ActionType.SET_CONTRAST]
     target_image_id: str
     value: int = Field(ge=0, le=100)
+
+    @classmethod
+    def _normalise_percent(cls, action: dict, key: str = "value") -> dict:
+        raw = action.get(key)
+        if raw is None:
+            return action
+        try:
+            text = str(raw).strip()
+            if text.endswith("%"):
+                text = text[:-1]
+            value = float(text)
+        except (TypeError, ValueError):
+            return action
+        percent = value if value > 1.0 else value * 100
+        action[key] = round(min(max(percent, 0.0), 100.0))
+        return action
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_value(cls, data):
+        if isinstance(data, dict):
+            return cls._normalise_percent(dict(data))
+        return data
 
 
 class InvertAction(ActionBase):
@@ -348,11 +519,33 @@ class DeleteShapeAction(ActionBase):
     shape_id: str = Field(min_length=1, max_length=128)
 
 
+_LAYER_ALIASES = {
+    "image": "image",
+    "image_layer": "image",
+    "annotations": "annotations",
+    "annotation": "annotations",
+    "measurements": "measurements",
+    "measurement": "measurements",
+    "gradcam": "gradcam",
+    "grad_cam": "gradcam",
+    "grad-cam": "gradcam",
+}
+
+
 class SetLayerVisibilityAction(ActionBase):
     type: Literal[ActionType.SET_LAYER_VISIBILITY]
     target_image_id: str
     layer: Literal["image", "annotations", "measurements", "gradcam"]
     visible: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_layer(cls, data):
+        if isinstance(data, dict) and isinstance(data.get("layer"), str):
+            action = dict(data)
+            action["layer"] = _LAYER_ALIASES.get(data["layer"].strip().lower(), data["layer"])
+            return action
+        return data
 
 
 class SetLayerOpacityAction(ActionBase):
@@ -360,6 +553,24 @@ class SetLayerOpacityAction(ActionBase):
     target_image_id: str
     layer: Literal["image", "annotations", "measurements", "gradcam"]
     opacity: int = Field(ge=0, le=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_layer(cls, data):
+        if not isinstance(data, dict):
+            return data
+        action = dict(data)
+        if isinstance(action.get("layer"), str):
+            action["layer"] = _LAYER_ALIASES.get(action["layer"].strip().lower(), action["layer"])
+        opacity = action.get("opacity")
+        if opacity is not None:
+            try:
+                value = float(opacity)
+            except (TypeError, ValueError):
+                return action
+            percent = value if value > 1.0 else value * 100
+            action["opacity"] = round(min(max(percent, 0.0), 100.0))
+        return action
 
 
 class GenerateReportAction(ActionBase):
@@ -375,6 +586,17 @@ class NotifyAction(ActionBase):
     type: Literal[ActionType.NOTIFY]
     level: Literal["info", "warning", "error"]
     message: str = Field(min_length=1, max_length=4_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_level(cls, data):
+        if not isinstance(data, dict) or not isinstance(data.get("level"), str):
+            return data
+        action = dict(data)
+        level = data["level"].strip().lower()
+        aliases = {"success": "info", "notice": "info", "critical": "error", "fatal": "error", "danger": "error"}
+        action["level"] = aliases.get(level, level)
+        return action
 
 
 WorkspaceAction = Annotated[Union[

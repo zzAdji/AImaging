@@ -69,7 +69,8 @@ const GROUPS: ToolDef[][] = [
 ];
 
 function ToolButton({ def }: { def: ToolDef }) {
-  const { tool, setTool } = useWorkspace();
+  const w = useWorkspace();
+  const { tool, setTool } = w;
   const active = tool === def.id;
   const Icon = def.icon;
   return (

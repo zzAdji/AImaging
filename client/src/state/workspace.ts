@@ -1,6 +1,7 @@
 import { createContext, useContext, type RefObject } from "react";
 import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
+import type { WorkspaceAnatomyResult } from "../lib/workspaceApi";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
@@ -524,6 +525,22 @@ export interface WorkspaceState {
   /** Server-computed Grad-CAM for the image currently loaded in the canvas. */
   gradcamResult: GradCamResult | null;
   setGradcamResult: (result: GradCamResult | null) => void;
+
+  /* ----------------------------- Segmentation anatomique ----------------------------- */
+  /** Résultat CXAS (masques 159 labels + CTR/SCD) de l'image active. */
+  anatomyResult: WorkspaceAnatomyResult | null;
+  anatomyLoading: boolean;
+  anatomyError: string | null;
+  /** Visibilité de la carte de segmentation dans la sidebar droite. */
+  anatomyCardOpen: boolean;
+  setAnatomyCardOpen: (open: boolean) => void;
+  /** Ouvre/ferme la carte ; relance l'analyse si aucune n'existe encore. */
+  toggleAnatomyCard: () => void;
+  /** Label (structure) actuellement illuminé sur le canvas principal. */
+  anatomySelected: string | null;
+  setAnatomySelected: (label: string | null) => void;
+  /** Lance la segmentation CXAS de l'image active (idempotent par lancement). */
+  runAnatomyAnalysis: (waitForImage?: boolean) => Promise<void>;
   /** Server-computed DeepScan3D reconstruction for the active image. */
   threeDResult: ThreeDResult | null;
   setThreeDResult: (result: ThreeDResult | null) => void;

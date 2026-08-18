@@ -37,7 +37,26 @@ class RadiographyServerConfig:
 @dataclass
 class GeminiConfig:
     api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
-    model_name: str = "gemini-3.7-flash"
+    model_name: str = "gemini-3.6-flash"
+
+
+@dataclass
+class CxasServerConfig:
+    """Analyse anatomique CXAS (segmentation 159 classes + CTR/SCD).
+
+    Surcharges par variables d'environnement ``CXAS_*``. Les poids sont
+    chargés à la première analyse (voir install_cxas.py dans
+    scripts/radiography/anatomy/).
+    """
+
+    model_name: str = os.environ.get("CXAS_MODEL_NAME", "UNet_ResNet50_default")
+    device: str = os.environ.get("CXAS_DEVICE", "cpu")
+    # Dossier racine des poids : cxas imbrique ``.cxas/weights`` dessous.
+    weights_path: str = os.environ.get("CXAS_PATH", str(Path.home() / ".cxas"))
+    features: Tuple[str, ...] = ("CTR", "SCD")
+    # Les masques de la réponse API sont bornés à ce côté (pixels) :
+    # pleine résolution inutile pour l'affichage, payload réduit.
+    mask_max_side: int = 512
 
 def validate_gemini_config(config: GeminiConfig) -> None:
     if not config.api_key:

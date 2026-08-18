@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Boxes, Crosshair, Cpu, History, Lightbulb, List, Map, Save, Settings2, Stethoscope, Trash2, X, Zap,
+  ArrowLeft, Boxes, Crosshair, Cpu, History, Lightbulb, List, Map, Save, Scan, Settings2, Stethoscope, Trash2, X, Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -610,6 +610,13 @@ export function AiSidebarLeft({
               active={w.gradcamOn}
               dataAttr="ai-tool-gradcam"
               onClick={toggleGradcam}
+            />
+            <RadioToolButton
+              label="Segmentation"
+              icon={Scan}
+              active={w.anatomyCardOpen}
+              dataAttr="ai-tool-anatomie"
+              onClick={() => w.toggleAnatomyCard()}
             />
           </div>
 

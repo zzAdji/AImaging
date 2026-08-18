@@ -66,6 +66,7 @@ import {
   generateRadiographyReport,
   parseExplicitCommand,
   runWorkspaceAgentTurn,
+  toAnatomyContext,
   type RadiographyPrediction,
 } from "./lib/workspaceApi";
 
@@ -172,6 +173,7 @@ function Shell({
   const [saveAsName, setSaveAsName] = useState("");
   const [imageIndex, setImageIndex] = useState(examCtx?.index ?? 0);
   const autoAnalysisStartedFor = useRef<string | null>(null);
+  const autoAnatomyStartedFor = useRef<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const exam = examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null;
@@ -513,11 +515,13 @@ function Shell({
         const requestTurn = async (captures: Record<string, string>) => {
           const manifest = buildWorkspaceManifest(synchronizedExam, current.id, captures);
           const session = await createWorkspaceExam(manifest);
+          const anatomy = w.anatomyResult ? { [current.id]: toAnatomyContext(w.anatomyResult) } : {};
           const turn = await runWorkspaceAgentTurn(
               session.workspace_id,
               text,
               predictions,
               { available: Object.keys(captures).length > 0, image_ids: Object.keys(captures) },
+              anatomy,
             );
           return {
             turn,
@@ -676,6 +680,19 @@ function Shell({
       });
     }, 0);
   }, [analyzeExamImages, exam, w]);
+
+  /* Segmentation anatomique automatique à l'ouverture de l'espace de travail,
+     au même moment que la classification : l'analyse attend que l'image soit
+     réellement chargée (waitForImage) puis s'exécute une fois par examen. */
+  useEffect(() => {
+    if (!exam || exam.images.length === 0) return;
+    if (autoAnatomyStartedFor.current === exam.id) return;
+    autoAnatomyStartedFor.current = exam.id;
+    void w.runAnatomyAnalysis(true).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Segmentation automatique impossible.";
+      w.recordAiAction(`Segmentation automatique : ${message}`);
+    });
+  }, [exam, w]);
 
   const switchImage = (i: number) => {
     if (!exam || i === imageIndex) return;
