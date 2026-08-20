@@ -432,6 +432,43 @@ export async function generateWorkspaceAnatomy(
   return { workspaceId: raw.workspace_id, imageId: raw.image_id, result: raw };
 }
 
+export interface AnatomyRegionPayload {
+  id: string;
+  label: string;
+  structures: string[];
+  reference: string;
+}
+
+export interface WorkspaceAnatomyRegionsRequest {
+  image_id: string;
+  canvas_data_url?: string | null;
+  anatomy: WorkspaceAnatomyContext;
+  regions: AnatomyRegionPayload[];
+}
+
+export interface WorkspaceAnatomyRegionsResponse {
+  region_texts: Record<string, string>;
+}
+
+/** Génère l'interprétation IA par région anatomique d'après l'image annotée et les données CXAS. */
+export function generateWorkspaceAnatomyRegions(
+  workspaceId: string,
+  imageId: string,
+  canvasDataUrl: string | null,
+  anatomy: WorkspaceAnatomyContext,
+  regions: AnatomyRegionPayload[],
+): Promise<WorkspaceAnatomyRegionsResponse> {
+  return request<WorkspaceAnatomyRegionsResponse>(`/workspace/exams/${workspaceId}/anatomy/regions`, {
+    method: "POST",
+    body: JSON.stringify({
+      image_id: imageId,
+      canvas_data_url: canvasDataUrl,
+      anatomy,
+      regions,
+    }),
+  });
+}
+
 /* --------------------------- Landmarks (HybridGNet) --------------------------- */
 
 export interface LandmarkMeasurement {

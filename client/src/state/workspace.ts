@@ -555,6 +555,12 @@ export interface WorkspaceState {
   setAnatomySelected: (label: string | null) => void;
   /** Lance la segmentation CXAS de l'image active (idempotent par lancement). */
   runAnatomyAnalysis: (waitForImage?: boolean) => Promise<boolean>;
+  /** Textes générés par l'IA Gemini pour chaque région anatomique (examen courant). */
+  anatomyRegionTexts: Record<string, string>;
+  anatomyRegionTextsLoading: boolean;
+  anatomyRegionTextsError: string | null;
+  /** Charge / regénère les interprétations IA par région pour l'image et l'analyse CXAS actives. */
+  loadAnatomyRegionTexts: () => Promise<void>;
 
   /* ----------------------------- Landmarks (HybridGNet) ----------------------------- */
   /** Résultat landmarks (contours poumons+cœur + CTR/diamètres/surfaces + incertitude). */

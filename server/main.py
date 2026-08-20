@@ -45,6 +45,7 @@ from agent_context import (  # noqa: E402
     compact_anatomy_context,
     conversation_context,
 )
+from region_anatomy_prompt import build_region_anatomy_prompt  # noqa: E402
 from workspace_commands import COMMAND_CATALOG, CommandError, CommandRequest, CommandResponse, parse_explicit_command  # noqa: E402
 from workspace_agent import AgentProposal, AgentTurnResponse, build_agent_turn, fallback_agent_turn  # noqa: E402
 from workspace_agent_prompt import WORKSPACE_AGENT_SYSTEM_INSTRUCTION  # noqa: E402
@@ -228,6 +229,30 @@ class WorkspaceAnatomyResponse(BaseModel):
     warnings: List[str] = []
     inference_time_ms: float | None = None
     generated_at: str
+
+
+class AnatomyRegionItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str
+    label: str
+    structures: list[str] = Field(default_factory=list)
+    reference: str = ""
+
+
+class WorkspaceAnatomyRegionsRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    image_id: str
+    canvas_data_url: str | None = None
+    anatomy: WorkspaceAnatomyContext
+    regions: list[AnatomyRegionItem]
+
+
+class WorkspaceAnatomyRegionsResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    region_texts: dict[str, str] = Field(default_factory=dict)
 
 
 class WorkspaceThreeDJobResponse(BaseModel):
@@ -1218,6 +1243,77 @@ async def run_workspace_agent_turn(
         "elapsed_ms": int((datetime.now(UTC) - turn_started_at).total_seconds() * 1000),
     })
     return turn
+
+
+@app.post("/workspace/exams/{workspace_id}/anatomy/regions", response_model=WorkspaceAnatomyRegionsResponse)
+async def generate_workspace_anatomy_regions(
+    workspace_id: str,
+    request: WorkspaceAnatomyRegionsRequest,
+) -> WorkspaceAnatomyRegionsResponse:
+    """Génère l'interprétation IA par région anatomique d'après l'image annotée et la segmentation CXAS."""
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+
+    fallback_offline = "Interprétation IA indisponible (service hors ligne)."
+    if registry.gemini_client is None:
+        return WorkspaceAnatomyRegionsResponse(
+            region_texts={region.id: fallback_offline for region in request.regions}
+        )
+
+    media_parts: list[genai_types.Part] = []
+    image_attached = False
+    if request.canvas_data_url:
+        decoded = _decode_canvas_data_url(request.canvas_data_url)
+        if decoded is not None:
+            mime_type, data = decoded
+            media_parts.append(genai_types.Part.from_text(
+                text=f"Capture canvas de l'image {request.image_id} (annotations, fenêtrage, zoom courants) — analyse chaque région sur cette image."
+            ))
+            media_parts.append(genai_types.Part.from_bytes(data=data, mime_type=mime_type))
+            image_attached = True
+        else:
+            logger.warning("Capture canvas invalide pour l'analyse des régions anatomiques de %s.", request.image_id)
+
+    prompt = build_region_anatomy_prompt(
+        image_id=request.image_id,
+        anatomy=request.anatomy,
+        regions=[r.model_dump() for r in request.regions],
+        image_attached=image_attached,
+    )
+
+    system_instruction = (
+        "Tu es un assistant radiologique expert. Tu décris, région par région, l'état d'une radiographie thoracique "
+        "à partir de l'image fournie et de la segmentation anatomique CXAS avec ses mesures. "
+        "Réponds impérativement au format JSON strict avec la clé 'region_texts' contenant le dictionnaire region_id -> texte."
+    )
+
+    try:
+        response_data = registry.gemini_client.generate_json_validated(
+            system_instruction=system_instruction,
+            prompt=prompt,
+            response_model=WorkspaceAnatomyRegionsResponse,
+            media_parts=media_parts if media_parts else None,
+        )
+        texts = dict(response_data.region_texts)
+        for region in request.regions:
+            if region.id not in texts or not texts[region.id]:
+                texts[region.id] = f"{region.label} : aspects normaux d'après les données CXAS."
+
+        workspace_store.record_audit(workspace_id, {
+            "at": datetime.now(UTC).isoformat(),
+            "endpoint": "/anatomy/regions",
+            "image_id": request.image_id,
+            "regions_count": len(request.regions),
+            "image_attached": image_attached,
+        })
+        return WorkspaceAnatomyRegionsResponse(region_texts=texts)
+    except Exception:
+        logger.exception("Échec de la génération des descriptions anatomiques par région pour l'image %s.", request.image_id)
+        return WorkspaceAnatomyRegionsResponse(
+            region_texts={region.id: f"{region.label} : Interprétation IA indisponible." for region in request.regions}
+        )
+
 
 @app.post("/radiography/predict")
 async def predict_radiography(image: UploadFile = File(...)) -> dict:

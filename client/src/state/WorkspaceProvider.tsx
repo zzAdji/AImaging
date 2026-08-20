@@ -37,9 +37,10 @@ import type { LinearImageBuffer } from "../lib/dicom";
 import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
-import { buildWorkspaceManifest } from "../lib/workspaceProtocol";
-import type { OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
-import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceLandmarks } from "../lib/workspaceApi";
+import { buildWorkspaceManifest, captureAnnotatedImage } from "../lib/workspaceProtocol";
+import type { AnatomyRegionPayload, OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
+import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, toAnatomyContext } from "../lib/workspaceApi";
+import { ANATOMY_REGIONS } from "../lib/anatomyMap";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -365,6 +366,11 @@ export function WorkspaceProvider({
   const [anatomyCardOpen, setAnatomyCardOpenState] = useState(false);
   const anatomyCardOpenRef = useRef(false);
   const [anatomySelected, setAnatomySelectedState] = useState<string | null>(null);
+  const [anatomyRegionTexts, setAnatomyRegionTextsState] = useState<Record<string, string>>({});
+  const anatomyRegionTextsRef = useRef<Record<string, string>>({});
+  const [anatomyRegionTextsLoading, setAnatomyRegionTextsLoading] = useState(false);
+  const anatomyRegionTextsLoadingRef = useRef(false);
+  const [anatomyRegionTextsError, setAnatomyRegionTextsError] = useState<string | null>(null);
 
   /* --------------------------- Landmarks (HybridGNet) --------------------------- */
   const [landmarkResult, setLandmarkResultState] = useState<WorkspaceLandmarksResult | null>(null);
@@ -496,6 +502,9 @@ export function WorkspaceProvider({
     setAnatomyResultState(null);
     setAnatomySelectedState(null);
     setAnatomyError(null);
+    anatomyRegionTextsRef.current = {};
+    setAnatomyRegionTextsState({});
+    setAnatomyRegionTextsError(null);
     landmarkResultRef.current = null;
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
@@ -539,6 +548,9 @@ export function WorkspaceProvider({
     setAnatomyResultState(null);
     setAnatomySelectedState(null);
     setAnatomyError(null);
+    anatomyRegionTextsRef.current = {};
+    setAnatomyRegionTextsState({});
+    setAnatomyRegionTextsError(null);
     landmarkResultRef.current = null;
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
@@ -829,6 +841,77 @@ export function WorkspaceProvider({
     setAnatomySelectedState(label);
   }, []);
 
+  const loadAnatomyRegionTexts = useCallback(async (): Promise<void> => {
+    const imageIdValue = imageIdRef.current;
+    const imageSrcValue = imageSrcRef.current;
+    const anatomyRes = anatomyResultRef.current;
+    if (!imageIdValue || !imageSrcValue || !anatomyRes || anatomyRes.status !== "ok") {
+      return;
+    }
+    if (anatomyRegionTextsLoadingRef.current) return;
+    anatomyRegionTextsLoadingRef.current = true;
+    setAnatomyRegionTextsLoading(true);
+    setAnatomyRegionTextsError(null);
+    try {
+      const metadata = imageMetadataRef.current;
+      const image: ExamImage = {
+        id: imageIdValue,
+        name: imageNameRef.current || "Image",
+        src: imageSrcValue,
+        dims: dimsRef.current,
+        sourceKind: metadata?.modality ? "dicom" : "browser-image",
+        metadata: metadata ?? undefined,
+        state: {
+          src: imageSrcValue,
+          shapes: shapesRef.current,
+          wl: wlRef.current,
+          brightness: brightnessRef.current,
+          contrast: contrastRef.current,
+          inverted: invertedRef.current,
+          rotation: rotationRef.current,
+          flipH: flipHRef.current,
+          flipV: flipVRef.current,
+        },
+      };
+      const exam: Examination = {
+        id: `anatomy-regions-${imageIdValue}`,
+        name: "Analyse anatomique régions",
+        modality: metadata?.modality ?? "image",
+        images: [image],
+        createdAt: new Date().toISOString(),
+        lastOpenedAt: new Date().toISOString(),
+        archived: false,
+      };
+      const manifest = buildWorkspaceManifest(exam, image.id, {});
+      const session = await createWorkspaceExam(manifest);
+      const canvasDataUrl = await captureAnnotatedImage(image).catch(() => null);
+      const anatomyCtx = toAnatomyContext(anatomyRes);
+      const regionsPayload: AnatomyRegionPayload[] = ANATOMY_REGIONS.map((r) => ({
+        id: r.id,
+        label: r.label,
+        structures: r.structures,
+        reference: r.reference,
+      }));
+      const response = await generateWorkspaceAnatomyRegions(
+        session.workspace_id,
+        imageIdValue,
+        canvasDataUrl,
+        anatomyCtx,
+        regionsPayload,
+      );
+      if (imageIdRef.current !== imageIdValue) return;
+      anatomyRegionTextsRef.current = response.region_texts;
+      setAnatomyRegionTextsState(response.region_texts);
+    } catch (exc) {
+      if (imageIdRef.current !== imageIdValue) return;
+      const message = exc instanceof Error ? exc.message : "Interprétation IA des régions indisponible.";
+      setAnatomyRegionTextsError(message);
+    } finally {
+      anatomyRegionTextsLoadingRef.current = false;
+      setAnatomyRegionTextsLoading(false);
+    }
+  }, []);
+
   const runAnatomyAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
     /* Ouverture d'un espace de travail : l'image peut ne pas être encore
        prête (elle est chargée juste après). On patiente un peu avant
@@ -879,6 +962,9 @@ export function WorkspaceProvider({
       if (imageIdRef.current !== imageIdValue) return false;
       anatomyResultRef.current = response.result;
       setAnatomyResultState(response.result);
+      if (response.result.status === "ok") {
+        void loadAnatomyRegionTexts();
+      }
       recordAiAction(
         `Segmentation anatomique : ${response.result.segmentation.label_ids_available.length} structures détectées, ` +
           `CTR=${response.result.measurements["Cardio-Thoracic Ratio"]?.available ? "oui" : "n.d."}, ` +
@@ -894,7 +980,7 @@ export function WorkspaceProvider({
       anatomyLoadingRef.current = false;
       setAnatomyLoading(false);
     }
-  }, [recordAiAction]);
+  }, [loadAnatomyRegionTexts, recordAiAction]);
 
   const toggleAnatomyCard = useCallback(() => {
     const next = !anatomyCardOpenRef.current;
@@ -1661,6 +1747,10 @@ const closeDocument = useCallback(() => {
       anatomySelected,
       setAnatomySelected,
       runAnatomyAnalysis,
+      anatomyRegionTexts,
+      anatomyRegionTextsLoading,
+      anatomyRegionTextsError,
+      loadAnatomyRegionTexts,
       landmarkResult,
       landmarkLoading,
       landmarkError,
@@ -1669,7 +1759,7 @@ const closeDocument = useCallback(() => {
       toggleLandmarksCard,
       landmarksSelected,
       setLandmarksSelected,
-runLandmarksAnalysis,
+      runLandmarksAnalysis,
       placeLandmarkMeasurements,
       removeLandmarkMeasurements,
       cxrResult,
@@ -1767,6 +1857,7 @@ imageSrc,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
       gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, threeDResult, setThreeDResult, threeDOn, setThreeDOn, threeDRunning, setThreeDRunning, threeDProgress, setThreeDProgress, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       anatomyResult, anatomyLoading, anatomyError, anatomyCardOpen, setAnatomyCardOpen, toggleAnatomyCard, anatomySelected, setAnatomySelected, runAnatomyAnalysis, cxrResult, setCxrResult,
+      anatomyRegionTexts, anatomyRegionTextsLoading, anatomyRegionTextsError, loadAnatomyRegionTexts,
       landmarkResult, landmarkLoading, landmarkError, landmarkCardOpen, setLandmarkCardOpen, toggleLandmarksCard, landmarksSelected, setLandmarksSelected, runLandmarksAnalysis,
       placeLandmarkMeasurements, removeLandmarkMeasurements,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
