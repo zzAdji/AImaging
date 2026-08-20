@@ -18,6 +18,7 @@ import { ExamsScreen } from "./components/ExamsScreen";
 import { LeftToolbar } from "./components/LeftToolbar";
 import { LoginScreen } from "./components/LoginScreen";
 import { MobileShell } from "./components/MobileShell";
+import { ToastHost } from "./components/Toasts";
 import { RightPanel } from "./components/RightPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
@@ -66,7 +67,10 @@ import {
   generateRadiographyReport,
   parseExplicitCommand,
   runWorkspaceAgentTurn,
+  sortWorkspaceImageOpenCxr,
+  standardizeWorkspaceImageOpenCxr,
   toAnatomyContext,
+  type OpenCxrImageResult,
   type RadiographyPrediction,
 } from "./lib/workspaceApi";
 
@@ -147,6 +151,7 @@ function Shell({
   onSavePredictions,
   onSaveGradcams,
   onSaveThreeD,
+  onSaveOpenCxr,
 }: {
   examCtx: { examId: string; index: number } | null;
   exams: Examination[];
@@ -156,6 +161,7 @@ function Shell({
   onSavePredictions: (examId: string, predictions: Record<string, RadiographyPrediction>) => void;
   onSaveGradcams: (examId: string, gradcams: Record<string, GradCamResult>) => void;
   onSaveThreeD: (examId: string, results: Record<string, ThreeDResult>) => void;
+  onSaveOpenCxr: (examId: string, records: Record<string, OpenCxrImageResult>) => void;
 }) {
   const w = useWorkspace();
   const { aiMode, splitOn, setSplitOn } = w;
@@ -174,7 +180,20 @@ function Shell({
   const [imageIndex, setImageIndex] = useState(examCtx?.index ?? 0);
   const autoAnalysisStartedFor = useRef<string | null>(null);
   const autoAnatomyStartedFor = useRef<string | null>(null);
+  const autoOpenCxrStartedFor = useRef<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  /* Pipeline de préparation de l'espace de travail : alimente l'overlay noir
+     plein écran (stepper « Chargement → Classification → Standardisation »)
+     pendant l'analyse automatique opencxr à l'ouverture d'un examen.
+     `rejected` = une image a été rejetée par le tri (Type notCXR) et reste
+     affichée jusqu'à l'action de l'utilisateur. */
+  const [cxrPipeline, setCxrPipeline] = useState<{
+    phase: "loading" | "classifying" | "standardizing" | "ready" | "rejected";
+    completed: number;
+    total: number;
+    message?: string;
+  } | null>(null);
 
   const exam = examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null;
 
@@ -229,6 +248,19 @@ function Shell({
     const timer = window.setTimeout(() => setAnalysisProgress(null), 350);
     return () => window.clearTimeout(timer);
   }, [analysisProgress]);
+
+  /* Fin du pipeline : l'overlay noir montre brièvement « Prêt » puis disparaît. */
+  useEffect(() => {
+    if (cxrPipeline?.phase !== "ready") return;
+    const timer = window.setTimeout(() => setCxrPipeline(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [cxrPipeline]);
+
+  /* Réinitialisation du pipeline à la sortie de l'espace de travail :
+     ajustement d'état pendant le rendu (pas d'effet), comme recommandé. */
+  if (!exam && cxrPipeline) {
+    setCxrPipeline(null);
+  }
 
   const transactionStack = useRef<
     Array<{
@@ -662,6 +694,9 @@ function Shell({
     w.setThreeDResult(img.threeD ?? null);
     // Vue 3D désactivée tant que la reconstruction n'est pas au point.
     w.setThreeDOn(THREE_D_FEATURE_ENABLED && Boolean(img.threeD));
+    w.setCxrResult(
+      img.cxrSort ? { sort: img.cxrSort, standardize: img.cxrStandardize ?? null, rejected: img.cxrRejected } : null,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examCtx?.examId, imageIndex]);
 
@@ -693,6 +728,88 @@ function Shell({
       w.recordAiAction(`Segmentation automatique : ${message}`);
     });
   }, [exam, w]);
+
+  /* Tri + standardisation opencxr automatiques à l'ouverture de l'espace de
+     travail, au même moment que la classification. Le tri peut rejeter une
+     image (Type = notCXR) : la standardisation est alors sautée, un toast
+     d'erreur est affiché et l'overlay de chargement passe en « rejeté »
+     (bloquant jusqu'à validation de l'utilisateur). */
+  useEffect(() => {
+    if (!exam || exam.images.length === 0) return;
+    if (autoOpenCxrStartedFor.current === exam.id) return;
+    autoOpenCxrStartedFor.current = exam.id;
+    const compatible = exam.images.filter(isRadiographyCompatible);
+    const pending = compatible.filter((image) => !image.cxrSort || !image.cxrStandardize);
+    if (pending.length === 0) return;
+    void (async () => {
+      try {
+        const manifest = buildWorkspaceManifest(exam, compatible[0].id);
+        const session = await createWorkspaceExam(manifest);
+        const records: Record<string, OpenCxrImageResult> = {};
+        compatible.forEach((image) => {
+          if (image.cxrSort) {
+            records[image.id] = {
+              sort: image.cxrSort,
+              standardize: image.cxrStandardize ?? null,
+              rejected: image.cxrRejected,
+            };
+          }
+        });
+        const warnings: string[] = [];
+        let rejectedCount = 0;
+        let sortCount = 0;
+        let standardizeCount = 0;
+        const total = pending.length;
+        setCxrPipeline({ phase: "loading", completed: 0, total });
+        await Promise.all(pending.map(async (image) => {
+          try {
+            const sort = image.cxrSort ?? (await sortWorkspaceImageOpenCxr(session.workspace_id, image));
+            sortCount += 1;
+            if (sort.Type === "notCXR") {
+              rejectedCount += 1;
+              const reason =
+                `« ${image.name} » n'a pas été reconnue comme une radiographie frontale (PA/AP/latérale) — ` +
+                `confiance CXR ${Math.round((sort.Type_Probs_PA_AP_lateral_notCXR[3] ?? 0) * 100)} %.`;
+              records[image.id] = { sort, standardize: null, rejected: { reason, at: Date.now() } };
+              warnings.push(reason);
+              return;
+            }
+            setCxrPipeline({ phase: "classifying", completed: sortCount, total });
+            const standardize = image.cxrStandardize ?? (await standardizeWorkspaceImageOpenCxr(session.workspace_id, image));
+            standardizeCount += 1;
+            records[image.id] = { sort, standardize };
+            setCxrPipeline({ phase: "standardizing", completed: standardizeCount, total });
+          } catch (error) {
+            warnings.push(error instanceof Error ? error.message : `Tri opencxr impossible pour '${image.name}'.`);
+          }
+        }));
+        if (Object.keys(records).length > 0) {
+          onSaveOpenCxr(exam.id, records);
+          const activeImageId = w.imageIdRef.current;
+          if (activeImageId && records[activeImageId]) w.setCxrResult(records[activeImageId]);
+        }
+        const done = Object.keys(records).length;
+        if (rejectedCount > 0) {
+          w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
+          w.notify("Image rejetée par le tri opencxr", "error", warnings.join("\n"));
+          setCxrPipeline({ phase: "rejected", completed: done, total, message: warnings.join("\n") });
+        } else if (done > 0) {
+          w.recordAiAction(`OpenCXR : ${done} image(s) triée(s) et normalisée(s) automatiquement.`);
+          w.notify("Analyse opencxr terminée", "success", `${done} image(s) triée(s) et standardisée(s).`);
+          setCxrPipeline({ phase: "ready", completed: done, total });
+        } else if (warnings.length > 0) {
+          w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
+          w.notify("Tri opencxr impossible", "warning", warnings.join("\n"));
+          setCxrPipeline(null);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Tri opencxr automatique impossible.";
+        w.recordAiAction(`Tri automatique opencxr : ${message}`);
+        w.notify("Tri opencxr impossible", "error", message);
+        setCxrPipeline(null);
+      }
+    })();
+  }, [exam, onSaveOpenCxr, w]);
 
   const switchImage = (i: number) => {
     if (!exam || i === imageIndex) return;
@@ -998,7 +1115,7 @@ const doExport = async () => {
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-bg font-sans text-ink">
-      {analysisProgress && (
+      {analysisProgress && !cxrPipeline && (
         <div data-attr="exam-analysis-loader" className="absolute inset-0 z-[200] flex items-center justify-center bg-black/45 backdrop-blur-sm">
           <div className="w-[min(420px,calc(100vw-48px))] rounded-2xl border border-border bg-panel p-5 shadow-2xl shadow-black/50">
             <p className="text-[13px] font-semibold text-ink">Analyse de l'examen</p>
@@ -1009,6 +1126,98 @@ const doExport = async () => {
               </div>
             </div>
             <p className="mt-2 text-right text-[11px] tabular-nums text-ink-3">{analysisProgress.completed} / {analysisProgress.total} image(s)</p>
+          </div>
+        </div>
+      )}
+      {cxrPipeline && (
+        <div data-attr="exam-loading-overlay" className="absolute inset-0 z-[210] flex items-center justify-center bg-black">
+          <div className="w-[min(400px,calc(100vw-48px))] text-center">
+            <img src="/logo_dark_transparent.png" alt="AImaging" className="app-logo mx-auto h-10 w-auto animate-pulse-soft" />
+            <h2 className="mt-7 text-[14px] font-semibold text-ink">
+              {cxrPipeline.phase === "rejected" ? "Image rejetée par le tri opencxr" : "Préparation de la radiographie"}
+            </h2>
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-3">
+              {cxrPipeline.phase === "rejected"
+                ? "La standardisation n'a pas été lancée pour cette image."
+                : cxrPipeline.phase === "loading"
+                  ? "Chargement de l'image en cours…"
+                  : "Analyse automatique par l'ensemble radiographique — patientez quelques secondes."}
+            </p>
+            {["Chargement", "Classification", "Standardisation", "Prêt"].map((label, step) => {
+              const order = cxrPipeline.phase === "ready"
+                ? 3
+                : cxrPipeline.phase === "rejected"
+                  ? 1
+                  : cxrPipeline.phase === "loading"
+                    ? 0
+                    : cxrPipeline.phase === "classifying"
+                      ? 1
+                      : 2;
+              const done = step < order;
+              const active = step === order && cxrPipeline.phase !== "ready";
+              const failed = cxrPipeline.phase === "rejected" && step === 1;
+              return (
+                <div key={label} className="inline-flex w-[25%] flex-col items-center gap-1.5 align-top">
+                  <span
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors duration-200",
+                      done || cxrPipeline.phase === "ready"
+                        ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
+                        : failed
+                          ? "border-red-500/60 bg-red-500/15 text-red-400"
+                          : active
+                            ? "border-accent/60 bg-accent/15 text-accent animate-pulse-soft"
+                            : "border-border bg-btn text-ink-3",
+                    )}
+                  >
+                    {done || cxrPipeline.phase === "ready" ? "✓" : failed ? "✕" : step + 1}
+                  </span>
+                  <span className={cn("text-[10px] font-medium", active || failed ? "text-ink" : "text-ink-3")}>
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
+            {(cxrPipeline.phase === "rejected") && (
+              <>
+                <p className="mt-5 whitespace-pre-line rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-left text-[11.5px] leading-relaxed text-red-200">
+                  {cxrPipeline.message}
+                </p>
+                <button
+                  type="button"
+                  data-attr="exam-loading-dismiss"
+                  onClick={() => setCxrPipeline(null)}
+                  className="mt-5 rounded-lg border border-border bg-btn px-4 py-2 text-[12px] font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
+                >
+                  Voir l'image
+                </button>
+              </>
+            )}
+            {cxrPipeline.phase === "ready" && (
+              <p className="mt-5 text-[12.5px] font-semibold text-emerald-400 animate-pulse-soft">Prêt — affichage de l'image…</p>
+            )}
+            {(cxrPipeline.phase === "classifying" || cxrPipeline.phase === "standardizing") && (
+              <>
+                <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-hover">
+                  <div
+                    className="relative h-full overflow-hidden rounded-full bg-gradient-to-r from-accent to-accent-2 transition-[width] duration-500 ease-out"
+                    style={{ width: `${Math.max(8, (cxrPipeline.completed / Math.max(1, cxrPipeline.total)) * 100)}%` }}
+                  >
+                    <span className="absolute inset-0 aim-progress-shimmer bg-[linear-gradient(100deg,transparent_25%,rgba(255,255,255,0.4)_50%,transparent_75%)]" />
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] tabular-nums text-ink-3">
+                  {cxrPipeline.phase === "classifying"
+                    ? `Classification : ${Math.min(cxrPipeline.completed, cxrPipeline.total)} / ${cxrPipeline.total} image(s)`
+                    : `Standardisation : ${Math.min(cxrPipeline.completed, cxrPipeline.total)} / ${cxrPipeline.total} image(s)`}
+                </p>
+              </>
+            )}
+            {cxrPipeline.phase === "loading" && (
+              <div className="mx-auto mt-6 h-1.5 w-40 overflow-hidden rounded-full bg-hover">
+                <div className="aim-indeterminate-bar relative h-full w-1/2 rounded-full bg-gradient-to-r from-accent to-accent-2" />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1533,10 +1742,23 @@ export default function App() {
     }));
   }, [mutateExams]);
 
+  const saveOpenCxr = useCallback((examId: string, records: Record<string, OpenCxrImageResult>) => {
+    mutateExams((list) => list.map((exam) => exam.id !== examId ? exam : {
+      ...exam,
+      images: exam.images.map((image) => records[image.id] ? {
+        ...image,
+        cxrSort: records[image.id].sort,
+        cxrStandardize: records[image.id].standardize ?? undefined,
+        cxrRejected: records[image.id].rejected,
+      } : image),
+    }));
+  }, [mutateExams]);
+
   const autoRestore = page === "editor" && examCtx === null;
 
   return (
     <WorkspaceProvider autoRestore={autoRestore}>
+      <ToastHost />
       {page === "login" && (
         <LoginScreen
           initialEmail={session?.email}
@@ -1592,6 +1814,7 @@ export default function App() {
             onSavePredictions={savePredictions}
             onSaveGradcams={saveGradcams}
             onSaveThreeD={saveThreeD}
+            onSaveOpenCxr={saveOpenCxr}
           />
         ))}
     </WorkspaceProvider>

@@ -559,7 +559,7 @@ function LinearCanvas({
       ref={canvasRef}
       width={buffer.width}
       height={buffer.height}
-      className="block h-full w-full select-none"
+      className="absolute inset-0 h-full w-full select-none"
       style={{ transform, transformOrigin: "50% 50%" }}
     />
   );

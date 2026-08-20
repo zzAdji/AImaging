@@ -431,3 +431,213 @@ export async function generateWorkspaceAnatomy(
   const raw = await response.json() as WorkspaceAnatomyWire;
   return { workspaceId: raw.workspace_id, imageId: raw.image_id, result: raw };
 }
+
+/* --------------------------- Landmarks (HybridGNet) --------------------------- */
+
+export interface LandmarkMeasurement {
+  value: number;
+  std: number;
+  unit: "ratio" | "mm" | "px" | "mm²" | "px²";
+}
+
+export interface LandmarkContour {
+  x: number[];
+  y: number[];
+  /** Incertitude moyenne par nœud (px, grille 1024). */
+  std: number[];
+}
+
+export interface LandmarkCustomMeasure {
+  label: string;
+  value: number;
+  std: number;
+  unit: string;
+}
+
+/** Segment de mesure à poser sur l'image (grille 1024 du modèle). */
+export interface LandmarkLine {
+  key: string;
+  label: string;
+  value: number;
+  unit: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface WorkspaceLandmarksResult {
+  status: "ok" | "error";
+  error: string | null;
+  contours: {
+    right_lung: LandmarkContour;
+    left_lung: LandmarkContour;
+    heart: LandmarkContour;
+  };
+  measurements: {
+    ctr: LandmarkMeasurement;
+    heart_transverse_diameter: LandmarkMeasurement;
+    thorax_transverse_diameter: LandmarkMeasurement;
+    right_lung_surface: LandmarkMeasurement;
+    left_lung_surface: LandmarkMeasurement;
+    heart_surface: LandmarkMeasurement;
+  };
+  custom: LandmarkCustomMeasure[];
+  warnings: string[];
+  uncertainty: { max_node_std_px: number; mean_node_std_px: number };
+  scale_used: "mm" | "pixels";
+  ctr_method: string;
+  /** Segments (diamètres…) posables sur le canvas, en coordonnées de grille 1024. */
+  lines: LandmarkLine[];
+  inference_time_ms: number | null;
+  generated_at: string;
+}
+
+export interface WorkspaceLandmarksResponse {
+  workspaceId: string;
+  imageId: string;
+  result: WorkspaceLandmarksResult;
+}
+
+interface WorkspaceLandmarksWire {
+  workspace_id: string;
+  image_id: string;
+  status: "ok" | "error";
+  error: string | null;
+  contours: WorkspaceLandmarksResult["contours"];
+  measurements: WorkspaceLandmarksResult["measurements"];
+  custom: LandmarkCustomMeasure[];
+  warnings: string[];
+  uncertainty: { max_node_std_px: number; mean_node_std_px: number };
+  scale_used: "mm" | "pixels";
+  ctr_method: string;
+  lines: LandmarkLine[];
+  inference_time_ms: number | null;
+  generated_at: string;
+}
+
+/** Traque les contours poumons + cœur (HybridGNet) et mesure CTR/diamètres/surfaces. */
+export async function generateWorkspaceLandmarks(
+  workspaceId: string,
+  image: ExamImage,
+  options?: { customMeasures?: Array<{ label: string; a: number; b: number } | { label: string; nodes: number[] }> },
+): Promise<WorkspaceLandmarksResponse> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), image.name || `${image.id}.png`);
+  if (image.metadata?.pixelSpacingMm) {
+    body.append("pixel_spacing_mm", image.metadata.pixelSpacingMm.join(","));
+  }
+  if (options?.customMeasures) {
+    body.append("custom_measures", JSON.stringify(options.customMeasures));
+  }
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/landmarks`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  const raw = await response.json() as WorkspaceLandmarksWire;
+  return { workspaceId: raw.workspace_id, imageId: raw.image_id, result: raw };
+}
+
+/* --------------------------- OpenCXR (tri + normalisation) --------------------------- */
+
+/** Classifications de l'Image Sorter opencxr pour une radio. */
+export interface OpenCxrSortResult {
+  Type: "PA" | "AP" | "lateral" | "notCXR";
+  Rotation: "0" | "90" | "180" | "270";
+  Inversion: "No" | "Yes";
+  Lateral_Flip: "No" | "Yes";
+  Type_Probs_PA_AP_lateral_notCXR: number[];
+  Rotation_Probs_0_90_180_270: number[];
+  Inversion_Probs_No_Yes: number[];
+  Lateral_Flip_Probs_No_Yes: number[];
+  inference_time_ms: number;
+}
+
+/** Image standardisée par opencxr (intensités normalisées, crop poumons, resize carré). */
+export interface OpenCxrStandardizeResult {
+  image_data_url: string;
+  width: number;
+  height: number;
+  /** Opérations appliquées par opencxr (crop/resize/pad), ex. [["sc_crop_with_params", ...], ...]. */
+  size_changes: unknown[];
+  inference_time_ms: number;
+}
+
+/** Rejet d'une image par le tri opencxr (Type = notCXR) : standardisation non lancée. */
+export interface OpenCxrRejection {
+  reason: string;
+  at: number;
+}
+
+/** Résultats opencxr cumulés d'une image (tri + normalisation) ; standardize est absent si l'image a été rejetée. */
+export interface OpenCxrImageResult {
+  sort: OpenCxrSortResult;
+  standardize: OpenCxrStandardizeResult | null;
+  rejected?: OpenCxrRejection;
+}
+
+interface OpenCxrSortWire {
+  workspace_id: string;
+  image_id: string;
+  result: OpenCxrSortResult;
+  generated_at: string;
+}
+
+interface OpenCxrStandardizeWire {
+  workspace_id: string;
+  image_id: string;
+  image_data_url: string;
+  width: number;
+  height: number;
+  size_changes: unknown[];
+  inference_time_ms: number;
+  generated_at: string;
+}
+
+/**
+ * Nom de fichier envoyé au microservice opencxr. Le blob est toujours le PNG
+ * rendu de l'image (image.src), quel que soit le type source : l'extension
+ * `.png` est donc forcée pour que read_file() du microservice la décode bien.
+ */
+function openCxrImageFilename(image: ExamImage): string {
+  return `${image.id}.png`;
+}
+
+/** Classifie une radio (Frontal PA / AP / Lateral / notCXR) via le microservice opencxr. */
+export async function sortWorkspaceImageOpenCxr(
+  workspaceId: string,
+  image: ExamImage,
+): Promise<OpenCxrSortResult> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), openCxrImageFilename(image));
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/opencxr/sort`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  const raw = await response.json() as OpenCxrSortWire;
+  return raw.result;
+}
+
+/** Normalise une radio frontale via le microservice opencxr (PNG + changements de taille). */
+export async function standardizeWorkspaceImageOpenCxr(
+  workspaceId: string,
+  image: ExamImage,
+  options?: { doCropToLungBox?: boolean; finalSquareSize?: number },
+): Promise<OpenCxrStandardizeResult> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), openCxrImageFilename(image));
+  if (image.metadata?.pixelSpacingMm) {
+    body.append("pixel_spacing_mm", image.metadata.pixelSpacingMm.join(","));
+  }
+  body.append("do_crop_to_lung_box", options?.doCropToLungBox === false ? "false" : "true");
+  body.append("final_square_size", String(options?.finalSquareSize ?? 1024));
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/opencxr/standardize`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  const raw = await response.json() as OpenCxrStandardizeWire;
+  return {
+    image_data_url: raw.image_data_url,
+    width: raw.width,
+    height: raw.height,
+    size_changes: raw.size_changes,
+    inference_time_ms: raw.inference_time_ms,
+  };
+}

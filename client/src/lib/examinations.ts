@@ -1,5 +1,5 @@
 import type { PixelSpacingMm, Shape, WlValue } from "../state/workspace";
-import type { RadiographyPrediction } from "./workspaceApi";
+import type { OpenCxrRejection, OpenCxrSortResult, OpenCxrStandardizeResult, RadiographyPrediction } from "./workspaceApi";
 import type { LinearImageBuffer } from "./dicom";
 import { isDicomFile, parseDicomFile } from "./dicom";
 
@@ -55,6 +55,10 @@ export interface ExamImage {
   /** Pixels rescalees pour le fenêtrage natif (seulement pour les DICOM monochromes). */
   linear?: LinearImageBuffer;
   prediction?: RadiographyPrediction;
+  cxrSort?: OpenCxrSortResult;
+  cxrStandardize?: OpenCxrStandardizeResult;
+  /** Rejet par le tri opencxr (image non frontale) : la standardisation n'a pas été lancée. */
+  cxrRejected?: OpenCxrRejection;
   gradcam?: GradCamResult;
   threeD?: ThreeDResult;
   state?: ExamImageState;

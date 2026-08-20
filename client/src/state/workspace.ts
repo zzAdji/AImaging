@@ -1,7 +1,7 @@
 import { createContext, useContext, type RefObject } from "react";
 import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
-import type { WorkspaceAnatomyResult } from "../lib/workspaceApi";
+import type { OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult } from "../lib/workspaceApi";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
@@ -31,6 +31,7 @@ export type SectionId =
   | "document"
   | "image"
   | "aianalysis"
+  | "opencxr"
   | "gradcam"
   | "measurements"
   | "annotations"
@@ -38,6 +39,19 @@ export type SectionId =
   | "metadata";
 
 export type AnalysisState = "idle" | "running" | "done";
+
+/* ------------------------------ Notifications ------------------------------ */
+
+export type NotificationKind = "info" | "success" | "warning" | "error";
+
+/** Notification transitoire affichée en toast (en haut à droite, auto-dismiss). */
+export interface AppNotification {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  message?: string;
+  at: number;
+}
 
 export interface Viewport {
   s: number;
@@ -540,7 +554,32 @@ export interface WorkspaceState {
   anatomySelected: string | null;
   setAnatomySelected: (label: string | null) => void;
   /** Lance la segmentation CXAS de l'image active (idempotent par lancement). */
-  runAnatomyAnalysis: (waitForImage?: boolean) => Promise<void>;
+  runAnatomyAnalysis: (waitForImage?: boolean) => Promise<boolean>;
+
+  /* ----------------------------- Landmarks (HybridGNet) ----------------------------- */
+  /** Résultat landmarks (contours poumons+cœur + CTR/diamètres/surfaces + incertitude). */
+  landmarkResult: WorkspaceLandmarksResult | null;
+  landmarkLoading: boolean;
+  landmarkError: string | null;
+  /** Visibilité de la carte de mesures landmarks dans la sidebar droite. */
+  landmarkCardOpen: boolean;
+  setLandmarkCardOpen: (open: boolean) => void;
+  /** Ouvre/ferme la carte ; relance l'analyse si aucune n'existe encore. */
+  toggleLandmarksCard: () => void;
+  /** Organe (right_lung | left_lung | heart) illuminé sur le canvas principal. */
+  landmarksSelected: string | null;
+  setLandmarksSelected: (organ: string | null) => void;
+  /** Lance la traque des landmarks + mesures de l'image active. */
+  runLandmarksAnalysis: (waitForImage?: boolean) => Promise<boolean>;
+  /** Pose les droites de mesure (diamètres + étiquette CTR) sur le canvas. */
+  placeLandmarkMeasurements: () => void;
+  /** Retire les mesures landmarks posées automatiquement. */
+  removeLandmarkMeasurements: () => void;
+
+  /* ----------------------------- OpenCXR (tri + normalisation) ----------------------------- */
+  /** Résultats opencxr (sorter + image standardisée) de l'image active. */
+  cxrResult: OpenCxrImageResult | null;
+  setCxrResult: (result: OpenCxrImageResult | null) => void;
   /** Server-computed DeepScan3D reconstruction for the active image. */
   threeDResult: ThreeDResult | null;
   setThreeDResult: (result: ThreeDResult | null) => void;
@@ -603,6 +642,14 @@ export interface WorkspaceState {
   setAiCommandResolver: (resolver: AiCommandResolver | null) => void;
   /** Applies a server-validated action plan as one undoable canvas transaction. */
   executeAiActionPlan: (plan: AiActionPlan) => AiActionExecutionResult;
+
+  /* --------------------------------- Notifications --------------------------------- */
+  /** Notifications transitoires affichées en toasts. */
+  notifications: AppNotification[];
+  /** Affiche un toast (info/success/warning/error) ; auto-dismiss après quelques secondes. */
+  notify: (title: string, kind?: NotificationKind, message?: string) => void;
+  /** Ferme manuellement une notification. */
+  dismissNotification: (id: string) => void;
   /** Registers the shell's whole-exam multi-image undo (Ctrl+Z / bouton). */
   setAiTransactionUndo: (fn: (() => boolean) | null) => void;
   /** Undoes the last multi-image AI transaction across all touched images. */

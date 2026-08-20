@@ -6,6 +6,7 @@ import { useWorkspace, type AiDiagnosis } from "../../state/workspace";
 import { ProgressBar } from "../ui";
 import { AnatomyMapCard } from "./AnatomyMap";
 import { AnatomySegmentationCard } from "./AnatomySegmentation";
+import { LandmarksMeasurementsCard } from "./LandmarksMeasurements";
 function Card({
   title,
   icon: Icon,
@@ -113,6 +114,9 @@ export function AiSidebarRight({ variant = "static" }: { variant?: "static" | "d
       <div className="min-h-0 flex-1 overflow-y-auto pb-4">
       {/* Segmentation anatomique — visible uniquement quand l'outil radio est actif */}
       {w.anatomyCardOpen && <AnatomySegmentationCard />}
+
+      {/* Mesures landmarks (HybridGNet) — contours poumons+cœur + CTR/diamètres/surfaces */}
+      {w.landmarkCardOpen && <LandmarksMeasurementsCard />}
 
       {/* Carte anatomique — mini-carte de l'organe avec la Sonde */}
       <AnatomyMapCard />

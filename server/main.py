@@ -59,6 +59,15 @@ from three_d_service import (  # noqa: E402
     start_reconstruction,
 )
 from dicom_service import DicomImportError, parse_dicom_bytes  # noqa: E402
+from sorter_service import (  # noqa: E402
+    OpenCxrUnavailableError,
+    active_url as get_opencxr_active_url,
+    is_available as opencxr_available,
+    probe_remote_backend as probe_opencxr_backend,
+    set_remote_url as set_opencxr_remote_url,
+    sort_image as opencxr_sort_image,
+    standardize_image as opencxr_standardize_image,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("server.main")
@@ -238,6 +247,23 @@ class WorkspaceThreeDStatusResponse(BaseModel):
     error: str | None = None
 
 
+class WorkspaceLandmarksResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    status: str = "ok"  # ok | error
+    error: str | None = None
+    contours: dict = {}
+    measurements: dict = {}
+    custom: list = []
+    warnings: List[str] = []
+    uncertainty: dict = {}
+    scale_used: str = "pixels"
+    ctr_method: str = ""
+    lines: list = []
+    inference_time_ms: float | None = None
+    generated_at: str
+
+
 class ThreeDBackendInfo(BaseModel):
     mode: str = "local"  # local | remote
     remote_url: str | None = None
@@ -247,6 +273,36 @@ class ThreeDBackendInfo(BaseModel):
 
 class ThreeDBackendUpdate(BaseModel):
     remote_url: str = ""
+
+
+class OpenCxrBackendInfo(BaseModel):
+    mode: str = "local"  # local = désactivé, remote = microservice opencxr
+    remote_url: str | None = None
+    reachable: bool | None = None
+    backend: dict | None = None
+
+
+class OpenCxrBackendUpdate(BaseModel):
+    remote_url: str = ""
+
+
+class WorkspaceOpenCxrSortResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    result: dict
+    generated_at: str
+
+
+class WorkspaceOpenCxrStandardizeResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    image_data_url: str
+    width: int
+    height: int
+    # opencxr renvoie la liste des opérations appliquées (crop/resize/pad).
+    size_changes: list = []
+    inference_time_ms: float | None = None
+    generated_at: str
 
 
 class DicomMetadataResponse(BaseModel):
@@ -579,6 +635,209 @@ async def generate_workspace_anatomy(
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse anatomique : {exc}") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/workspace/exams/{workspace_id}/landmarks", response_model=WorkspaceLandmarksResponse)
+async def generate_workspace_landmarks(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+    pixel_spacing_mm: str | None = Form(default=None),
+    custom_measures: str | None = Form(default=None),
+    n_samples: str = Form(default="50"),
+) -> WorkspaceLandmarksResponse:
+    """Traque les contours poumons + cœur (HybridGNet) et mesure CTR/diamètres.
+
+    Les landmarks sont prédits avec incertitude par nœud (échantillonnage
+    stochastique du VAE) ; ``custom_measures`` est un JSON de mesures libres :
+    [{label, a, b}] (distance entre nœuds) ou [{label, nodes: [i, j, ...]}]
+    (surface d'un contour fermé). Le moteur (torch + torch_geometric + poids)
+    est chargé paresseusement à la première demande.
+    """
+    from chexmask_service import analyze_landmarks, is_available as chexmask_available  # noqa: PLC0415
+    from chexmask.inference import CheXmaskUnavailableError  # noqa: PLC0415
+
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not _is_radiography_compatible(workspace_image):
+        raise HTTPException(status_code=422, detail=_radiography_modality_message(workspace_image))
+    if not chexmask_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Moteur landmarks (HybridGNet) indisponible : torch/torch_geometric "
+            "ou poids du modèle manquants.",
+        )
+
+    spacing = None
+    if pixel_spacing_mm:
+        try:
+            values = tuple(float(x) for x in pixel_spacing_mm.split(","))
+            spacing = values if len(values) == 2 else None
+        except ValueError:
+            raise HTTPException(status_code=422, detail="pixel_spacing_mm attend R,C (ex: 0.1688,0.1688)") from None
+
+    custom = None
+    if custom_measures:
+        try:
+            custom = json.loads(custom_measures)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=422, detail="custom_measures : JSON invalide.") from None
+
+    try:
+        samples = int(n_samples)
+        samples = samples if 1 <= samples <= 200 else 50
+    except ValueError:
+        samples = 50
+
+    suffix = Path(image.filename or "image.png").suffix or ".png"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(await image.read())
+        tmp_path = Path(tmp.name)
+    try:
+        result = analyze_landmarks(
+            tmp_path,
+            pixel_spacing_mm=spacing,
+            custom_measures=custom,
+            n_samples=samples,
+        )
+        return WorkspaceLandmarksResponse(
+            workspace_id=workspace_id,
+            image_id=image_id,
+            status=result["status"],
+            error=result.get("error"),
+            contours=result["contours"],
+            measurements=result["measurements"],
+            custom=result["custom"],
+            warnings=result["warnings"],
+            uncertainty=result["uncertainty"],
+            scale_used=result["scale_used"],
+            ctr_method=result["ctr_method"],
+            lines=result["lines"],
+            inference_time_ms=result["inference_time_ms"],
+            generated_at=datetime.now(UTC).isoformat(),
+        )
+    except CheXmaskUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Échec de l'analyse landmarks pour l'image %s.", image_id)
+        raise HTTPException(status_code=500, detail=f"Échec de l'analyse landmarks : {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/workspace/exams/{workspace_id}/opencxr/sort", response_model=WorkspaceOpenCxrSortResponse)
+async def opencxr_sort_workspace_image(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+) -> WorkspaceOpenCxrSortResponse:
+    """Classifie une radio (PA/AP/lateral/notCXR) via le microservice opencxr."""
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not opencxr_available():
+        raise HTTPException(status_code=503, detail="Microservice opencxr indisponible ou non configuré.")
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Image vide.")
+    try:
+        result = opencxr_sort_image(data, image.filename or "image.png")
+    except OpenCxrUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return WorkspaceOpenCxrSortResponse(
+        workspace_id=workspace_id,
+        image_id=image_id,
+        result=result,
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@app.post("/workspace/exams/{workspace_id}/opencxr/standardize", response_model=WorkspaceOpenCxrStandardizeResponse)
+async def opencxr_standardize_workspace_image(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+    do_crop_to_lung_box: str = Form("true"),
+    final_square_size: str = Form("1024"),
+    pixel_spacing_mm: str | None = Form(default=None),
+) -> WorkspaceOpenCxrStandardizeResponse:
+    """Normalise une radio frontale via le microservice opencxr."""
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not opencxr_available():
+        raise HTTPException(status_code=503, detail="Microservice opencxr indisponible ou non configuré.")
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Image vide.")
+    crop = (do_crop_to_lung_box or "").strip().lower() in {"true", "1", "yes", "on"}
+    try:
+        size = int(final_square_size)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="final_square_size doit être un entier positif.") from None
+    # (ligne,col) du DICOM source ; les JPG n'en ont pas -> reste en pixels.
+    spacing: tuple[float, float] | None = None
+    if pixel_spacing_mm:
+        try:
+            values = tuple(float(x) for x in pixel_spacing_mm.split(","))
+            spacing = values if len(values) == 2 else None
+        except ValueError:
+            raise HTTPException(status_code=422, detail="pixel_spacing_mm attend R,C (ex: 0.1688,0.1688)") from None
+    try:
+        result = opencxr_standardize_image(
+            data,
+            image.filename or "image.png",
+            do_crop_to_lung_box=crop,
+            final_square_size=size,
+            pixel_spacing_mm=spacing,
+        )
+    except OpenCxrUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return WorkspaceOpenCxrStandardizeResponse(
+        workspace_id=workspace_id,
+        image_id=image_id,
+        image_data_url=result["image_data_url"],
+        width=result["width"],
+        height=result["height"],
+        size_changes=result.get("size_changes", []),
+        inference_time_ms=result.get("inference_time_ms"),
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@app.get("/workspace/opencxr/backend", response_model=OpenCxrBackendInfo)
+async def opencxr_backend() -> OpenCxrBackendInfo:
+    """État du microservice opencxr (URL effective + sonde de santé)."""
+    remote_url = get_opencxr_active_url()
+    info = OpenCxrBackendInfo(mode="remote" if remote_url else "local", remote_url=remote_url or None)
+    if remote_url:
+        info.backend = probe_opencxr_backend()
+        info.reachable = info.backend is not None
+    return info
+
+
+@app.put("/workspace/opencxr/backend", response_model=OpenCxrBackendInfo)
+async def opencxr_backend_update(payload: OpenCxrBackendUpdate) -> OpenCxrBackendInfo:
+    """Change l'URL du microservice opencxr à chaud (vide = désactivé)."""
+    try:
+        remote_url = set_opencxr_remote_url(payload.remote_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    info = OpenCxrBackendInfo(mode="remote" if remote_url else "local", remote_url=remote_url or None)
+    if remote_url:
+        info.backend = probe_opencxr_backend()
+        info.reachable = info.backend is not None
+    return info
 
 
 @app.get("/workspace/exams/{workspace_id}/3d/jobs/{job_id}", response_model=WorkspaceThreeDStatusResponse)
@@ -1050,5 +1309,6 @@ async def health() -> dict:
         "radiography_models_loaded": len(registry.radiography_models),
         "gemini_ready": registry.gemini_client is not None,
         "anatomy_ready": anatomy_ready,
+        "opencxr_ready": opencxr_available(),
         "startup_errors": startup_errors,
     }

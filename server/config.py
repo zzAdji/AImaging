@@ -58,6 +58,26 @@ class CxasServerConfig:
     # pleine résolution inutile pour l'affichage, payload réduit.
     mask_max_side: int = 512
 
+
+@dataclass
+class OpenCxrServerConfig:
+    """Configuration du microservice opencxr (Image Sorter + Normalisation CXR).
+
+    opencxr requiert TensorFlow, absent en wheel pour le Python 3.14 du serveur
+    principal : il tourne dans un microservice Python 3.12 séparé (venv312),
+    rejoint par HTTP. Par défaut le serveur interroge le microservice local
+    standard (``http://127.0.0.1:8011``, celui lancé par ``run_micro.bat``) ;
+    on peut pointer vers un autre hôte via ``OPEN_CXR_URL``.
+    """
+
+    remote_url: str = os.environ.get("OPEN_CXR_URL", "").strip().rstrip("/")
+    # Chargement TF + inférence multi-sorties/crops : timeout large pour le
+    # traitement ET pour le coût froid (import TF + poids) du tout premier
+    # appel, avant que le préchargement du microservice soit inactif.
+    timeout_seconds: float = float(os.environ.get("OPEN_CXR_TIMEOUT", "300"))
+    health_timeout_seconds: float = 3.0
+
+
 def validate_gemini_config(config: GeminiConfig) -> None:
     if not config.api_key:
         raise RuntimeError(

@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Ruler,
   Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../lib/cn";
@@ -468,6 +469,61 @@ function AiAnalysisSection() {
   );
 }
 
+/* ---------------------------------- OpenCXR -------------------------------- */
+
+/** Affiche le tri (Image Sorter) et l'image normalisée de l'image active. */
+function OpenCxrSection() {
+  const w = useWorkspace();
+  const result = w.cxrResult;
+  if (!result) return null;
+  const { sort, standardize, rejected } = result;
+  if (rejected || sort.Type === "notCXR") {
+    return (
+      <Section id="opencxr" title="OpenCXR">
+        <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
+          <div>
+            <p className="text-[11.5px] font-semibold text-red-200">
+              Image rejetée <Badge data="cxr-type" className="ml-1 border-red-500/40 bg-red-500/15 text-red-300">notCXR</Badge>
+            </p>
+            <p className="mt-0.5 text-[10.5px] leading-relaxed text-red-200/70">
+              {rejected?.reason ?? "L'image n'a pas été reconnue comme une radiographie frontale (PA/AP/latérale) : la standardisation n'a pas été lancée."}
+            </p>
+          </div>
+        </div>
+      </Section>
+    );
+  }
+  return (
+    <Section id="opencxr" title="OpenCXR">
+      <div className="flex flex-wrap gap-1.5">
+        <Badge data="cxr-type" className="border-accent/40 bg-accent/10 text-accent">
+          {sort.Type}
+        </Badge>
+        <Badge>Rot {sort.Rotation}°</Badge>
+        <Badge>{sort.Inversion === "Yes" ? "Image inversée" : "Pas d'inversion"}</Badge>
+        <Badge>{sort.Lateral_Flip === "Yes" ? "Mirroir" : "Pas de mirroir"}</Badge>
+      </div>
+      {standardize ? (
+        <>
+          <Divider className="my-2.5" />
+          <img
+            src={standardize.image_data_url}
+            alt="Radio normalisée"
+            className="max-h-44 w-full rounded-lg border border-border bg-black/40 object-contain"
+          />
+          <p className="mt-1 text-[10.5px] text-ink-3">
+            Normalisée · {standardize.width}×{standardize.height}px ·{" "}
+            {Math.round(standardize.inference_time_ms)} ms
+          </p>
+        </>
+      ) : (
+        <p className="mt-2 text-[10.5px] text-ink-3">Standardisation non lancée (image rejetée par le tri).</p>
+      )}
+    </Section>
+  );
+}
+
 /* --------------------------------- Grad-CAM ------------------------------- */
 
 function GradCamSection() {
@@ -864,6 +920,7 @@ export function RightPanel() {
           <DocumentSection />
           <ImageSection />
           <AiAnalysisSection />
+          <OpenCxrSection />
           <GradCamSection />
           <MeasurementsSection />
           <AnnotationsSection />

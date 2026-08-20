@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  ACCENT_COLORS,
   DEFAULT_LAYERS,
   DEFAULT_PREFS,
   DEFAULT_SHAPE_STYLE,
@@ -17,9 +18,11 @@ import {
   type AiPrompt,
   type AiRecordedAction,
   type AiResults,
+  type AppNotification,
   type LayerDef,
   type LayerId,
   type ImageStateSnapshot,
+  type NotificationKind,
   type PixelSpacingMm,
   type Prefs,
   type SectionId,
@@ -35,13 +38,14 @@ import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 import { buildWorkspaceManifest } from "../lib/workspaceProtocol";
-import type { WorkspaceAnatomyResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
-import { createWorkspaceExam, generateWorkspaceAnatomy } from "../lib/workspaceApi";
+import type { OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
+import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceLandmarks } from "../lib/workspaceApi";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
   image: false,
   aianalysis: false,
+  opencxr: false,
   gradcam: false,
   measurements: false,
   annotations: true,
@@ -362,6 +366,24 @@ export function WorkspaceProvider({
   const anatomyCardOpenRef = useRef(false);
   const [anatomySelected, setAnatomySelectedState] = useState<string | null>(null);
 
+  /* --------------------------- Landmarks (HybridGNet) --------------------------- */
+  const [landmarkResult, setLandmarkResultState] = useState<WorkspaceLandmarksResult | null>(null);
+  const landmarkResultRef = useRef<WorkspaceLandmarksResult | null>(null);
+  const [landmarkLoading, setLandmarkLoading] = useState(false);
+  const landmarkLoadingRef = useRef(false);
+  const [landmarkError, setLandmarkError] = useState<string | null>(null);
+  const [landmarkCardOpen, setLandmarkCardOpenState] = useState(false);
+  const landmarkCardOpenRef = useRef(false);
+  const [landmarksSelected, setLandmarksSelectedState] = useState<string | null>(null);
+
+  /* ------------------------------ OpenCXR (tri + normalisation) ------------------------------ */
+  const [cxrResult, setCxrResultState] = useState<OpenCxrImageResult | null>(null);
+  const cxrResultRef = useRef<OpenCxrImageResult | null>(null);
+  const setCxrResult = useCallback((result: OpenCxrImageResult | null) => {
+    cxrResultRef.current = result;
+    setCxrResultState(result);
+  }, []);
+
   const threeDResultRef = useRef<ThreeDResult | null>(null);
   const [threeDResult, setThreeDResultState] = useState<ThreeDResult | null>(null);
   const setThreeDResult = useCallback((result: ThreeDResult | null) => {
@@ -474,6 +496,12 @@ export function WorkspaceProvider({
     setAnatomyResultState(null);
     setAnatomySelectedState(null);
     setAnatomyError(null);
+    landmarkResultRef.current = null;
+    setLandmarkResultState(null);
+    setLandmarksSelectedState(null);
+    setLandmarkError(null);
+    cxrResultRef.current = null;
+    setCxrResultState(null);
   }, [imageId]);
 
   const [dicomLinear, setDicomLinearState] = useState<LinearImageBuffer | null>(null);
@@ -511,6 +539,12 @@ export function WorkspaceProvider({
     setAnatomyResultState(null);
     setAnatomySelectedState(null);
     setAnatomyError(null);
+    landmarkResultRef.current = null;
+    setLandmarkResultState(null);
+    setLandmarksSelectedState(null);
+    setLandmarkError(null);
+    cxrResultRef.current = null;
+    setCxrResultState(null);
   }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setThreeDOn, setThreeDResult, setThreeDRunning, setThreeDProgress, setPixelSpacingMm]);
   const [shapeStyle, setShapeStyle] = useState<ShapeStyle>(loadShapeStyle);
 
@@ -679,6 +713,24 @@ export function WorkspaceProvider({
     }
   });
   const [aiActionLog, setAiActionLog] = useState<AiRecordedAction[]>([]);
+
+  /* ------------------------------ Notifications (toasts) ------------------------------ */
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const notify = useCallback((title: string, kind: NotificationKind = "info", message?: string) => {
+    const t = title.trim();
+    if (!t) return;
+    const id = randomId();
+    setNotifications((list) => [
+      ...list.filter((n) => !(n.kind === kind && n.title === t)),
+      { id, kind, title: t, message, at: Date.now() },
+    ].slice(-5));
+    window.setTimeout(() => {
+      setNotifications((list) => list.filter((n) => n.id !== id));
+    }, kind === "error" || kind === "warning" ? 10000 : 6000);
+  }, []);
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications((list) => list.filter((n) => n.id !== id));
+  }, []);
   const [aiResults, setAiResults] = useState<AiResults>({
     diagnostics: [],
     report: null,
@@ -777,7 +829,7 @@ export function WorkspaceProvider({
     setAnatomySelectedState(label);
   }, []);
 
-  const runAnatomyAnalysis = useCallback(async (waitForImage = false) => {
+  const runAnatomyAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
     /* Ouverture d'un espace de travail : l'image peut ne pas être encore
        prête (elle est chargée juste après). On patiente un peu avant
        d'abandonner, pour lancer la segmentation en même temps que la
@@ -796,9 +848,9 @@ export function WorkspaceProvider({
       const message = "Chargez une radiographie avant de lancer la segmentation.";
       setAnatomyError(message);
       recordAiAction(`Segmentation anatomique : ${message}`);
-      return;
+      return false;
     }
-    if (anatomyLoadingRef.current) return;
+    if (anatomyLoadingRef.current) return false;
     anatomyLoadingRef.current = true;
     setAnatomyLoading(true);
     setAnatomyError(null);
@@ -824,7 +876,7 @@ export function WorkspaceProvider({
       const manifest = buildWorkspaceManifest(exam, image.id, {});
       const session = await createWorkspaceExam(manifest);
       const response = await generateWorkspaceAnatomy(session.workspace_id, image);
-      if (imageIdRef.current !== imageIdValue) return;
+      if (imageIdRef.current !== imageIdValue) return false;
       anatomyResultRef.current = response.result;
       setAnatomyResultState(response.result);
       recordAiAction(
@@ -832,10 +884,12 @@ export function WorkspaceProvider({
           `CTR=${response.result.measurements["Cardio-Thoracic Ratio"]?.available ? "oui" : "n.d."}, ` +
           `SCD=${response.result.measurements["Spine-Center Distance"]?.available ? "oui" : "n.d."}.`,
       );
+      return true;
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Segmentation anatomique impossible.";
       setAnatomyError(message);
       recordAiAction(`Segmentation anatomique : ${message}`);
+      return false;
     } finally {
       anatomyLoadingRef.current = false;
       setAnatomyLoading(false);
@@ -849,6 +903,156 @@ export function WorkspaceProvider({
       void runAnatomyAnalysis();
     }
   }, [runAnatomyAnalysis, setAnatomyCardOpen]);
+
+  const setLandmarksSelected = useCallback((organ: string | null) => {
+    setLandmarksSelectedState(organ);
+  }, []);
+
+  const setLandmarkCardOpen = useCallback((open: boolean) => {
+    landmarkCardOpenRef.current = open;
+    setLandmarkCardOpenState(open);
+  }, []);
+
+  /** Formes de mesure posées automatiquement (diamètres + étiquette CTR). */
+  const LANDMARK_SHAPE_PREFIX = "landmarks:";
+
+  const removeLandmarkMeasurements = useCallback(() => {
+    const ids = shapesRef.current.filter((s) => s.actionId?.startsWith(LANDMARK_SHAPE_PREFIX)).map((s) => s.id);
+    if (ids.length > 0) removeShapes(ids);
+  }, [removeShapes]);
+
+  const placeLandmarkMeasurements = useCallback(() => {
+    const result = landmarkResultRef.current;
+    if (!result || result.status !== "ok") return;
+    const dims = dimsRef.current;
+    if (!dims || dims.w <= 0 || dims.h <= 0) return;
+    const toGrid = (v: number) => (v / 1024) * dims.w;
+    const toGridY = (v: number) => (v / 1024) * dims.h;
+
+    const newShapes: Shape[] = [];
+    const idsToRemove = shapesRef.current.filter((s) => s.actionId?.startsWith(LANDMARK_SHAPE_PREFIX)).map((s) => s.id);
+    for (const line of result.lines) {
+      const x1 = toGrid(line.x1);
+      const y1 = toGridY(line.y1);
+      const x2 = toGrid(line.x2);
+      const y2 = toGridY(line.y2);
+      newShapes.push({
+        id: randomId(),
+        type: "measure",
+        x: x1,
+        y: y1,
+        w: x2 - x1,
+        h: y2 - y1,
+        points: [],
+        strokeWidth: 2,
+        strokeColor: line.key === "heart_transverse" ? "#3b82f6" : "#f97316",
+        fontSize: 14,
+        fontFamily: "sans",
+        fontWeight: "normal",
+        color: "#ffffff",
+        createdBy: "ai",
+        actionId: `${LANDMARK_SHAPE_PREFIX}${line.key}`,
+      });
+    }
+    const heartLine = result.lines.find((line) => line.key === "heart_transverse");
+    if (heartLine) {
+      const ax = toGrid((heartLine.x1 + heartLine.x2) / 2);
+      const ay = toGridY((heartLine.y1 + heartLine.y2) / 2);
+      const ctr = result.measurements.ctr;
+      const label = `CTR = ${ctr.value.toFixed(3)} ± ${ctr.std.toFixed(3)}`;
+      newShapes.push({
+        id: randomId(),
+        type: "annotation",
+        x: ax + 24,
+        y: ay - 46,
+        w: 0,
+        h: 0,
+        points: [{ x: ax, y: ay }],
+        strokeWidth: 2,
+        fontSize: 14,
+        fontFamily: "sans",
+        fontWeight: "bold",
+        color: ACCENT_COLORS[0],
+        createdBy: "ai",
+        actionId: `${LANDMARK_SHAPE_PREFIX}ctr`,
+        label,
+      });
+    }
+    if (idsToRemove.length > 0) removeShapes(idsToRemove);
+    if (newShapes.length > 0) commit([...shapesRef.current, ...newShapes]);
+  }, [commit, removeShapes]);
+
+  const runLandmarksAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
+    if (waitForImage) {
+      let waited = 0;
+      while (!imageIdRef.current || !imageSrcRef.current) {
+        if (waited >= 8000) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        waited += 250;
+      }
+    }
+    const imageIdValue = imageIdRef.current;
+    const imageSrcValue = imageSrcRef.current;
+    if (!imageIdValue || !imageSrcValue) {
+      const message = "Chargez une radiographie avant de lancer les mesures.";
+      setLandmarkError(message);
+      recordAiAction(`Mesures landmarks : ${message}`);
+      return false;
+    }
+    if (landmarkLoadingRef.current) return false;
+    landmarkLoadingRef.current = true;
+    setLandmarkLoading(true);
+    setLandmarkError(null);
+    try {
+      const metadata = imageMetadataRef.current;
+      const image: ExamImage = {
+        id: imageIdValue,
+        name: imageNameRef.current || "Image",
+        src: imageSrcValue,
+        dims: dimsRef.current,
+        sourceKind: metadata?.modality ? "dicom" : "browser-image",
+        metadata: metadata ?? undefined,
+      };
+      const exam: Examination = {
+        id: `landmarks-${imageIdValue}`,
+        name: "Mesures landmarks",
+        modality: metadata?.modality ?? "image",
+        images: [image],
+        createdAt: new Date().toISOString(),
+        lastOpenedAt: new Date().toISOString(),
+        archived: false,
+      };
+      const manifest = buildWorkspaceManifest(exam, image.id, {});
+      const session = await createWorkspaceExam(manifest);
+      const response = await generateWorkspaceLandmarks(session.workspace_id, image);
+      if (imageIdRef.current !== imageIdValue) return false;
+      landmarkResultRef.current = response.result;
+      setLandmarkResultState(response.result);
+      const ctr = response.result.measurements.ctr;
+      recordAiAction(
+        `Mesures landmarks : CTR=${ctr.value.toFixed(3)} ± ${ctr.std.toFixed(3)}, ` +
+          `σ max=${response.result.uncertainty.max_node_std_px.toFixed(1)} px.`,
+      );
+      placeLandmarkMeasurements();
+      return true;
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : "Analyse landmarks impossible.";
+      setLandmarkError(message);
+      recordAiAction(`Mesures landmarks : ${message}`);
+      return false;
+    } finally {
+      landmarkLoadingRef.current = false;
+      setLandmarkLoading(false);
+    }
+  }, [recordAiAction, placeLandmarkMeasurements]);
+
+  const toggleLandmarksCard = useCallback(() => {
+    const next = !landmarkCardOpenRef.current;
+    setLandmarkCardOpen(next);
+    if (next && !landmarkResultRef.current && !landmarkLoadingRef.current && imageIdRef.current && imageSrcRef.current) {
+      void runLandmarksAnalysis();
+    }
+  }, [runLandmarksAnalysis, setLandmarkCardOpen]);
 
   const removeAiHistory = useCallback((id: string) => {
     setAiHistory((history) => history.filter((h) => h.id !== id));
@@ -1054,7 +1258,10 @@ pushHistory();
           }
           break;
         case "notify":
-          if (typeof payload.message === "string") warnings.push(payload.message);
+          if (typeof payload.message === "string") {
+            warnings.push(payload.message);
+            notify(payload.message, "info");
+          }
           break;
         case "analyze_image":
         case "analyze_exam":
@@ -1080,7 +1287,7 @@ pushHistory();
     }
     if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajout├®(s) par l'IA.`);
     return { appliedActionIds, warnings };
-  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl]);
+  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl, notify]);
 
   useEffect(() => {
     executePlanRef.current = executeAiActionPlan;
@@ -1454,6 +1661,19 @@ const closeDocument = useCallback(() => {
       anatomySelected,
       setAnatomySelected,
       runAnatomyAnalysis,
+      landmarkResult,
+      landmarkLoading,
+      landmarkError,
+      landmarkCardOpen,
+      setLandmarkCardOpen,
+      toggleLandmarksCard,
+      landmarksSelected,
+      setLandmarksSelected,
+runLandmarksAnalysis,
+      placeLandmarkMeasurements,
+      removeLandmarkMeasurements,
+      cxrResult,
+      setCxrResult,
       brightness,
       setBrightness,
       contrast,
@@ -1526,6 +1746,9 @@ imageSrc,
       setLayerOpacity,
       moveLayer,
       deleteLayerContent,
+      notifications,
+      notify,
+      dismissNotification,
     }),
     [
       tool, selection, shapes, pushHistory, addShape, updateShape, removeShape,
@@ -1543,7 +1766,9 @@ imageSrc,
       rightPanelOpen, rightWidth, gridOn, setGridOn, setPixelGrid, toggleGrid,
       rulersOn, setRulersOn, statusBarOpen, setStatusBarOpen,
       gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, threeDResult, setThreeDResult, threeDOn, setThreeDOn, threeDRunning, setThreeDRunning, threeDProgress, setThreeDProgress, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
-      anatomyResult, anatomyLoading, anatomyError, anatomyCardOpen, setAnatomyCardOpen, toggleAnatomyCard, anatomySelected, setAnatomySelected, runAnatomyAnalysis,
+      anatomyResult, anatomyLoading, anatomyError, anatomyCardOpen, setAnatomyCardOpen, toggleAnatomyCard, anatomySelected, setAnatomySelected, runAnatomyAnalysis, cxrResult, setCxrResult,
+      landmarkResult, landmarkLoading, landmarkError, landmarkCardOpen, setLandmarkCardOpen, toggleLandmarksCard, landmarksSelected, setLandmarksSelected, runLandmarksAnalysis,
+      placeLandmarkMeasurements, removeLandmarkMeasurements,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       probe, setProbe,
       collapsed, toggleSection, analysis,
@@ -1551,7 +1776,7 @@ imageSrc,
       aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
-      aiActionLog, recordAiAction, runAiPrompt, removeAiHistory, clearAiHistory,
+      aiActionLog, recordAiAction, runAiPrompt, removeAiHistory, clearAiHistory, notifications, notify, dismissNotification,
       aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan,
       setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,

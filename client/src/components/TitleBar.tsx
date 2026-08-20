@@ -389,6 +389,7 @@ export function TitleBar({
       entries: [
         { label: "Classification", onSelect: w.runAnalysis },
         { label: "Segmentation", selected: w.anatomyCardOpen, onSelect: () => w.toggleAnatomyCard() },
+        { label: "Mesures landmarks", selected: w.landmarkCardOpen, onSelect: () => w.toggleLandmarksCard() },
         { label: "Auto Measurements" },
         { label: "Radiomics…" },
         { label: "Compare with Reference", dividerBefore: true },
