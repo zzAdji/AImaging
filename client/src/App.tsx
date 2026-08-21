@@ -38,6 +38,7 @@ import { downloadDataUrl, downloadJson, exportImageDataUrl } from "./lib/exportI
 import {
   loadExaminations,
   isRadiographyCompatible,
+  isImageRejectedByOpenCxr,
   readImportedImageFiles,
   saveExaminations,
   type ExamImage,
@@ -181,6 +182,7 @@ function Shell({
   const autoAnalysisStartedFor = useRef<string | null>(null);
   const autoAnatomyStartedFor = useRef<string | null>(null);
   const autoOpenCxrStartedFor = useRef<string | null>(null);
+  const autoGradcamStartedFor = useRef<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   /* Pipeline de préparation de l'espace de travail : alimente l'overlay noir
@@ -223,9 +225,20 @@ function Shell({
     const session = await createWorkspaceExam(buildWorkspaceManifest(synchronizedExam, current.id));
     const requestedTargets = scope === "all" ? synchronizedExam.images : [current];
     const unsupportedTargets = requestedTargets.filter((image) => !isRadiographyCompatible(image));
-    const targets = requestedTargets.filter(isRadiographyCompatible);
+
+    /* Phase 3 — filtrage fail-closed : une Image rejetée
+       (non-CXR ou invalide) ne doit JAMAIS passer dans le pipeline médical
+       (ensemble, Grad-CAM, CXAS, HybridGNet, rapport). */
+    const rejectedTargets = requestedTargets.filter((image) => isImageRejectedByOpenCxr(image));
+    const targets = requestedTargets.filter(isRadiographyCompatible).filter((image) => !isImageRejectedByOpenCxr(image));
     if (targets.length === 0) {
-      throw new Error("Le modèle radiographique accepte uniquement les DICOM CR ou DX ; aucune image compatible n'est sélectionnée.");
+      throw new Error(
+        requestedTargets.every(isImageRejectedByOpenCxr)
+          ? (current.cxrRejected?.status === "REJECTED_INVALID_IMAGE"
+              ? "Cette image ne peut pas être lue ou est endommagée : aucune analyse n'est possible."
+              : "Cette image ne semble pas être une radiographie thoracique : aucune analyse médicale n'est lancée.")
+          : "Le modèle radiographique accepte uniquement les DICOM CR ou DX ; aucune image compatible n'est sélectionnée.",
+      );
     }
     setAnalysisProgress({ completed: 0, total: targets.length });
     const response = await analyzeWorkspaceImages(session.workspace_id, targets);
@@ -233,6 +246,7 @@ function Shell({
       ...(session.consistency_issues ?? []).map((issue) => issue.message),
       ...response.warnings,
       ...unsupportedTargets.map((image) => `${image.name} : modèle radiographique non applicable à la modalité ${image.metadata?.modality ?? "DICOM inconnue"}.`),
+      ...rejectedTargets.map((image) => image.cxrRejected?.reason ?? `${image.name} : image exclue de l'analyse médicale par le tri CXR.`),
     ]
       .filter((message, index, all) => all.indexOf(message) === index)
       .forEach((warning) => w.recordAiAction(`Cohérence examen : ${warning}`));
@@ -342,6 +356,12 @@ function Shell({
           }
           if (!isRadiographyCompatible(targetImage)) {
             warnings.push(`Grad-CAM ignorée pour '${targetImage.name}' : le modèle radiographique n'accepte que les DICOM CR ou DX.`);
+            continue;
+          }
+          if (isImageRejectedByOpenCxr(targetImage)) {
+            warnings.push(
+              `Grad-CAM ignorée pour '${targetImage.name}' : cette image a été rejetée par le tri CXR (${targetImage.cxrRejected?.status ?? "rejetée"}), aucune analyse médicale.`,
+            );
             continue;
           }
           const requestedClass = typeof action.class_name === "string"
@@ -595,17 +615,29 @@ function Shell({
         let planToRoute = localPlan;
         if (reportPlanActions.length > 0) {
           if (current.prediction) {
-            const generated = await generateRadiographyReport(current.prediction);
-            reportWarnings = generated.coherence_issues ?? [];
-            planToRoute = {
-              ...localPlan,
-              summary: generated.coherence_passed
-                ? "Rapport Gemini généré à partir de la prédiction de l'image active."
-                : "Rapport généré avec avertissements de cohérence.",
-              actions: localPlan.actions.map((action) => action.type === "generate_report"
-                ? { ...action, type: "replace_report" as const, text: generated.rendered_text }
-                : action),
-            };
+            try {
+              const generated = await generateRadiographyReport(current.prediction);
+              reportWarnings = generated.coherence_issues ?? [];
+              planToRoute = {
+                ...localPlan,
+                summary: generated.coherence_passed
+                  ? "Rapport Gemini généré à partir de la prédiction de l'image active."
+                  : "Rapport généré avec avertissements de cohérence.",
+                actions: localPlan.actions.map((action) => action.type === "generate_report"
+                  ? { ...action, type: "replace_report" as const, text: generated.rendered_text }
+                  : action),
+              };
+            } catch (error) {
+              /* Gemini indisponible : pas de rapport inventé, action retirée du
+                 plan et avertissement explicite (mode dégradé, aucune fausse
+                 revendication de génération IA). */
+              const message = error instanceof Error ? error.message : "Le service LLM n'a pas répondu.";
+              reportWarnings = [`Rapport non généré : ${message}. Les résultats (classification, Grad-CAM, mesures) restent disponibles.`];
+              planToRoute = {
+                ...localPlan,
+                actions: localPlan.actions.filter((action) => action.type !== "generate_report"),
+              };
+            }
           } else {
             reportWarnings = ["Rapport demandé mais aucune prédiction n'est disponible. Lancez d'abord une analyse."];
             planToRoute = { ...localPlan, actions: localPlan.actions.filter((action) => action.type !== "generate_report") };
@@ -645,17 +677,28 @@ function Shell({
         if (!current.prediction) {
           throw new Error("Aucune prédiction disponible. Lancez d'abord @analyze ou @predict.");
         }
-        const generated = await generateRadiographyReport(current.prediction);
-        const reportAction = parsed.plan.actions.find((action) => action.type === "generate_report");
-        if (!reportAction) throw new Error("Le plan de rapport est invalide.");
-        const plan: AiActionPlan = {
-          ...parsed.plan,
-          summary: generated.coherence_passed
-            ? "Rapport Gemini généré à partir de la prédiction de l'image active."
-            : "Rapport généré avec avertissements de cohérence.",
-          actions: [{ ...reportAction, type: "replace_report" as const, text: generated.rendered_text }],
-        };
-        return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
+        try {
+          const generated = await generateRadiographyReport(current.prediction);
+          const reportAction = parsed.plan.actions.find((action) => action.type === "generate_report");
+          if (!reportAction) throw new Error("Le plan de rapport est invalide.");
+          const plan: AiActionPlan = {
+            ...parsed.plan,
+            summary: generated.coherence_passed
+              ? "Rapport Gemini généré à partir de la prédiction de l'image active."
+              : "Rapport généré avec avertissements de cohérence.",
+            actions: [{ ...reportAction, type: "replace_report" as const, text: generated.rendered_text }],
+          };
+          return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
+        } catch (error) {
+          /* Fallback propre : Gemini indisponible → aucun rapport inventé. */
+          const message = error instanceof Error ? error.message : "Le service LLM n'a pas répondu.";
+          const warnings = [`Rapport non généré : ${message}. Les résultats de classification restent disponibles.`];
+          return {
+            plan: { ...parsed.plan, actions: parsed.plan.actions.filter((action) => action.type !== "generate_report") },
+            assistantMessage: "Le rapport LLM n'a pas pu être généré ; aucune action n'a été exécutée.",
+            warnings: [...consistencyWarnings, ...warnings],
+          };
+        }
       }
       const gradcamWarnings = await generatePlanGradcams(session.workspace_id, parsed.plan);
       const threeDWarnings = await generatePlanThreeD(session.workspace_id, parsed.plan);
@@ -723,11 +766,64 @@ function Shell({
     if (!exam || exam.images.length === 0) return;
     if (autoAnatomyStartedFor.current === exam.id) return;
     autoAnatomyStartedFor.current = exam.id;
+    /* Phase 3 — segmentation CXAS lancée une seule fois à l'ouverture, en
+       même temps que la classification (comportement initial, éprouvé).
+       Les textes d'interprétation par région sont générés par
+       runAnatomyAnalysis elle-même en cas de succès. Les boutons
+       « Segmentation » / « Mesures » ouvrent alors les cartes sans
+       rechargement ; HybridGNet (Mesures) reste calculé à la demande pour
+       ne pas saturer le serveur avec plusieurs pipelines lourds à la fois. */
     void w.runAnatomyAnalysis(true).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : "Segmentation automatique impossible.";
       w.recordAiAction(`Segmentation automatique : ${message}`);
     });
   }, [exam, w]);
+
+  /* Phase 3 — Grad-CAM générée une seule fois à l'ouverture, mais uniquement
+     APRÈS la classification (current.prediction disponible) : cela séquence
+     les pipelines lourds côté serveur (au lieu de tout lancer en parallèle,
+     ce qui saturait les modèles TF) et fournit la classe du consensus comme
+     cible. Le bouton « Grad-CAM » l'affiche ensuite immédiatement. */
+  useEffect(() => {
+    if (!exam || exam.images.length === 0) return;
+    const current = exam.images[imageIndex];
+    if (!current) return;
+    if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
+    /* Attend la classification : sans prediction, on ne lance pas la
+       Grad-CAM (l'effet re-tournera quand onSavePredictions mettra à jour
+       l'examen). */
+    if (!current.prediction) return;
+    if (autoGradcamStartedFor.current === exam.id) return;
+    autoGradcamStartedFor.current = exam.id;
+    if (current.gradcam) {
+      w.setGradcamResult(current.gradcam);
+      w.setGradcamOn(true);
+      return;
+    }
+    window.setTimeout(() => {
+      void (async () => {
+        try {
+          const snapshot = w.captureImageState();
+          const synchronizedExam = {
+            ...exam,
+            images: exam.images.map((image, index) =>
+              index === imageIndex && snapshot ? { ...image, state: snapshot } : image,
+            ),
+          };
+          const session = await createWorkspaceExam(buildWorkspaceManifest(synchronizedExam, current.id));
+          const requestedClass = current.prediction?.ensemble_prediction;
+          const response = await generateWorkspaceGradcam(session.workspace_id, current, requestedClass);
+          w.setGradcamResult(response.result);
+          w.setGradcamOn(true);
+          onSaveGradcams(exam.id, { [current.id]: response.result });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "Génération Grad-CAM automatique impossible.";
+          w.recordAiAction(`Génération Grad-CAM automatique : ${message}`);
+        }
+      })();
+    }, 0);
+  }, [exam, imageIndex, onSaveGradcams, w]);
+
 
   /* Tri + standardisation opencxr automatiques à l'ouverture de l'espace de
      travail, au même moment que la classification. Le tri peut rejeter une
@@ -765,12 +861,30 @@ function Shell({
           try {
             const sort = image.cxrSort ?? (await sortWorkspaceImageOpenCxr(session.workspace_id, image));
             sortCount += 1;
-            if (sort.Type === "notCXR") {
+            const status = sort.status ?? (sort.Type === "notCXR" ? "REJECTED_NON_CXR" : "ACCEPTED_CXR");
+            if (status === "REJECTED_INVALID_IMAGE") {
               rejectedCount += 1;
               const reason =
-                `« ${image.name} » n'a pas été reconnue comme une radiographie frontale (PA/AP/latérale) — ` +
-                `confiance CXR ${Math.round((sort.Type_Probs_PA_AP_lateral_notCXR[3] ?? 0) * 100)} %.`;
-              records[image.id] = { sort, standardize: null, rejected: { reason, at: Date.now() } };
+                `« ${image.name} » : cette image ne peut pas être lue ou est endommagée. ` +
+                `Aucune analyse n'a été lancée.`;
+              records[image.id] = {
+                sort,
+                standardize: null,
+                rejected: { status, reason, at: Date.now(), decoder: sort.decoder },
+              };
+              warnings.push(reason);
+              return;
+            }
+            if (status === "REJECTED_NON_CXR" || sort.Type === "notCXR") {
+              rejectedCount += 1;
+              const reason =
+                `Cette image ne semble pas être une radiographie thoracique.    ` +
+                `AImaging v1 ne prend pas en charge d'autre type de radiographie.`;
+              records[image.id] = {
+                sort,
+                standardize: null,
+                rejected: { status: "REJECTED_NON_CXR", reason, at: Date.now(), decoder: sort.decoder },
+              };
               warnings.push(reason);
               return;
             }
@@ -791,7 +905,7 @@ function Shell({
         const done = Object.keys(records).length;
         if (rejectedCount > 0) {
           w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
-          w.notify("Image rejetée par le tri opencxr", "error", warnings.join("\n"));
+          w.notify("Image rejetée", "error", warnings.join("\n"));
           setCxrPipeline({ phase: "rejected", completed: done, total, message: warnings.join("\n") });
         } else if (done > 0) {
           w.recordAiAction(`OpenCXR : ${done} image(s) triée(s) et normalisée(s) automatiquement.`);
@@ -1134,7 +1248,7 @@ const doExport = async () => {
           <div className="w-[min(400px,calc(100vw-48px))] text-center">
             <img src="/logo_dark_transparent.png" alt="AImaging" className="app-logo mx-auto h-10 w-auto animate-pulse-soft" />
             <h2 className="mt-7 text-[14px] font-semibold text-ink">
-              {cxrPipeline.phase === "rejected" ? "Image rejetée par le tri opencxr" : "Préparation de la radiographie"}
+              {cxrPipeline.phase === "rejected" ? "Image rejetée" : "Préparation de la radiographie"}
             </h2>
             <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-3">
               {cxrPipeline.phase === "rejected"
@@ -1143,41 +1257,6 @@ const doExport = async () => {
                   ? "Chargement de l'image en cours…"
                   : "Analyse automatique par l'ensemble radiographique — patientez quelques secondes."}
             </p>
-            {["Chargement", "Classification", "Standardisation", "Prêt"].map((label, step) => {
-              const order = cxrPipeline.phase === "ready"
-                ? 3
-                : cxrPipeline.phase === "rejected"
-                  ? 1
-                  : cxrPipeline.phase === "loading"
-                    ? 0
-                    : cxrPipeline.phase === "classifying"
-                      ? 1
-                      : 2;
-              const done = step < order;
-              const active = step === order && cxrPipeline.phase !== "ready";
-              const failed = cxrPipeline.phase === "rejected" && step === 1;
-              return (
-                <div key={label} className="inline-flex w-[25%] flex-col items-center gap-1.5 align-top">
-                  <span
-                    className={cn(
-                      "flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors duration-200",
-                      done || cxrPipeline.phase === "ready"
-                        ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
-                        : failed
-                          ? "border-red-500/60 bg-red-500/15 text-red-400"
-                          : active
-                            ? "border-accent/60 bg-accent/15 text-accent animate-pulse-soft"
-                            : "border-border bg-btn text-ink-3",
-                    )}
-                  >
-                    {done || cxrPipeline.phase === "ready" ? "✓" : failed ? "✕" : step + 1}
-                  </span>
-                  <span className={cn("text-[10px] font-medium", active || failed ? "text-ink" : "text-ink-3")}>
-                    {label}
-                  </span>
-                </div>
-              );
-            })}
             {(cxrPipeline.phase === "rejected") && (
               <>
                 <p className="mt-5 whitespace-pre-line rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-left text-[11.5px] leading-relaxed text-red-200">

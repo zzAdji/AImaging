@@ -39,7 +39,7 @@ import { imageToPngDataUrl } from "../lib/exportImage";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 import { buildWorkspaceManifest, captureAnnotatedImage } from "../lib/workspaceProtocol";
 import type { AnatomyRegionPayload, OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
-import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, toAnatomyContext } from "../lib/workspaceApi";
+import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyAnalysis, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, toAnatomyContext } from "../lib/workspaceApi";
 import { ANATOMY_REGIONS } from "../lib/anatomyMap";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
@@ -1068,6 +1068,114 @@ export function WorkspaceProvider({
     if (newShapes.length > 0) commit([...shapesRef.current, ...newShapes]);
   }, [commit, removeShapes]);
 
+  /** Analyse anatomique unifiée : segmentation CXAS + landmarks HybridGNet en une
+   *  seule requête, résultats tracés par source (CXAS / HybridGNet). Remplit à la
+   *  fois le panneau "Segmentation" (source CXAS) et le panneau "Mesures" (source
+   *  HybridGNet), sans jamais fusionner mathématiquement les deux moteurs. */
+  const runUnifiedAnatomyAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
+    if (waitForImage) {
+      let waited = 0;
+      while (!imageIdRef.current || !imageSrcRef.current) {
+        if (waited >= 8000) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        waited += 250;
+      }
+    }
+    const imageIdValue = imageIdRef.current;
+    const imageSrcValue = imageSrcRef.current;
+    if (!imageIdValue || !imageSrcValue) {
+      const message = "Chargez une radiographie avant l'analyse anatomique.";
+      setAnatomyError(message);
+      setLandmarkError(message);
+      recordAiAction(`Analyse anatomique : ${message}`);
+      return false;
+    }
+    if (anatomyLoadingRef.current || landmarkLoadingRef.current) return false;
+    anatomyLoadingRef.current = true;
+    landmarkLoadingRef.current = true;
+    setAnatomyLoading(true);
+    setLandmarkLoading(true);
+    setAnatomyError(null);
+    setLandmarkError(null);
+    try {
+      const metadata = imageMetadataRef.current;
+      const image: ExamImage = {
+        id: imageIdValue,
+        name: imageNameRef.current || "Image",
+        src: imageSrcValue,
+        dims: dimsRef.current,
+        sourceKind: metadata?.modality ? "dicom" : "browser-image",
+        metadata: metadata ?? undefined,
+      };
+      const exam: Examination = {
+        id: `anatomy-${imageIdValue}`,
+        name: "Analyse anatomique",
+        modality: metadata?.modality ?? "image",
+        images: [image],
+        createdAt: new Date().toISOString(),
+        lastOpenedAt: new Date().toISOString(),
+        archived: false,
+      };
+      const manifest = buildWorkspaceManifest(exam, image.id, {});
+      const session = await createWorkspaceExam(manifest);
+      const response = await generateWorkspaceAnatomyAnalysis(session.workspace_id, image);
+      if (imageIdRef.current !== imageIdValue) return false;
+
+      const cx = response.cxas;
+      const anatomy: WorkspaceAnatomyResult = {
+        status: cx?.status === "ok" ? "ok" : "error",
+        error: cx?.error ?? null,
+        measurements: (cx?.payload.measurements ?? {}) as Record<string, WorkspaceAnatomyResult["measurements"][string]>,
+        segmentation: (cx?.payload.segmentation ?? {
+          labels: {}, label_ids_available: [], file_size: [0, 0], mask_shape: [0, 0],
+          areas_px: {}, mask_downscaled: false, masks_b64_png: {},
+        }) as WorkspaceAnatomyResult["segmentation"],
+        warnings: cx?.payload.warnings ?? [],
+        inference_time_ms: cx?.inference_time_ms ?? null,
+        generated_at: response.generated_at,
+      };
+
+      const lmPayload = response.hybridgnet?.payload ?? {};
+      const landmarks: WorkspaceLandmarksResult = {
+        status: response.hybridgnet?.status === "ok" ? "ok" : "error",
+        error: response.hybridgnet?.error ?? null,
+        contours: (lmPayload.contours ?? {}) as WorkspaceLandmarksResult["contours"],
+        measurements: (lmPayload.measurements ?? {}) as WorkspaceLandmarksResult["measurements"],
+        custom: lmPayload.custom ?? [],
+        warnings: lmPayload.warnings ?? [],
+        uncertainty: lmPayload.uncertainty ?? { max_node_std_px: 0, mean_node_std_px: 0 },
+        scale_used: lmPayload.scale_used ?? "pixels",
+        ctr_method: lmPayload.ctr_method ?? "",
+        lines: lmPayload.lines ?? [],
+        inference_time_ms: response.hybridgnet?.inference_time_ms ?? null,
+        generated_at: response.generated_at,
+      };
+
+      anatomyResultRef.current = anatomy;
+      setAnatomyResultState(anatomy);
+      landmarkResultRef.current = landmarks;
+      setLandmarkResultState(landmarks);
+      placeLandmarkMeasurements();
+
+      recordAiAction(
+        `Analyse anatomique : CXAS ${cx?.status === "ok" ? "ok" : "erreur"}, ` +
+          `HybridGNet ${response.hybridgnet?.status === "ok" ? "ok" : "erreur"}.`,
+      );
+      return true;
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : "Analyse anatomique impossible.";
+      setAnatomyError(message);
+      setLandmarkError(message);
+      recordAiAction(`Analyse anatomique : ${message}`);
+      return false;
+    } finally {
+      anatomyLoadingRef.current = false;
+      landmarkLoadingRef.current = false;
+      setAnatomyLoading(false);
+      setLandmarkLoading(false);
+    }
+  }, [placeLandmarkMeasurements, recordAiAction]);
+
   const runLandmarksAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
     if (waitForImage) {
       let waited = 0;
@@ -1238,6 +1346,22 @@ pushHistory();
         warnings.push(`Action ${action.id} ignor├®e : elle cible une autre image.`);
         continue;
       }
+      const analysisLikeActions = new Set([
+        "analyze_image", "analyze_exam", "predict", "generate_gradcam",
+        "analyze_anatomy", "generate_report",
+      ]);
+      const cxrStatus = cxrResultRef.current?.rejected?.status ?? cxrResultRef.current?.sort.status;
+      if (action.type && analysisLikeActions.has(action.type) && cxrStatus
+        && (cxrStatus === "REJECTED_NON_CXR" || cxrStatus === "REJECTED_INVALID_IMAGE")) {
+        /* Fail-closed (Phase 3) : une image rejetée par le tri CXR ne reçoit
+           aucune analyse médicale (ensemble, Grad-CAM, CXAS/HybridGNet, rapport). */
+        warnings.push(
+          cxrStatus === "REJECTED_INVALID_IMAGE"
+            ? "Cette image ne peut pas être lue ou est endommagée : aucune analyse n'est lancée."
+            : "Cette image ne semble pas être une radiographie thoracique : aucune analyse médicale n'est lancée.",
+        );
+        continue;
+      }
       switch (action.type) {
         case "set_window_level":
           setWl({ window: Number(payload.window), level: Number(payload.level) });
@@ -1354,6 +1478,15 @@ pushHistory();
         case "predict":
           setAnalysis("done");
           break;
+        case "analyze_anatomy":
+          /* Analyse anatomique unifiée (CXAS + HybridGNet) : lancée en fond,
+             les résultats remplissent les panneaux Segmentation et Mesures. */
+          void runUnifiedAnatomyAnalysis().catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : "Analyse anatomique impossible.";
+            warnings.push(message);
+            recordAiAction(`Analyse anatomique : ${message}`);
+          });
+          break;
         case "generate_gradcam":
           if (!gradcamResultRef.current) {
             warnings.push("La g├®n├®ration Grad-CAM n'a pas fourni de carte exploitable.");
@@ -1361,7 +1494,10 @@ pushHistory();
           }
           break;
         case "generate_report":
-          warnings.push(`Action ${action.type} planifi├®e mais son service backend n'est pas encore reli├®.`);
+          /* Le moteur serveur convertit generate_report → replace_report
+             (rapport réel) ; cette branche n'est atteinte que si un plan
+             forfaitaire l'a contourné. Message non contradictoire. */
+          warnings.push("Rapport demandé mais non converti par le moteur d'actions serveur. Relancez la commande @report.");
           continue;
       }
       appliedActionIds.push(action.id);
@@ -1373,7 +1509,7 @@ pushHistory();
     }
     if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajout├®(s) par l'IA.`);
     return { appliedActionIds, warnings };
-  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl, notify]);
+  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl, notify, runUnifiedAnatomyAnalysis]);
 
   useEffect(() => {
     executePlanRef.current = executeAiActionPlan;
@@ -1774,6 +1910,7 @@ const closeDocument = useCallback(() => {
       toggleSection,
       analysis,
       runAnalysis,
+      runUnifiedAnatomyAnalysis,
       aiMode,
       setAiMode: (v: boolean) => {
         setAiMode(v);
@@ -1864,6 +2001,7 @@ imageSrc,
       probe, setProbe,
       collapsed, toggleSection, analysis,
       runAnalysis,
+      runUnifiedAnatomyAnalysis,
       aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,

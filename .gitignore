@@ -17,3 +17,4 @@ __pycache__/
 .runtime/
 .venv312/
 .pytest_cache/
+logs/

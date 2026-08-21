@@ -335,6 +335,7 @@ class ActionType(StrEnum):
     DELETE_SHAPE = "delete_shape"
     SET_LAYER_VISIBILITY = "set_layer_visibility"
     SET_LAYER_OPACITY = "set_layer_opacity"
+    ANALYZE_ANATOMY = "analyze_anatomy"
     GENERATE_REPORT = "generate_report"
     REPLACE_REPORT = "replace_report"
     NOTIFY = "notify"
@@ -355,6 +356,11 @@ class AnalyzeImageAction(ActionBase):
 
 class AnalyzeExamAction(ActionBase):
     type: Literal[ActionType.ANALYZE_EXAM]
+
+
+class AnalyzeAnatomyAction(ActionBase):
+    type: Literal[ActionType.ANALYZE_ANATOMY]
+    target_image_id: str = Field(default=None, max_length=128)
 
 
 class PredictAction(ActionBase):
@@ -604,7 +610,7 @@ WorkspaceAction = Annotated[Union[
     ShowGradcamAction, Generate3dAction, Show3dAction, ZoomToRegionAction, SetWindowLevelAction, SetBrightnessAction,
     SetContrastAction, InvertAction, CreateShapeAction, UpdateShapeAction,
     DeleteShapeAction, SetLayerVisibilityAction, SetLayerOpacityAction,
-    GenerateReportAction, ReplaceReportAction, NotifyAction,
+    AnalyzeAnatomyAction, GenerateReportAction, ReplaceReportAction, NotifyAction,
 ], Field(discriminator="type")]
 
 

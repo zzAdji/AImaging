@@ -555,6 +555,9 @@ export interface WorkspaceState {
   setAnatomySelected: (label: string | null) => void;
   /** Lance la segmentation CXAS de l'image active (idempotent par lancement). */
   runAnatomyAnalysis: (waitForImage?: boolean) => Promise<boolean>;
+  /** Analyse anatomique unifiée : segmentation CXAS + landmarks HybridGNet en
+   *  une seule requête, résultats séparés par source (jamais fusionnés). */
+  runUnifiedAnatomyAnalysis: (waitForImage?: boolean) => Promise<boolean>;
   /** Textes générés par l'IA Gemini pour chaque région anatomique (examen courant). */
   anatomyRegionTexts: Record<string, string>;
   anatomyRegionTextsLoading: boolean;

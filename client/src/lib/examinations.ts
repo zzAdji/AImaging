@@ -282,6 +282,24 @@ export function isRadiographyCompatible(image: ExamImage): boolean {
   return modality === "CR" || modality === "DX";
 }
 
+/**
+ * Phase 3 — Filtrage fail-closed du pipeline médical.
+ *
+ * Une image est prise en charge par le pipeline radiographique SEULEMENT si le
+ * tri opencxr l'a acceptée (ACCEPTED_CXR). Les statuts rejetés (non-CXR ou
+ * invalide) bloquent toute analyse médicale : ensemble, Grad-CAM, CXAS,
+ * HybridGNet et rapport.
+ */
+export function isImageRejectedByOpenCxr(image: ExamImage): boolean {
+  if (image.cxrRejected) {
+    return image.cxrRejected.status === "REJECTED_NON_CXR" || image.cxrRejected.status === "REJECTED_INVALID_IMAGE";
+  }
+  const status = image.cxrSort?.status;
+  if (status === "REJECTED_NON_CXR" || status === "REJECTED_INVALID_IMAGE") return true;
+  // Rétro-compatibilité : un tri sans statut explicite est accepté s'il n'est pas notCXR.
+  return image.cxrSort?.Type === "notCXR";
+}
+
 export interface ExamConsistencyIssue {
   level: "warning" | "error";
   message: string;

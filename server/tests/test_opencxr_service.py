@@ -11,6 +11,7 @@ import pytest
 
 import sorter_service
 import httpx
+from fastapi.testclient import TestClient
 
 
 class _FakeResponse:
@@ -68,7 +69,7 @@ def test_is_available_false_sans_url(monkeypatch):
     """Sans URL configurée, active_url() retombe sur le microservice local
     standard ; si ce dernier ne répond pas, le service est indisponible."""
     assert sorter_service.get_remote_url() == ""
-    assert sorter_service.active_url() == "http://127.0.0.1:8011"
+    assert sorter_service.active_url() == sorter_service.DEFAULT_OPEN_CXR_URL
     _patch_http(monkeypatch, {})
     assert sorter_service.is_available() is False
 
@@ -138,3 +139,82 @@ def test_sort_image_sans_url_leve_unavailable():
     sorter_service._remote_url = ""
     with pytest.raises(sorter_service.OpenCxrUnavailableError):
         sorter_service.sort_image(b"data", "img.png")
+
+
+# ---------------------------------------------------------------- Phase 3
+
+def _make_workspace(client, monkeypatch) -> str:
+    """Crée un espace de travail CR copié sur la fixture conftest."""
+    from workspace_protocol import WorkspaceManifest
+    from conftest import make_workspace_manifest
+    from main import workspace_store
+
+    raw = make_workspace_manifest(
+        modalities=["CR"], source_kinds=["dicom"], image_ids=["img-1"], widths=[256]
+    )
+    session = workspace_store.create(WorkspaceManifest.model_validate(raw))
+    return session.id
+
+
+def test_opencxr_sort_invalid_image_passe_en_200(monkeypatch):
+    """Une image invalide → 200 avec REJECTED_INVALID_IMAGE (jamais un 4xx qui
+    propagerait l'erreur brute SimpleITK à l'utilisateur, et jamais ACCEPTED)."""
+    from main import app
+
+    rejected_result = {
+        "status": "REJECTED_INVALID_IMAGE",
+        "is_cxr": False,
+        "Type": "notCXR",
+        "reason": "decode_failed",
+        "decoder": "decode_failed",
+        "inference_time_ms": 0.0,
+    }
+    monkeypatch.setattr("main.opencxr_available", lambda: True)
+    monkeypatch.setattr(
+        "main.opencxr_sort_image",
+        lambda data, filename: dict(rejected_result),
+    )
+    client = TestClient(app)
+    workspace_id = _make_workspace(client, monkeypatch)
+
+    response = client.post(
+        f"/workspace/exams/{workspace_id}/opencxr/sort",
+        data={"image_id": "img-1"},
+        files={"image": ("corrupt.png", b"this is not a png", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["result"]["status"] == "REJECTED_INVALID_IMAGE"
+    assert body["result"]["is_cxr"] is False
+
+
+def test_opencxr_sort_accepted_cxr_passe_les_statuts(monkeypatch):
+    """Une image acceptée → 200 avec ACCEPTED_CXR + confidence, status préservés."""
+    from main import app
+
+    accepted_result = {
+        "Type": "PA",
+        "Type_Probs_PA_AP_lateral_notCXR": [0.9, 0.05, 0.04, 0.01],
+        "status": "ACCEPTED_CXR",
+        "is_cxr": True,
+        "confidence": 0.99,
+        "decoder": "simpleitk",
+        "inference_time_ms": 7.5,
+    }
+    monkeypatch.setattr("main.opencxr_available", lambda: True)
+    monkeypatch.setattr(
+        "main.opencxr_sort_image",
+        lambda data, filename: dict(accepted_result),
+    )
+    client = TestClient(app)
+    workspace_id = _make_workspace(client, monkeypatch)
+
+    response = client.post(
+        f"/workspace/exams/{workspace_id}/opencxr/sort",
+        data={"image_id": "img-1"},
+        files={"image": ("radio.png", b"\x89PNG fake", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["result"]["status"] == "ACCEPTED_CXR"
+    assert body["result"]["confidence"] == 0.99

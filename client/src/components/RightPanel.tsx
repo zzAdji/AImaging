@@ -477,17 +477,35 @@ function OpenCxrSection() {
   const result = w.cxrResult;
   if (!result) return null;
   const { sort, standardize, rejected } = result;
-  if (rejected || sort.Type === "notCXR") {
+  const status = rejected?.status ?? sort.status;
+  if (status === "REJECTED_INVALID_IMAGE") {
     return (
       <Section id="opencxr" title="OpenCXR">
         <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2">
           <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
           <div>
             <p className="text-[11.5px] font-semibold text-red-200">
-              Image rejetée <Badge data="cxr-type" className="ml-1 border-red-500/40 bg-red-500/15 text-red-300">notCXR</Badge>
+              Image invalide <Badge data="cxr-type" className="ml-1 border-red-500/40 bg-red-500/15 text-red-300">invalide</Badge>
             </p>
             <p className="mt-0.5 text-[10.5px] leading-relaxed text-red-200/70">
-              {rejected?.reason ?? "L'image n'a pas été reconnue comme une radiographie frontale (PA/AP/latérale) : la standardisation n'a pas été lancée."}
+              Cette image ne peut pas être lue ou est endommagée. Aucune analyse n'a été lancée.
+            </p>
+          </div>
+        </div>
+      </Section>
+    );
+  }
+  if (rejected || status === "REJECTED_NON_CXR" || sort.Type === "notCXR") {
+    return (
+      <Section id="opencxr" title="OpenCXR">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+          <div>
+            <p className="text-[11.5px] font-semibold text-amber-200">
+              Image non-CXR <Badge data="cxr-type" className="ml-1 border-amber-500/40 bg-amber-500/15 text-amber-300">notCXR</Badge>
+            </p>
+            <p className="mt-0.5 text-[10.5px] leading-relaxed text-amber-200/70">
+              Cette image ne semble pas être une radiographie thoracique. Aucune analyse médicale n'a été lancée.
             </p>
           </div>
         </div>
@@ -497,9 +515,10 @@ function OpenCxrSection() {
   return (
     <Section id="opencxr" title="OpenCXR">
       <div className="flex flex-wrap gap-1.5">
-        <Badge data="cxr-type" className="border-accent/40 bg-accent/10 text-accent">
-          {sort.Type}
-        </Badge>
+        <Badge data="cxr-type" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300">CXR detected</Badge>
+        {typeof sort.confidence === "number" && (
+          <Badge className="border-border bg-card text-ink-2">CXR {Math.round(sort.confidence * 100)} %</Badge>
+        )}
         <Badge>Rot {sort.Rotation}°</Badge>
         <Badge>{sort.Inversion === "Yes" ? "Image inversée" : "Pas d'inversion"}</Badge>
         <Badge>{sort.Lateral_Flip === "Yes" ? "Mirroir" : "Pas de mirroir"}</Badge>

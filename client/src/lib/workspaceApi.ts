@@ -415,6 +415,63 @@ export interface WorkspaceAnatomyResponse {
   result: WorkspaceAnatomyResult;
 }
 
+/* ----------------------- Anatomie unifiée (CXAS + HybridGNet) ----------------------- */
+
+/**
+ * Résultat d'un moteur anatomique (``source=CXAS`` ou ``source=HybridGNet``).
+ * Les deux moteurs ne sont jamais fusionnés mathématiquement : chaque bloc
+ * reste traçable avec son statut, son erreur et son payload.
+ */
+export interface AnatomyAnalysisSourcePayload {
+  source: "CXAS" | "HybridGNet";
+  status: string; // ok | error
+  error: string | null;
+  inference_time_ms: number | null;
+  payload: {
+    segmentation?: WorkspaceAnatomyResult["segmentation"];
+    measurements?: Record<string, AnatomyMeasurementValue> | WorkspaceLandmarksResult["measurements"];
+    warnings?: string[];
+    contours?: WorkspaceLandmarksResult["contours"];
+    custom?: LandmarkCustomMeasure[];
+    uncertainty?: { max_node_std_px: number; mean_node_std_px: number };
+    scale_used?: "mm" | "pixels";
+    ctr_method?: string;
+    lines?: LandmarkLine[];
+  };
+}
+
+export interface WorkspaceAnatomyAnalysisResponse {
+  workspace_id: string;
+  image_id: string;
+  status: string; // ok | partial | error
+  sources: string[];
+  cxas: AnatomyAnalysisSourcePayload | null;
+  hybridgnet: AnatomyAnalysisSourcePayload | null;
+  warnings: string[];
+  inference_time_ms: number | null;
+  generated_at: string;
+}
+
+/**
+ * Analyse anatomique unifiée : segmentation CXAS + landmarks HybridGNet en une
+ * seule requête. Les résultats restent séparés par source (``cxas`` /
+ * ``hybridgnet``) pour que le client puisse les afficher distinctement.
+ */
+export async function generateWorkspaceAnatomyAnalysis(
+  workspaceId: string,
+  image: ExamImage,
+): Promise<WorkspaceAnatomyAnalysisResponse> {
+  const body = new FormData();
+  body.append("image_id", image.id);
+  body.append("image", await imageToBlob(image), image.name || `${image.id}.png`);
+  if (image.metadata?.pixelSpacingMm) {
+    body.append("pixel_spacing_mm", image.metadata.pixelSpacingMm.join(","));
+  }
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/anatomy-analysis`, { method: "POST", body });
+  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text() || response.statusText}`);
+  return response.json() as Promise<WorkspaceAnatomyAnalysisResponse>;
+}
+
 /** Segmente une image (CXAS, 159 classes PAXRay) et mesure CTR/SCD. */
 export async function generateWorkspaceAnatomy(
   workspaceId: string,
@@ -576,6 +633,9 @@ export async function generateWorkspaceLandmarks(
 
 /* --------------------------- OpenCXR (tri + normalisation) --------------------------- */
 
+/** Statuts fail-closed du tri CXR (contrat opencxr). */
+export type CxrSortStatus = "ACCEPTED_CXR" | "REJECTED_NON_CXR" | "REJECTED_INVALID_IMAGE";
+
 /** Classifications de l'Image Sorter opencxr pour une radio. */
 export interface OpenCxrSortResult {
   Type: "PA" | "AP" | "lateral" | "notCXR";
@@ -587,6 +647,16 @@ export interface OpenCxrSortResult {
   Inversion_Probs_No_Yes: number[];
   Lateral_Flip_Probs_No_Yes: number[];
   inference_time_ms: number;
+  /** Statut fail-closed du tri (Phase 3). */
+  status: CxrSortStatus;
+  /** true si l'image est considérée comme une radiographie thoracique. */
+  is_cxr: boolean;
+  /** Confiance CXR (1 - probabilité notCXR), si disponible. */
+  confidence?: number | null;
+  /** Raison de rejet (ex. low_cxr_probability, decode_failed). */
+  reason?: string;
+  /** Canal de décodage utilisé : simpleitk | pillow_fallback | decode_failed. */
+  decoder?: string;
 }
 
 /** Image standardisée par opencxr (intensités normalisées, crop poumons, resize carré). */
@@ -599,10 +669,15 @@ export interface OpenCxrStandardizeResult {
   inference_time_ms: number;
 }
 
-/** Rejet d'une image par le tri opencxr (Type = notCXR) : standardisation non lancée. */
+/** Rejet d'une image par le tri opencxr (non-CXR ou invalide) : standardisation
+ *  non lancée, aucune analyse médicale. */
 export interface OpenCxrRejection {
+  /** Statut fail-closed du tri : REJECTED_NON_CXR | REJECTED_INVALID_IMAGE. */
+  status: CxrSortStatus;
   reason: string;
   at: number;
+  /** Canal de décodage utilisé (simpleitk | pillow_fallback | decode_failed). */
+  decoder?: string;
 }
 
 /** Résultats opencxr cumulés d'une image (tri + normalisation) ; standardize est absent si l'image a été rejetée. */

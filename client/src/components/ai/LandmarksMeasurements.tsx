@@ -70,7 +70,10 @@ export function LandmarksMeasurementsCard() {
     const canvas = overlayRef.current;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /* Pas de clearRect ici : il produirait un flash noir entre le survol et
+       le re-rendu (chargement asynchrone de l'image de base). L'ancien frame
+       reste visible ; canvas.width/height réinitialise le bitmap dans onload
+       juste avant le dessin. */
 
     const base = new Image();
     base.onload = () => {
@@ -304,10 +307,6 @@ export function LandmarksMeasurementsCard() {
               Survolez un contour pour l'identifier ; cliquez pour le sélectionner.
             </p>
 
-            {ok.ctr_method && (
-              <p className="text-[9px] text-ink-3">{ok.ctr_method}</p>
-            )}
-
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -328,9 +327,7 @@ export function LandmarksMeasurementsCard() {
                 </button>
               )}
             </div>
-            <p className="text-[9px] text-ink-3">
-              Trace les diamètres et l'étiquette CTR sur la radiographie, comme un radiologue.
-            </p>
+           
           </div>
         )}
       </div>

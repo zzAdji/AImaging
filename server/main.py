@@ -6,10 +6,11 @@ import json
 import logging
 import re
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -97,6 +98,17 @@ def _three_d_default_iterations() -> int:
     return int(MODEL_CONFIG["reconstruction"]["n_iter"])
 
 
+def _is_cxas_infrastructure_error(message: str | None) -> bool:
+    """Une erreur CXAS est une panne d'infrastructure (lib/poids absents) ?"""
+    if not message:
+        return False
+    return any(marker in message for marker in (
+        "n'est pas installée",
+        "n'a pas pu être instancié",
+        "poids non téléchargés",
+    ))
+
+
 def _is_radiography_compatible(image) -> bool:
     """The loaded ensemble is restricted to computed/digital radiographs."""
     if image.source_kind != "dicom":
@@ -182,7 +194,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="HGG AI — Plateforme de diagnostic imagerie", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://0.0.0.0:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type"],
@@ -285,6 +297,33 @@ class WorkspaceLandmarksResponse(BaseModel):
     scale_used: str = "pixels"
     ctr_method: str = ""
     lines: list = []
+    inference_time_ms: float | None = None
+    generated_at: str
+
+
+class AnatomyAnalysisSourceResult(BaseModel):
+    """Résultat d'un moteur anatomique (CXAS ou HybridGNet).
+
+    ``source`` identifie le moteur exact qui a produit ``payload`` : les deux
+    analyses ne sont jamais fusionnées mathématiquement, le client peut
+    afficher séparément ``source=CXAS`` et ``source=HybridGNet``.
+    """
+
+    source: Literal["CXAS", "HybridGNet"]
+    status: str = "ok"  # ok | error
+    error: str | None = None
+    inference_time_ms: float | None = None
+    payload: dict = {}
+
+
+class WorkspaceAnatomyAnalysisResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    status: str = "ok"  # ok | partial | error
+    sources: List[str] = []
+    cxas: AnatomyAnalysisSourceResult | None = None
+    hybridgnet: AnatomyAnalysisSourceResult | None = None
+    warnings: List[str] = []
     inference_time_ms: float | None = None
     generated_at: str
 
@@ -640,10 +679,17 @@ async def generate_workspace_anatomy(
         tmp_path = Path(tmp.name)
     try:
         from anatomy_service import analyze_anatomy_image  # noqa: PLC0415
+        from anatomy.cxas_engine import CxasUnavailableError  # noqa: PLC0415
 
         result = analyze_anatomy_image(
             tmp_path, CxasServerConfig(), pixel_spacing_mm=spacing
         )
+        if result["status"] == "error" and _is_cxas_infrastructure_error(result.get("error")):
+            # Erreur CXAS connue (bibliothèque/poids absents) : même surface
+            # d'erreur que /landmarks (503), pas un 200 ambigu. Un statut
+            # "error" sans message CXAS reste un résultat d'analyse valide
+            # (ex. "aucune structure anatomique détectée").
+            raise CxasUnavailableError(result["error"] or "Analyse anatomique impossible")
         return WorkspaceAnatomyResponse(
             workspace_id=workspace_id,
             image_id=image_id,
@@ -655,6 +701,8 @@ async def generate_workspace_anatomy(
             inference_time_ms=result["inference_time_ms"],
             generated_at=datetime.now(UTC).isoformat(),
         )
+    except CxasUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Échec de l'analyse anatomique pour l'image %s.", image_id)
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse anatomique : {exc}") from exc
@@ -752,6 +800,131 @@ async def generate_workspace_landmarks(
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse landmarks : {exc}") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/workspace/exams/{workspace_id}/anatomy-analysis", response_model=WorkspaceAnatomyAnalysisResponse)
+async def generate_workspace_anatomy_analysis(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+    pixel_spacing_mm: str | None = Form(default=None),
+    n_samples: str = Form(default="50"),
+) -> WorkspaceAnatomyAnalysisResponse:
+    """Analyse anatomique unifiée : segmentation CXAS + landmarks HybridGNet.
+
+    Les deux moteurs restent strictement séparés (``cxas`` / ``hybridgnet``
+    dans la réponse, chacun avec sa ``source``) : aucune fusion mathématique.
+    Une défaillance d'un moteur n'empêche pas l'autre — le statut global est
+    alors ``partial``.
+    """
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    if not _is_radiography_compatible(workspace_image):
+        raise HTTPException(status_code=422, detail=_radiography_modality_message(workspace_image))
+
+    spacing = None
+    if pixel_spacing_mm:
+        try:
+            values = tuple(float(x) for x in pixel_spacing_mm.split(","))
+            spacing = values if len(values) == 2 else None
+        except ValueError:
+            raise HTTPException(status_code=422, detail="pixel_spacing_mm attend R,C (ex: 0.1688,0.1688)") from None
+
+    try:
+        samples = int(n_samples)
+        samples = samples if 1 <= samples <= 200 else 50
+    except ValueError:
+        samples = 50
+
+    suffix = Path(image.filename or "image.png").suffix or ".png"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(await image.read())
+        tmp_path = Path(tmp.name)
+
+    started = time.perf_counter()
+    warnings: list[str] = []
+    cxas_result: AnatomyAnalysisSourceResult | None = None
+    hybridgnet_result: AnatomyAnalysisSourceResult | None = None
+
+    try:
+        try:
+            from anatomy_service import analyze_anatomy_image  # noqa: PLC0415
+            from anatomy.cxas_engine import CxasUnavailableError  # noqa: PLC0415
+
+            cxas = analyze_anatomy_image(tmp_path, CxasServerConfig(), pixel_spacing_mm=spacing)
+            cxas_result = AnatomyAnalysisSourceResult(
+                source="CXAS",
+                status=cxas.get("status", "error"),
+                error=cxas.get("error"),
+                inference_time_ms=cxas.get("inference_time_ms"),
+                payload={
+                    "segmentation": cxas.get("segmentation", {}),
+                    "measurements": cxas.get("measurements", {}),
+                    "warnings": cxas.get("warnings", []),
+                },
+            )
+            if cxas_result.status != "ok":
+                warnings.append(f"Source CXAS : {cxas.get('error') or 'résultat non exploitable'}")
+        except CxasUnavailableError as exc:
+            cxas_result = AnatomyAnalysisSourceResult(source="CXAS", status="error", error=str(exc))
+            warnings.append(f"Source CXAS indisponible : {exc}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Analyse anatomique CXAS en échec pour %s.", image_id)
+            cxas_result = AnatomyAnalysisSourceResult(source="CXAS", status="error", error=f"{type(exc).__name__}: {exc}")
+            warnings.append(f"Source CXAS en échec : {exc}")
+
+        try:
+            from chexmask_service import analyze_landmarks  # noqa: PLC0415
+            from chexmask.inference import CheXmaskUnavailableError  # noqa: PLC0415
+
+            lm = analyze_landmarks(tmp_path, pixel_spacing_mm=spacing, n_samples=samples)
+            hybridgnet_result = AnatomyAnalysisSourceResult(
+                source="HybridGNet",
+                status=lm.get("status", "error"),
+                error=lm.get("error"),
+                inference_time_ms=lm.get("inference_time_ms"),
+                payload={
+                    "contours": lm.get("contours", {}),
+                    "measurements": lm.get("measurements", {}),
+                    "custom": lm.get("custom", []),
+                    "warnings": lm.get("warnings", []),
+                    "uncertainty": lm.get("uncertainty", {}),
+                    "scale_used": lm.get("scale_used", "pixels"),
+                    "ctr_method": lm.get("ctr_method", ""),
+                    "lines": lm.get("lines", []),
+                },
+            )
+            if hybridgnet_result.status != "ok":
+                warnings.append(f"Source HybridGNet : {lm.get('error') or 'résultat non exploitable'}")
+        except CheXmaskUnavailableError as exc:
+            hybridgnet_result = AnatomyAnalysisSourceResult(source="HybridGNet", status="error", error=str(exc))
+            warnings.append(f"Source HybridGNet indisponible : {exc}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Analyse landmarks HybridGNet en échec pour %s.", image_id)
+            hybridgnet_result = AnatomyAnalysisSourceResult(source="HybridGNet", status="error", error=f"{type(exc).__name__}: {exc}")
+            warnings.append(f"Source HybridGNet en échec : {exc}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    sources = [block.source for block in (cxas_result, hybridgnet_result) if block is not None]
+    statuses = [block.status for block in (cxas_result, hybridgnet_result) if block is not None]
+    global_status = "ok" if statuses and all(s == "ok" for s in statuses) else ("partial" if any(s == "ok" for s in statuses) else "error")
+
+    return WorkspaceAnatomyAnalysisResponse(
+        workspace_id=workspace_id,
+        image_id=image_id,
+        status=global_status,
+        sources=sources,
+        cxas=cxas_result,
+        hybridgnet=hybridgnet_result,
+        warnings=warnings,
+        inference_time_ms=round((time.perf_counter() - started) * 1000, 1),
+        generated_at=datetime.now(UTC).isoformat(),
+    )
 
 
 @app.post("/workspace/exams/{workspace_id}/opencxr/sort", response_model=WorkspaceOpenCxrSortResponse)
@@ -1159,7 +1332,7 @@ async def run_workspace_agent_turn(
         "Contrôles de cohérence déterministes :\n"
         f"{json.dumps([issue.model_dump(mode='json') for issue in consistency_issues], ensure_ascii=False, separators=(',', ':'))}\n\n"
         "Capacités disponibles :\n"
-        f"{json.dumps({'available_action_types': [action.value for action in ActionType]}, ensure_ascii=False)}"
+        f"{json.dumps({'available_action_types': [action.value for action in ActionType if action.value not in {'generate_3d', 'show_3d'}]}, ensure_ascii=False)}"
     )
     turn_started_at = datetime.now(UTC)
     try:

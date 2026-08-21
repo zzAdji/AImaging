@@ -1,13 +1,11 @@
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Boxes, Crosshair, Cpu, History, Lightbulb, List, Map, Ruler, Save, Scan, Settings2, Stethoscope, Trash2, X, Zap,
+  ArrowLeft, Crosshair, History, Lightbulb, List, Map, Ruler, Save, Scan, Stethoscope, Trash2, X, Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AI_PROMPTS } from "../../lib/aiCommands";
-import { THREE_D_FEATURE_ENABLED } from "../../lib/examinations";
 import { cn } from "../../lib/cn";
-import { getWorkspaceThreeDBackend, updateWorkspaceThreeDBackend } from "../../lib/workspaceApi";
 import { useWorkspace } from "../../state/workspace";
 import { Divider } from "../ui";
 
@@ -334,129 +332,6 @@ function RadioToolButton({
   );
 }
 
-/* ------------------------------ Backend 3D ------------------------------- */
-
-function ThreeDBackendPanel() {
-  const [info, setInfo] = useState<{ mode: "local" | "remote"; remote_url: string | null; reachable: boolean | null; backend: { gpu?: string | null } | null } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const next = await getWorkspaceThreeDBackend();
-        if (cancelled) return;
-        setInfo(next);
-        setDraft(next.remote_url ?? "");
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Impossible d'interroger le backend 3D.");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const apply = async (value: string) => {
-    try {
-      const next = await updateWorkspaceThreeDBackend(value);
-      setInfo(next);
-      setDraft(next.remote_url ?? "");
-      setError(null);
-      if (next.mode === "remote") {
-        if (next.reachable) {
-          setOpen(false);
-        } else {
-          setError("Service distant injoignable — vérifiez l'URL du tunnel (session Kaggle active ?).");
-        }
-      } else {
-        setOpen(false);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Mise à jour refusée.");
-    }
-  };
-
-  const statusLabel = !info
-    ? "Chargement…"
-    : info.mode === "local"
-      ? "CPU local"
-      : info.reachable
-        ? `GPU distant${info.backend?.gpu ? ` (${info.backend.gpu})` : ""}`
-        : "GPU distant (injoignable)";
-  const dotClass = !info
-    ? "bg-ink-3"
-    : info.mode === "local"
-      ? "bg-ink-3"
-      : info.reachable
-        ? "bg-emerald-400"
-        : "bg-amber-400";
-
-  return (
-    <div className="mx-3 mb-3">
-      <button
-        type="button"
-        data-attr="ai-3d-backend-toggle"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 text-left transition-colors duration-150 ease-out hover:border-accent/40"
-        title="Backend de la reconstruction 3D"
-      >
-        <Cpu size={14} strokeWidth={2} className="shrink-0 text-icon" />
-        <span className="truncate text-[11px] text-ink-2">{statusLabel}</span>
-        <span className={`ml-auto h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
-        <Settings2 size={13} strokeWidth={2} className="shrink-0 text-ink-3" />
-      </button>
-
-      {open && (
-        <div className="mt-1.5 rounded-lg border border-border bg-card p-2.5" data-attr="ai-3d-backend-editor">
-          <p className="mb-1.5 text-[10.5px] leading-snug text-ink-3">
-            Collez l'URL du tunnel Kaggle (<span className="font-mono">https://…trycloudflare.com</span>) pour
-            déléguer la reconstruction au GPU, ou videz pour revenir au CPU local.
-          </p>
-          <div className="flex gap-1.5">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="https://xxx.trycloudflare.com"
-              spellCheck={false}
-              className="min-w-0 flex-1 rounded border border-border bg-panel px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
-            />
-            <button
-              type="button"
-              data-attr="ai-3d-backend-apply"
-              onClick={() => void apply(draft.trim())}
-              className="shrink-0 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] text-accent hover:bg-accent/20"
-            >
-              App
-            </button>
-          </div>
-          <div className="mt-1.5 flex items-center justify-between">
-            <button
-              type="button"
-              data-attr="ai-3d-backend-local"
-              onClick={() => void apply("")}
-              className="rounded px-1.5 py-0.5 text-[10.5px] text-ink-3 underline-offset-2 hover:text-ink hover:underline"
-            >
-              Utiliser le CPU local
-            </button>
-            <button
-              type="button"
-              data-attr="ai-3d-backend-close"
-              onClick={() => { setOpen(false); setError(null); }}
-              className="rounded px-1.5 py-0.5 text-[10.5px] text-ink-3 hover:text-ink"
-            >
-              Fermer
-            </button>
-          </div>
-          {error && <p className="mt-1.5 text-[10.5px] leading-snug text-red-400">{error}</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* --------------------------------- Sidebar ---------------------------------- */
 
 export function AiSidebarLeft({
@@ -583,21 +458,6 @@ export function AiSidebarLeft({
           <SectionTitle icon={Stethoscope}>Outils radio</SectionTitle>
           <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
             <RadioToolButton
-              label="3D"
-              icon={Boxes}
-              active={w.threeDOn || w.threeDRunning}
-              disabled={!THREE_D_FEATURE_ENABLED}
-              dataAttr="ai-tool-3d"
-              onClick={() => {
-                if (w.threeDRunning) return;
-                if (w.threeDResult) {
-                  w.setThreeDOn(!w.threeDOn);
-                  return;
-                }
-                w.runAiCommand("@3d");
-              }}
-            />
-            <RadioToolButton
               label="Sonde"
               icon={Crosshair}
               active={w.tool === "probe"}
@@ -626,8 +486,6 @@ export function AiSidebarLeft({
               onClick={() => w.toggleLandmarksCard()}
             />
           </div>
-
-          <ThreeDBackendPanel />
         </div>
       )}
     </motion.aside>

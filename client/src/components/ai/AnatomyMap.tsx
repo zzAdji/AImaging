@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapPin, RefreshCw, Wand2 } from "lucide-react";
+import { MapPin, RefreshCw } from "lucide-react";
 import { useWorkspace } from "../../state/workspace";
 import {
   ANATOMY_MAP_HEIGHT,
@@ -246,8 +246,10 @@ export function AnatomyMapCard() {
 
           <div className="border-t border-border/70 pt-1.5">
             <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-              {effectiveRegion ? "Votre image (IA)" : "Interprétation IA par région"}
+              {effectiveRegion ? `Observation — ${effectiveRegion.label}` : "Observation"}
             </p>
+
+            {/* Interprétation IA (ex-« Votre image (IA) ») — générée à l'ouverture */}
             {effectiveRegion ? (
               regionText ? (
                 <p className="mt-0.5 whitespace-pre-wrap text-[10px] leading-relaxed text-ink">
@@ -269,41 +271,28 @@ export function AnatomyMapCard() {
                   </button>
                 </div>
               ) : (
-                <div className="mt-0.5 space-y-1">
-                  <p className="text-[10px] italic text-ink-3">
-                    {w.anatomyResult?.status === "ok"
-                      ? "Interprétation non générée pour cette région."
-                      : "Lancez la segmentation anatomique (CXAS) pour obtenir les interprétations par région."}
-                  </p>
-                  {w.anatomyResult?.status === "ok" && (
-                    <button
-                      type="button"
-                      data-attr="ai-anatomy-generate"
-                      onClick={() => void w.loadAnatomyRegionTexts()}
-                      className="inline-flex items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2 py-1 text-[9.5px] font-medium text-accent transition-colors duration-150 ease-out hover:bg-accent/20"
-                    >
-                      <Wand2 size={10} />
-                      Générer l'interprétation
-                    </button>
-                  )}
-                </div>
+                <p className="mt-0.5 text-[10px] italic text-ink-3">
+                  {w.anatomyResult?.status === "ok"
+                    ? "Interprétation non générée pour cette région."
+                    : "Lancez la segmentation anatomique (CXAS) pour obtenir les interprétations par région."}
+                </p>
               )
             ) : (
               <p className="mt-0.5 text-[10px] italic text-ink-3">
-                Survolez une région de la carte (ou posez la sonde) pour afficher son analyse.
+                Survolez une région de la carte (ou posez la sonde) pour afficher son observation.
               </p>
             )}
-          </div>
 
-          <div className="border-t border-border/70 pt-1.5">
-            <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-              {effectiveRegion ? "Constats IA — cette région" : "Résultats sur l'ensemble"}
-            </p>
-            {findings.length === 0 ? (
-              <p className="mt-0.5 text-[10px] italic text-ink-3">
-                Rien d'anormal signalé {effectiveRegion ? "dans cette région" : "pour l'instant"}.
-              </p>
-            ) : <></> }
+            {/* Constats IA (fusionnés dans l'Observation) */}
+            <div className="mt-1 space-y-0.5">
+              {findings.length === 0 ? (
+                <p className="mt-0.5 text-[10px] italic text-ink-3">
+                  Rien d'anormal signalé {effectiveRegion ? "dans cette région" : "pour l'instant"}.
+                </p>
+              ) : (
+                <></>
+              )}
+            </div>
           </div>
         </div>
       </div>

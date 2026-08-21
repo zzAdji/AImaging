@@ -31,6 +31,7 @@ _remote_url_lock = threading.Lock()
 
 # URL du microservice opencxr local standard (celui de ``run_micro.bat``) :
 # utilisé quand aucune URL n'est configurée (ni OPEN_CXR_URL, ni PUT backend).
+# Le microservice se lie en 127.0.0.1:8011 (cf. scripts/opencxr/run_micro.bat).
 DEFAULT_OPEN_CXR_URL = os.environ.get("OPEN_CXR_DEFAULT_URL", "http://127.0.0.1:8011").strip().rstrip("/")
 
 

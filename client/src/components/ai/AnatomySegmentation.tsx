@@ -122,9 +122,6 @@ export function AnatomySegmentationCard() {
      (paintAnatomyMask) au lieu de tout recalculer (prepareAnatomyMask) à
      chaque déplacement de la souris. Vidée à chaque nouvelle analyse. */
   const geometryCacheRef = useRef<Map<string, AnatomyMaskGeometry>>(new Map());
-  useEffect(() => {
-    geometryCacheRef.current = new Map();
-  }, [masksKey]);
 
   /* Couches effectives de l'overlay (fond -> premier plan), + poumons
      fusionnés en secours si aucun poumon latéral n'a été détecté. */
@@ -166,13 +163,24 @@ export function AnatomySegmentationCard() {
      sélection rehaussés (aplat/contour montés + halo), vignette finale pour
      donner du relief. La géométrie de chaque masque (partie coûteuse) est
      mise en cache ; seule la composition (bon marché) rejoue à chaque
-     changement de survol/sélection. */
+     changement de survol/sélection. La base grayscale est elle aussi mise en
+     cache : sans cela, chaque survol re-décodait et re-dessinait la radio
+     complète (plusieurs Mo), d'où un ralentissement perceptible. */
+  const baseCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  useEffect(() => {
+    geometryCacheRef.current = new Map();
+    baseCacheRef.current = null;
+  }, [masksKey]);
   useEffect(() => {
     if (!result || result.status !== "ok" || !overlayRef.current) return;
     const canvas = overlayRef.current;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /* Pas de clearRect ici : il produirait un flash noir entre le survol et
+       le re-rendu (le chargement de l'image de base est asynchrone). L'ancien
+       frame reste affiché jusqu'à ce que le nouveau soit prêt ; la
+       réaffectation de canvas.width/height dans onload réinitialise déjà le
+       bitmap juste avant le dessin. */
 
     const base = new Image();
     base.onload = () => {
@@ -181,11 +189,22 @@ export function AnatomySegmentationCard() {
         base.height,
         MAX_CANVAS_LONG_SIDE,
       );
+      const baseKey = `${masksKey}:${targetW}x${targetH}`;
+      let baseCanvas = baseCacheRef.current?.key === baseKey ? baseCacheRef.current.canvas : null;
+      if (!baseCanvas) {
+        baseCanvas = document.createElement("canvas");
+        baseCanvas.width = targetW;
+        baseCanvas.height = targetH;
+        const bctx = baseCanvas.getContext("2d");
+        if (!bctx) return;
+        bctx.filter = "grayscale(1) contrast(1.08)";
+        bctx.drawImage(base, 0, 0, targetW, targetH);
+        bctx.filter = "none";
+        baseCacheRef.current = { key: baseKey, canvas: baseCanvas };
+      }
       canvas.width = targetW;
       canvas.height = targetH;
-      ctx.filter = "grayscale(1) contrast(1.08)";
-      ctx.drawImage(base, 0, 0, targetW, targetH);
-      ctx.filter = "none";
+      ctx.drawImage(baseCanvas, 0, 0);
 
       for (const id of layers) {
         const mask = activeMasks[id];

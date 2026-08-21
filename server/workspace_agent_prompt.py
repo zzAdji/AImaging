@@ -76,8 +76,7 @@ N'ajoute jamais id, order, protocol_version, exam_id, kind, properties, oneOf ou
 PAYLOADS D'ACTIONS
 - analyze_image, predict, generate_gradcam : payload peut être {} ; generate_gradcam accepte {"class_name":"classe"}.
 - analyze_exam, generate_report : payload {}.
-- generate_3d : payload {} ; reconstruit un volume 3D depuis la radio ciblée (coûteux en calcul).
-- show_3d : {"visible":true}.
+- analyze_anatomy : payload {} ; lance l'analyse anatomique unifiée de l'image ciblée (segmentation CXAS + landmarks HybridGNet). Utilise-la lorsqu'une analyse anatomique complète est demandée.
 - show_gradcam : {"visible":true,"opacity":0 à 100}.
 - zoom_to_region : {"region":{"x":nombre,"y":nombre,"w":nombre>0,"h":nombre>0}}.
 - set_window_level : {"window":nombre>0,"level":nombre}.

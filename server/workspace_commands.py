@@ -28,7 +28,6 @@ COMMAND_CATALOG = [
     {"name": "analyze", "usage": "@analyze [image:<id>|all]", "description": "Analyse une image ou tout l'examen."},
     {"name": "predict", "usage": "@predict [image:<id>|all]", "description": "Lance la classification radiographique."},
     {"name": "gradcam", "usage": "@gradcam [image:<id>|all] [class:<nom>] [opacity:0-100]", "description": "Calcule et affiche une Grad-CAM."},
-    {"name": "3d", "usage": "@3d [image:<id>]", "description": "Reconstruit le volume 3D de la radio et l'affiche."},
     {"name": "wl", "usage": "@wl [image:<id>] preset:<lung|bone|soft|default> | window:<n> level:<n>", "description": "Applique un fenêtrage."},
     {"name": "brightness", "usage": "@brightness value:0-100 [image:<id>]", "description": "Règle la luminosité."},
     {"name": "contrast", "usage": "@contrast value:0-100 [image:<id>]", "description": "Règle le contraste."},
@@ -36,6 +35,7 @@ COMMAND_CATALOG = [
     {"name": "annotation", "usage": "@annotation text:\"...\" x:<px> y:<px> [image:<id>] [color:#RRGGBB] [size:<px>]", "description": "Crée une annotation texte."},
     {"name": "measure", "usage": "@measure x1:<px> y1:<px> x2:<px> y2:<px> [image:<id>] [color:#RRGGBB] [width:<px>]", "description": "Crée une mesure."},
     {"name": "layer", "usage": "@layer layer:<image|annotations|measurements|gradcam> visible:<true|false> [opacity:0-100] [image:<id>]", "description": "Modifie une couche."},
+    {"name": "anatomy", "usage": "@anatomy [image:<id>]", "description": "Analyse anatomique complète : segmentation CXAS + landmarks HybridGNet (mesures CTR/SCD tracées par source)."},
     {"name": "report", "usage": "@report", "description": "Génère le rapport à partir des prédictions."},
     {"name": "help", "usage": "@help", "description": "Affiche le catalogue des commandes."},
 ]
@@ -129,11 +129,6 @@ def parse_explicit_command(text: str, manifest: WorkspaceManifest) -> CommandRes
                 actions.append(_new_action("generate_gradcam", len(actions), "Grad-CAM demandée par l'utilisateur.", target_image_id=image_id, class_name=options.get("class")))
                 actions.append(_new_action("show_gradcam", len(actions), "Afficher la Grad-CAM demandée.", target_image_id=image_id, opacity=int(options.get("opacity", "62"))))
 
-    elif command == "3d":
-        image_id = _target_ids(manifest, options, allow_all=False)[0]
-        actions.append(_new_action("generate_3d", 0, "Reconstruction 3D demandée par l'utilisateur.", target_image_id=image_id))
-        actions.append(_new_action("show_3d", 1, "Afficher le volume 3D reconstruit.", target_image_id=image_id, visible=True))
-
     elif command == "wl":
         image_id = _target_ids(manifest, options, allow_all=False)[0]
         if "preset" in options:
@@ -183,6 +178,10 @@ def parse_explicit_command(text: str, manifest: WorkspaceManifest) -> CommandRes
             actions.append(_new_action("set_layer_opacity", len(actions), "Opacité de couche demandée.", target_image_id=image_id, layer=layer, opacity=int(options["opacity"])))
         if not actions:
             raise CommandError("@layer exige visible:true|false et/ou opacity:0-100.")
+
+    elif command == "anatomy":
+        image_id = _target_ids(manifest, options, allow_all=False)[0]
+        actions.append(_new_action("analyze_anatomy", 0, "Analyse anatomique complète demandée par l'utilisateur.", target_image_id=image_id))
 
     elif command == "report":
         if options:

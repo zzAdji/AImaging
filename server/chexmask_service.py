@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 logger = logging.getLogger("server.chexmask_service")
 
 
@@ -53,15 +55,31 @@ def analyze_landmarks(
     computed = compute_measurements(result, pixel_spacing_mm=pixel_spacing_mm, custom_measures=custom_measures)
     sets = landmark_sets(result)
 
+    uncertainty = computed["uncertainty"]
+    inf_ms = round((time.perf_counter() - t0) * 1000, 1)
+    logger.info(
+        "HybridGNet: n_nodes=%d input_res=%dx%d output_res=1024x1024 unit=%s "
+        "uncertainty_max_px=%.2f uncertainty_mean_px=%.2f device=%s n_samples=%d inference_ms=%.1f",
+        len(result["nodes"]),
+        np.shape(image)[1],
+        np.shape(image)[0],
+        computed["scale_used"],
+        uncertainty.get("max_node_std_px", float("nan")),
+        uncertainty.get("mean_node_std_px", float("nan")),
+        engine.device,
+        n_samples,
+        inf_ms,
+    )
+
     return {
         "status": "ok",
         "contours": sets,
         "measurements": computed["measurements"],
         "custom": computed["custom"],
         "warnings": computed["warnings"],
-        "uncertainty": computed["uncertainty"],
+        "uncertainty": uncertainty,
         "scale_used": computed["scale_used"],
         "ctr_method": computed["ctr_method"],
         "lines": computed["lines"],
-        "inference_time_ms": round((time.perf_counter() - t0) * 1000, 1),
+        "inference_time_ms": inf_ms,
     }
