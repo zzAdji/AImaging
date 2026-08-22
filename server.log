@@ -1,0 +1,43 @@
+PS C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr> ..\..\.venv312\Scripts\python.exe -m 
+uvicorn microserver:app --host 0.0.0.0 --port 8011
+INFO:opencxr.microserver:Préchargement des modèles opencxr (premier démarrage : ~1-3 min)...
+INFO:     Started server process [26232]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8011 (Press CTRL+C to quit)
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1787403168.830372   18940 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1787403173.431359   18940 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+algorithm [ImageSorterAlgorithm] was created
+INFO:opencxr.microserver:Image Sorter prêt en 10.7s.
+WARNING:tensorflow:TensorFlow GPU support is not available on native Windows for TensorFlow >= 2.11. Even if CUDA/cuDNN are installed, GPU will not be used. Please use WSL2 or the TensorFlow-DirectML plugin.
+algorithm [LungSegmentationAlgorithm] was created
+algorithm [CXRStandardizationAlgorithm] was created
+INFO:opencxr.microserver:Standardisation CXR prête : total 12.3s. /health reflète maintenant sorter/standardize=True.
+INFO:     127.0.0.1:49221 - "GET /health HTTP/1.1" 200 OK
+INFO:opencxr.image_decode:decoder=simpleitk file=mt4dk0mm-dspsff.png
+1/1 ━━━━━━━━━━━━━━━━━━━━ 5s 5s/step
+INFO:     127.0.0.1:64466 - "POST /sort HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64496 - "GET /health HTTP/1.1" 200 OK
+INFO:opencxr.image_decode:decoder=simpleitk file=mt4dk0mm-dspsff.png
+1/1 ━━━━━━━━━━━━━━━━━━━━ 15s 15s/step
+ERROR:opencxr.microserver:Normalisation CXR en échec.
+Traceback (most recent call last):
+  File "C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr\microserver.py", line 242, in standardize_image
+    std_img, _new_spacing, size_changes = algo.run(
+                                          ^^^^^^^^^
+  File "C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr\opencxr\algorithms\cxrstandardization\__init__.py", line 53, in run
+    ) = Normalizer.do_full_normalization(image_np, spacing, self.lung_seg_alg)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr\opencxr\utils\normalization.py", line 213, in do_full_normalization
+    final_norm_img = cls.get_norm_lung_mask(norm_70, lung_seg_mask)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr\opencxr\utils\normalization.py", line 163, in get_norm_lung_mask
+    bands = cls.split_energy_bands(img_np_norm70, sigmas)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\scripts\opencxr\opencxr\utils\normalization.py", line 33, in split_energy_bands
+    bands = np.zeros((len(sigmas) + 1,) + image.shape)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 240. MiB for an array with shape (6, 2048, 2557) and data type float64
+INFO:     127.0.0.1:64501 - "POST /standardize HTTP/1.1" 500 Internal Server Error

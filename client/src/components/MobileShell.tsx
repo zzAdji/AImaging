@@ -3,10 +3,10 @@ import { Activity, ArrowLeft, ImagePlus, Sparkles, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AiDisclaimer } from "./ai/AiDisclaimer";
 import { AiSidebarLeft } from "./ai/AiSidebarLeft";
-import { AiSidebarRight } from "./ai/AiSidebarRight";
 import { FloatingCommandBar } from "./ai/FloatingCommandBar";
 import { ReportEditorModal } from "./ai/ReportEditor";
 import { CanvasViewport } from "./CanvasViewport";
+import { RightPanelDrawer } from "./RightPanel";
 import { cn } from "../lib/cn";
 import { readImportedImageFiles, type ExamImageState, type Examination } from "../lib/examinations";
 import { recordRecent } from "../lib/recent";
@@ -40,12 +40,6 @@ export function MobileShell({
   const [imageIndex, setImageIndex] = useState(examCtx?.index ?? 0);
 
   const exam = examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null;
-
-  /* IA-only experience: force the switch once */
-  useEffect(() => {
-    w.setAiMode(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /* Load / restore the examination image into the editor */
   useEffect(() => {
@@ -251,12 +245,12 @@ export function MobileShell({
             </button>
           </>
         )}
-        <AnimatePresence>{w.aiMode && <FloatingCommandBar key="ai-command-bar" mobile />}</AnimatePresence>
+        <AnimatePresence>{<FloatingCommandBar key="ai-command-bar" mobile />}</AnimatePresence>
       </div>
 
       {/* Drawers (hidden while the report editor is open so it stays above) */}
       <AnimatePresence initial={false}>
-        {drawer === "left" && w.aiMode && !w.reportEditOpen && (
+        {drawer === "left" && !w.reportEditOpen && (
           <div key="left-drawer">
             <motion.div
               initial={{ opacity: 0 }}
@@ -269,7 +263,7 @@ export function MobileShell({
             <AiSidebarLeft key="ai-left-drawer" variant="drawer" />
           </div>
         )}
-        {drawer === "right" && w.aiMode && !w.reportEditOpen && (
+        {drawer === "right" && !w.reportEditOpen && (
           <div key="right-drawer">
             <motion.div
               initial={{ opacity: 0 }}
@@ -279,20 +273,19 @@ export function MobileShell({
               className="fixed inset-0 z-[120] bg-black/55"
               onClick={() => setDrawer(null)}
             />
-            <AiSidebarRight key="ai-right-drawer" variant="drawer" />
+            <RightPanelDrawer />
           </div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {w.aiMode && !w.aiDisclaimerAck && !w.aiDisclaimerDismissed && (
+        {!w.aiDisclaimerAck && !w.aiDisclaimerDismissed && (
           <AiDisclaimer
             key="ai-disclaimer"
             onContinue={(ack) => {
               if (ack) w.setAiDisclaimerAck(true);
               else w.setAiDisclaimerDismissed(true);
             }}
-            onBack={handleBack}
           />
         )}
       </AnimatePresence>

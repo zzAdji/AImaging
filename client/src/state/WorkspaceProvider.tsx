@@ -51,16 +51,31 @@ import {
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
   image: false,
-  aianalysis: false,
-  opencxr: false,
   gradcam: false,
-  measurements: false,
-  annotations: true,
-  layers: false,
-  metadata: true,
+  anatomy: false,
+  landmarks: false,
+  anatomymap: false,
+  diagnostics: false,
+  report: false,
 };
 
+/** Ordre par défaut des cartes du panneau droit (Application cohérente après
+    une réinitialisation ou un premier lancement). */
+const DEFAULT_CARD_ORDER: SectionId[] = [
+  "document",
+  "image",
+  "gradcam",
+  "anatomy",
+  "landmarks",
+  "anatomymap",
+  "diagnostics",
+  "report",
+];
 
+
+
+/** Préfixe d'actionId des formes de mesure landmarks posées sur le canvas. */
+const LANDMARK_SHAPE_PREFIX = "landmarks:";
 
 const cloneShape = (s: Shape): Shape => ({
   ...s,
@@ -400,9 +415,10 @@ export function WorkspaceProvider({
   /* --- Édition des contours (modelage des mesures) --- */
   const [landmarkContours, setLandmarkContoursState] = useState<LandmarkContours | null>(null);
   const landmarkContoursRef = useRef<LandmarkContours | null>(null);
-  /* Mesures recalculées en temps réel pendant le drag d'un nœud (réplique du
-     calcul serveur, voir lib/landmarkMeasure.ts). */
-  const landmarkLive = useMemo(
+  /* Mesures recalculées depuis les contours (base) — réplique du calcul
+     serveur, voir lib/landmarkMeasure.ts. Les droites posées sur le canvas
+     priment ensuite (voir landmarkLive plus bas). */
+  const landmarkBase = useMemo(
     () => (landmarkContours ? computeLandmarkMeasurements(landmarkContours, pixelSpacingMm) : null),
     [landmarkContours, pixelSpacingMm],
   );
@@ -543,6 +559,73 @@ export function WorkspaceProvider({
     cxrResultRef.current = null;
     setCxrResultState(null);
   }, [imageId]);
+
+  /* --- Droites de mesure posées sur le canvas : source de vérité temps réel ---
+     Dès que « Poser les mesures » a posé les droites (formes landmarks:*),
+     les déplacer / les étirer recalcule diamètres et CTR en direct :
+     la géométrie des formes (espace image) est reconvertie en unités de la
+     grille 1024 du modèle, puis convertie mm comme côté serveur. */
+  const landmarkLineGeometry = useMemo(() => {
+    const heart = shapes.find((s) => s.actionId === `${LANDMARK_SHAPE_PREFIX}heart_transverse`);
+    const thorax = shapes.find((s) => s.actionId === `${LANDMARK_SHAPE_PREFIX}thorax_transverse`);
+    if (!heart || !thorax || dims.w <= 0 || dims.h <= 0) return null;
+    const gridLen = (shape: Shape) =>
+      Math.hypot((shape.w / dims.w) * 1024, (shape.h / dims.h) * 1024);
+    return { heartW: gridLen(heart), thoraxW: gridLen(thorax) };
+  }, [shapes, dims]);
+
+  /* Mesures exposées à l'UI : base contours, avec priorité aux droites posées
+     pour CTR + diamètres transverses. Les incertitudes du modèle sont
+     conservées proportionnellement aux nouvelles valeurs. */
+  const landmarkLive = useMemo(() => {
+    if (!landmarkBase) return null;
+    if (!landmarkLineGeometry) return landmarkBase;
+    const { heartW, thoraxW } = landmarkLineGeometry;
+    const model = landmarkResult?.status === "ok" ? landmarkResult.measurements : null;
+    const pxOnly = !pixelSpacingMm;
+    const scale = pxOnly ? 1 : (pixelSpacingMm[0] + pixelSpacingMm[1]) / 2;
+    const unitLen: "px" | "mm" = pxOnly ? "px" : "mm";
+    const relStd = (key: "heart_transverse_diameter" | "thorax_transverse_diameter") => {
+      const m = model?.[key];
+      return m && m.value > 0 ? m.std / m.value : 0;
+    };
+    const hStd = relStd("heart_transverse_diameter");
+    const tStd = relStd("thorax_transverse_diameter");
+    const ctr = thoraxW > 0 ? heartW / thoraxW : 0;
+    const r3 = (v: number) => Math.round(v * 1000) / 1000;
+    return {
+      ...landmarkBase,
+      measurements: {
+        ...landmarkBase.measurements,
+        ctr: { value: r3(ctr), std: r3(ctr * Math.hypot(hStd, tStd)), unit: "ratio" as const },
+        heart_transverse_diameter: {
+          value: r3(heartW * scale),
+          std: r3(heartW * scale * hStd),
+          unit: unitLen,
+        },
+        thorax_transverse_diameter: {
+          value: r3(thoraxW * scale),
+          std: r3(thoraxW * scale * tStd),
+          unit: unitLen,
+        },
+      },
+    };
+  }, [landmarkBase, landmarkLineGeometry, landmarkResult, pixelSpacingMm]);
+
+  /* L'étiquette CTR posée sur le canvas suit les droites en temps réel.
+     Mise à jour directe via commit() : pas d'entrée dans l'historique
+     d'annulation pendant le drag. */
+  const landmarkCtrLabel = useMemo(() => {
+    const ctr = landmarkLive?.measurements.ctr;
+    return ctr ? `CTR = ${ctr.value.toFixed(3)} ± ${ctr.std.toFixed(3)}` : null;
+  }, [landmarkLive]);
+
+  useEffect(() => {
+    if (!landmarkCtrLabel) return;
+    const target = shapesRef.current.find((s) => s.actionId === `${LANDMARK_SHAPE_PREFIX}ctr`);
+    if (!target || target.label === landmarkCtrLabel) return;
+    commit(shapesRef.current.map((s) => (s.id === target.id ? { ...s, label: landmarkCtrLabel } : s)));
+  }, [landmarkCtrLabel, commit]);
 
   const [dicomLinear, setDicomLinearState] = useState<LinearImageBuffer | null>(null);
   const setDicomLinear = useCallback((buffer: LinearImageBuffer | null) => {
@@ -728,7 +811,31 @@ export function WorkspaceProvider({
 
   /* ------------------------------ AI workspace ------------------------------ */
 
-  const [aiMode, setAiMode] = useState(false);
+  const [imageLocked, setImageLocked] = useState(false);
+  const [imageCardOpen, setImageCardOpen] = useState(false);
+  const [gradcamCardOpen, setGradcamCardOpen] = useState(false);
+  const [cardOrder, setCardOrderState] = useState<SectionId[]>(() => {
+    try {
+      const raw = localStorage.getItem("aimaging.cardOrder");
+      const arr = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(arr) && arr.every((id) => DEFAULT_CARD_ORDER.includes(id as SectionId))) {
+        return arr as SectionId[];
+      }
+    } catch {
+      /* localStorage indisponible */
+    }
+    return DEFAULT_CARD_ORDER;
+  });
+  const setCardOrder = useCallback((order: SectionId[]) => {
+    setCardOrderState(order);
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("aimaging.cardOrder", JSON.stringify(cardOrder));
+    } catch {
+      /* localStorage indisponible */
+    }
+  }, [cardOrder]);
   const [aiDisclaimerAck, setAiDisclaimerAck] = useState(false);
   const [aiDisclaimerDismissed, setAiDisclaimerDismissed] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
@@ -1033,8 +1140,6 @@ export function WorkspaceProvider({
   }, []);
 
   /** Formes de mesure posées automatiquement (diamètres + étiquette CTR). */
-  const LANDMARK_SHAPE_PREFIX = "landmarks:";
-
   const removeLandmarkMeasurements = useCallback(() => {
     const ids = shapesRef.current.filter((s) => s.actionId?.startsWith(LANDMARK_SHAPE_PREFIX)).map((s) => s.id);
     if (ids.length > 0) removeShapes(ids);
@@ -1997,11 +2102,14 @@ const closeDocument = useCallback(() => {
       analysis,
       runAnalysis,
       runUnifiedAnatomyAnalysis,
-      aiMode,
-      setAiMode: (v: boolean) => {
-        setAiMode(v);
-        if (v) setAiDisclaimerDismissed(false);
-      },
+      imageLocked,
+      setImageLocked,
+      imageCardOpen,
+      setImageCardOpen,
+      gradcamCardOpen,
+      setGradcamCardOpen,
+      cardOrder,
+      setCardOrder,
       aiDisclaimerAck,
       setAiDisclaimerAck,
       aiDisclaimerDismissed,
@@ -2089,7 +2197,8 @@ imageSrc,
       collapsed, toggleSection, analysis,
       runAnalysis,
       runUnifiedAnatomyAnalysis,
-      aiMode, setAiMode, aiDisclaimerAck, setAiDisclaimerAck,
+      imageLocked, setImageLocked, imageCardOpen, setImageCardOpen, gradcamCardOpen, setGradcamCardOpen, cardOrder, setCardOrder,
+      aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
       aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
       aiActionLog, recordAiAction, runAiPrompt, removeAiHistory, clearAiHistory, notifications, notify, dismissNotification,

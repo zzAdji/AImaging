@@ -142,15 +142,7 @@ export function LandmarksMeasurementsCard() {
   const highUncertainty = ok && ok.uncertainty.max_node_std_px > 12;
 
   return (
-    <section data-attr="ai-card-landmarks" className="mx-3 mt-3 overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex items-center gap-1.5 px-3 pt-2.5">
-        <Ruler size={13} strokeWidth={2.2} className="text-icon" />
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2">
-          Mesures landmarks
-        </h3>
-      </div>
-
-      <div className="px-3 pb-3 pt-2">
+    <div data-attr="ai-card-landmarks">
         {!imageReady ? (
           <p className="text-[11px] text-ink-3">Chargez une radiographie pour lancer les mesures.</p>
         ) : (
@@ -306,8 +298,7 @@ export function LandmarksMeasurementsCard() {
 
             <p className="text-[9.5px] text-ink-3">
               Survolez un contour pour l'identifier ; cliquez : il s'affiche sur
-              l'image où vous pouvez le modeler (poignées aux sommets), les
-              mesures se recalculant en direct.
+              l'image où vous pouvez le modeler.
             </p>
 
             <div className="flex items-center gap-1.5">
@@ -332,7 +323,6 @@ export function LandmarksMeasurementsCard() {
             </div>
           </div>
         )}
-      </div>
-    </section>
+    </div>
   );
 }

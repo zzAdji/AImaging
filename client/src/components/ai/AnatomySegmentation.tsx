@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Scan } from "lucide-react";
+import { Activity } from "lucide-react";
 import { useWorkspace } from "../../state/workspace";
 import {
   ANATOMY_KEY_INDEX,
@@ -268,15 +268,7 @@ export function AnatomySegmentationCard() {
   const legendItems = ANATOMY_LEGEND_ORDER.filter((id) => layers.includes(id));
 
   return (
-    <section data-attr="ai-card-anatomy-cxas" className="mx-3 mt-3 overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex items-center gap-1.5 px-3 pt-2.5">
-        <Scan size={13} strokeWidth={2.2} className="text-icon" />
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2">
-          Segmentation anatomique
-        </h3>
-      </div>
-
-      <div className="px-3 pb-3 pt-2">
+    <div data-attr="ai-card-anatomy-cxas">
         {!imageReady ? (
           <p className="text-[11px] text-ink-3">Chargez une radiographie pour lancer l'analyse.</p>
         ) : (
@@ -406,7 +398,6 @@ export function AnatomySegmentationCard() {
             )}
           </div>
         )}
-      </div>
-    </section>
+    </div>
   );
 }

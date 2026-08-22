@@ -31,13 +31,12 @@ export type ToolId =
 export type SectionId =
   | "document"
   | "image"
-  | "aianalysis"
-  | "opencxr"
   | "gradcam"
-  | "measurements"
-  | "annotations"
-  | "layers"
-  | "metadata";
+  | "anatomy"
+  | "landmarks"
+  | "anatomymap"
+  | "diagnostics"
+  | "report";
 
 export type AnalysisState = "idle" | "running" | "done";
 
@@ -640,9 +639,19 @@ export interface WorkspaceState {
 
   /* ------------------------------ AI workspace ------------------------------ */
 
-  /** AI mode: the editor swaps its sidebars for the AI workspace */
-  aiMode: boolean;
-  setAiMode: (v: boolean) => void;
+  /** Verrou : l'image ne peut plus être déplacée dans le canvas et le double
+      fenêtrage est interdit. */
+  imageLocked: boolean;
+  setImageLocked: (v: boolean) => void;
+  /** Carte « Régler l'image » (Fenêtrage) visible dans le panneau droit. */
+  imageCardOpen: boolean;
+  setImageCardOpen: (v: boolean) => void;
+  /** Carte « Grad-CAM » (intensité + mode) visible dans le panneau droit. */
+  gradcamCardOpen: boolean;
+  setGradcamCardOpen: (v: boolean) => void;
+  /** Ordre d'affichage des cartes du panneau droit (drag & drop, persisté). */
+  cardOrder: SectionId[];
+  setCardOrder: (order: SectionId[]) => void;
   /** "Don't show the disclaimer again during this session" */
   aiDisclaimerAck: boolean;
   setAiDisclaimerAck: (v: boolean) => void;

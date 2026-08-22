@@ -293,7 +293,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             initial={{ opacity: 0, y: 12, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card/95 text-icon shadow-lg shadow-black/40 backdrop-blur transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
+            className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card/95 text-icon shadow-lg shadow-black/40 backdrop-blur transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
           >
             <ChevronUp size={18} strokeWidth={2} />
           </motion.button>

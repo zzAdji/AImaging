@@ -1,24 +1,18 @@
 import {
   ArrowUpRight,
   Circle,
-  Contrast,
   Crop,
   DraftingCompass,
   Hand,
   Highlighter,
-  Map,
   MousePointer2,
   Pencil,
   Ruler,
-  ScanSearch,
   Settings,
   Slash,
-  SlidersHorizontal,
   Square,
   StretchHorizontal,
-  Sun,
   Type,
-  WandSparkles,
   ZoomIn,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -56,16 +50,6 @@ const GROUPS: ToolDef[][] = [
     { id: "text", icon: Type, label: "Text", shortcut: "T" },
   ],
   [{ id: "crop", icon: Crop, label: "Crop", shortcut: "C" }],
-  [
-    { id: "windowlevel", icon: SlidersHorizontal, label: "Window / Level", shortcut: "W" },
-    { id: "brightness", icon: Sun, label: "Brightness", shortcut: "B" },
-    { id: "contrast", icon: Contrast, label: "Contrast" },
-  ],
-  [
-    { id: "magicwand", icon: WandSparkles, label: "Magic Wand" },
-    { id: "aiselection", icon: ScanSearch, label: "AI Selection" },
-    { id: "gradcam", icon: Map, label: "Grad-CAM" },
-  ],
 ];
 
 function ToolButton({ def }: { def: ToolDef }) {

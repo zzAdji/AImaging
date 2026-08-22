@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AiDisclaimer } from "./components/ai/AiDisclaimer";
 import { AiSidebarLeft } from "./components/ai/AiSidebarLeft";
-import { AiSidebarRight } from "./components/ai/AiSidebarRight";
 import { FloatingCommandBar } from "./components/ai/FloatingCommandBar";
 import { ReportEditorModal } from "./components/ai/ReportEditor";
 import { CanvasViewport } from "./components/CanvasViewport";
@@ -89,8 +88,6 @@ const TOOL_KEYS: Record<string, ToolId> = {
   n: "annotation",
   t: "text",
   c: "crop",
-  w: "windowlevel",
-  b: "brightness",
 };
 
 function RightPanelRail() {
@@ -165,7 +162,7 @@ function Shell({
   onSaveOpenCxr: (examId: string, records: Record<string, OpenCxrImageResult>) => void;
 }) {
   const w = useWorkspace();
-  const { aiMode, splitOn, setSplitOn } = w;
+  const { splitOn, setSplitOn } = w;
   const fileRef = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
@@ -1324,7 +1321,7 @@ const doExport = async () => {
       }
       const tool = TOOL_KEYS[e.key.toLowerCase()];
       if (tool && !mod) {
-        if (!w.aiMode) w.setTool(tool);
+        w.setTool(tool);
         return;
       }
       if (e.key === "1" && !mod) w.requestFit();
@@ -1335,8 +1332,8 @@ const doExport = async () => {
   }, [w, openImage, save, togglePixelGrid, undoLastTransaction]);
 
   useEffect(() => {
-    if (aiMode && splitOn) setSplitOn(false);
-  }, [aiMode, splitOn, setSplitOn]);
+    if (w.imageLocked && splitOn) setSplitOn(false);
+  }, [w.imageLocked, splitOn, setSplitOn]);
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-bg font-sans text-ink">
@@ -1503,7 +1500,7 @@ const doExport = async () => {
       )}
       <div className="flex min-h-0 flex-1">
         <AnimatePresence initial={false} mode="popLayout">
-          {!w.aiMode && w.toolbarOpen && (
+          {w.toolbarOpen && (
             <motion.div
               key="left-toolbar"
               className="flex shrink-0"
@@ -1513,23 +1510,24 @@ const doExport = async () => {
               transition={{ duration: 0.3, ease: "easeOut" }}
             >
               <LeftToolbar />
+              <AiSidebarLeft />
             </motion.div>
           )}
-          {w.aiMode && <AiSidebarLeft key="ai-sidebar-left" />}
         </AnimatePresence>
         <div className="relative flex min-w-0 flex-1">
           <CanvasViewport pane="A" onOpenImage={openImage} />
-          {!w.aiMode && w.splitOn && (
+          {w.splitOn && !w.imageLocked && (
             <>
               <div className="w-px shrink-0 bg-border" />
               <CanvasViewport pane="B" onOpenImage={openImage} />
             </>
           )}
-          <AnimatePresence>{w.aiMode && <FloatingCommandBar key="ai-command-bar" />}</AnimatePresence>
+          <AnimatePresence>
+            <FloatingCommandBar key="ai-command-bar" />
+          </AnimatePresence>
         </div>
         <AnimatePresence initial={false} mode="popLayout">
-          {w.aiMode && <AiSidebarRight key="ai-sidebar-right" />}
-          {!w.aiMode && w.rightPanelOpen && (
+          {w.rightPanelOpen && (
             <motion.div
               key="right-panel"
               className="flex shrink-0"
@@ -1541,7 +1539,7 @@ const doExport = async () => {
               <RightPanel />
             </motion.div>
           )}
-          {!w.aiMode && !w.rightPanelOpen && (
+          {!w.rightPanelOpen && (
             <motion.div
               key="right-panel-rail"
               initial={{ opacity: 0 }}
@@ -1558,15 +1556,12 @@ const doExport = async () => {
       {w.statusBarOpen && <StatusBar />}
 
       <AnimatePresence>
-        {w.aiMode && !w.aiDisclaimerAck && !w.aiDisclaimerDismissed && (
+        {!w.aiDisclaimerAck && !w.aiDisclaimerDismissed && (
           <AiDisclaimer
             key="ai-disclaimer"
             onContinue={(ack) => {
               if (ack) w.setAiDisclaimerAck(true);
               else w.setAiDisclaimerDismissed(true);
-            }}
-            onBack={() => {
-              w.setAiMode(false);
             }}
           />
         )}

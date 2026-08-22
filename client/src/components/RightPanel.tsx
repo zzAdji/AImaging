@@ -1,38 +1,20 @@
 import { useMemo, useRef, useState } from "react";
-import {
-  Eye,
-  EyeOff,
-  GripVertical,
-  Highlighter,
-  Image as ImageIcon,
-  Lock,
-  LockOpen,
-  Map,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Ruler,
-  Trash2,
-  AlertTriangle,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Download, Pencil } from "lucide-react";
 import { cn } from "../lib/cn";
-import { downloadDataUrl, exportImageDataUrl } from "../lib/exportImage";
-import { deriveMetadata } from "../lib/metadata";
+import { downloadDataUrl, downloadJson, exportImageDataUrl } from "../lib/exportImage";
 import {
   BC_PRESETS,
-  formatDistance,
   WL_PRESETS,
   WL_PRESETS_HU,
   buildImageFilter,
   isShapeVisible,
-  shapeLayerId,
   useWorkspace,
-  type LayerDef,
-  type LayerId,
-  type Shape,
+  type SectionId,
 } from "../state/workspace";
-import { Badge, Button, Divider, KV, ProgressBar, Section, Segmented, Slider, Toggle } from "./ui";
+import { AnatomyMapCard } from "./ai/AnatomyMap";
+import { AnatomySegmentationCard } from "./ai/AnatomySegmentation";
+import { LandmarksMeasurementsCard } from "./ai/LandmarksMeasurements";
+import { Button, Divider, KV, ProgressBar, Section, Segmented, Slider, Toggle } from "./ui";
 
 /* ---------------------------------- Image --------------------------------- */
 
@@ -51,7 +33,6 @@ function SliderRow({
   max: number;
   onChange: (v: number) => void;
   inputData?: string;
-  /** Appelé avec la dernière valeur 700 ms après la fin du réglage (enregistrement d'action). */
   onSettle?: (v: number) => void;
 }) {
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
@@ -142,7 +123,7 @@ function ImageSection() {
     w.setInverted(false);
   };
   return (
-    <Section id="image" title="Image">
+    <Section id="image" title="Régler l'image">
       <Segmented
         options={[
           { label: "Fit", value: "fit" },
@@ -381,539 +362,252 @@ function DocumentSection() {
   );
 }
 
-/* ------------------------------- AI Analysis ------------------------------ */
-
-interface Finding {
-  label: string;
-  score: number;
-}
-
-const FINDINGS: Finding[] = [
-  { label: "Lung fields clear", score: 98 },
-  { label: "Cardiac silhouette normal", score: 95 },
-  { label: "No pleural effusion", score: 94 },
-  { label: "Bony structures intact", score: 91 },
-];
-
-function AiAnalysisSection() {
-  const w = useWorkspace();
-  const [model, setModel] = useState("ChestNet v3.1");
-  return (
-    <Section id="aianalysis" title="AI Analysis">
-      <label className="block">
-        <span className="mb-1.5 block text-[12px] text-ink-2">Model</span>
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="w-full rounded-xl border border-border bg-btn px-2.5 py-1.5 text-[12.5px] text-ink outline-none transition-colors duration-150 ease-out hover:bg-hover focus:border-accent/60"
-        >
-          <option>ChestNet v3.1</option>
-          <option>FetalBrain v2.1</option>
-          <option>Radiomics v1.2</option>
-        </select>
-      </label>
-
-      {w.analysis === "idle" && (
-        <>
-          <Button variant="primary" className="w-full" onClick={w.runAnalysis}>
-            Run Analysis
-          </Button>
-          <p className="text-[11px] leading-relaxed text-ink-3">
-            Analyze the image with the selected model. Results appear here.
-          </p>
-        </>
-      )}
-
-      {w.analysis === "running" && (
-        <div className="rounded-xl border border-border bg-btn p-3">
-          <div className="mb-2 flex items-center gap-2 text-[12.5px] text-ink-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
-            Analyzing study…
-          </div>
-          <ProgressBar />
-        </div>
-      )}
-
-      {w.analysis === "done" && (
-        <div className="space-y-3 animate-fade">
-          <div className="rounded-xl border border-accent/30 bg-btn p-3">
-            <p className="text-[15px] font-semibold text-ink">
-              No significant abnormality
-            </p>
-            <div className="mt-2 flex items-center justify-between text-[11px]">
-              <span className="text-ink-3">Confidence</span>
-              <span className="font-medium tabular-nums text-accent">96.2%</span>
-            </div>
-            <ProgressBar value={96.2} className="mt-1.5" />
-          </div>
-          <Divider />
-          {FINDINGS.map((f) => (
-            <div key={f.label} className="flex items-center gap-2">
-              <span className="w-40 truncate text-[12px] text-ink-2">{f.label}</span>
-              <ProgressBar value={f.score} className="flex-1" tone="neutral" />
-              <span className="w-9 text-right text-[11px] tabular-nums text-ink-3">
-                {f.score}%
-              </span>
-            </div>
-          ))}
-          <Divider />
-          <KV k="Model" v="ChestNet v3.1" />
-          <KV k="Inference time" v="1.8 s" />
-          <Button className="w-full" onClick={w.runAnalysis}>
-            <RefreshCw size={13} />
-            Re-run
-          </Button>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-/* ---------------------------------- OpenCXR -------------------------------- */
-
-/** Affiche le tri (Image Sorter) et l'image normalisée de l'image active. */
-function OpenCxrSection() {
-  const w = useWorkspace();
-  const result = w.cxrResult;
-  if (!result) return null;
-  const { sort, standardize, rejected } = result;
-  const status = rejected?.status ?? sort.status;
-  if (status === "REJECTED_INVALID_IMAGE") {
-    return (
-      <Section id="opencxr" title="OpenCXR">
-        <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
-          <div>
-            <p className="text-[11.5px] font-semibold text-red-200">
-              Image invalide <Badge data="cxr-type" className="ml-1 border-red-500/40 bg-red-500/15 text-red-300">invalide</Badge>
-            </p>
-            <p className="mt-0.5 text-[10.5px] leading-relaxed text-red-200/70">
-              Cette image ne peut pas être lue ou est endommagée. Aucune analyse n'a été lancée.
-            </p>
-          </div>
-        </div>
-      </Section>
-    );
-  }
-  if (rejected || status === "REJECTED_NON_CXR" || sort.Type === "notCXR") {
-    return (
-      <Section id="opencxr" title="OpenCXR">
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
-          <div>
-            <p className="text-[11.5px] font-semibold text-amber-200">
-              Image non-CXR <Badge data="cxr-type" className="ml-1 border-amber-500/40 bg-amber-500/15 text-amber-300">notCXR</Badge>
-            </p>
-            <p className="mt-0.5 text-[10.5px] leading-relaxed text-amber-200/70">
-              Cette image ne semble pas être une radiographie thoracique. Aucune analyse médicale n'a été lancée.
-            </p>
-          </div>
-        </div>
-      </Section>
-    );
-  }
-  return (
-    <Section id="opencxr" title="OpenCXR">
-      <div className="flex flex-wrap gap-1.5">
-        <Badge data="cxr-type" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300">CXR detected</Badge>
-        {typeof sort.confidence === "number" && (
-          <Badge className="border-border bg-card text-ink-2">CXR {Math.round(sort.confidence * 100)} %</Badge>
-        )}
-        <Badge>Rot {sort.Rotation}°</Badge>
-        <Badge>{sort.Inversion === "Yes" ? "Image inversée" : "Pas d'inversion"}</Badge>
-        <Badge>{sort.Lateral_Flip === "Yes" ? "Mirroir" : "Pas de mirroir"}</Badge>
-      </div>
-      {standardize ? (
-        <>
-          <Divider className="my-2.5" />
-          <img
-            src={standardize.image_data_url}
-            alt="Radio normalisée"
-            className="max-h-44 w-full rounded-lg border border-border bg-black/40 object-contain"
-          />
-          <p className="mt-1 text-[10.5px] text-ink-3">
-            Normalisée · {standardize.width}×{standardize.height}px ·{" "}
-            {Math.round(standardize.inference_time_ms)} ms
-          </p>
-        </>
-      ) : (
-        <p className="mt-2 text-[10.5px] text-ink-3">Standardisation non lancée (image rejetée par le tri).</p>
-      )}
-    </Section>
-  );
-}
-
 /* --------------------------------- Grad-CAM ------------------------------- */
 
 function GradCamSection() {
   const w = useWorkspace();
-  const [focus, setFocus] = useState("Emphysema");
   return (
     <Section id="gradcam" title="Grad-CAM">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] text-ink-2">Show overlay</span>
+        <span className="text-[12px] text-ink-2">Afficher l'overlay</span>
         <Toggle checked={w.gradcamOn} onChange={w.setGradcamOn} />
       </div>
+      <div>
+        <span className="mb-1.5 block text-[12px] text-ink-2">Mode</span>
+        <div className="flex items-center gap-0.5 rounded-md border border-border bg-btn p-1">
+          <button
+            type="button"
+            data-attr="gradcam-mode-blue"
+            onClick={() => w.setGradcamMode("blue")}
+            className={`rounded px-2.5 py-1 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "blue" ? "bg-blue-500/25 text-blue-300" : "text-ink-3 hover:text-ink"}`}
+          >
+            Bleu
+          </button>
+          <button
+            type="button"
+            data-attr="gradcam-mode-heatmap"
+            onClick={() => w.setGradcamMode("heatmap")}
+            className={`rounded px-2.5 py-1 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "heatmap" ? "bg-blue-500/25 text-blue-300" : "text-ink-3 hover:text-ink"}`}
+          >
+            Chaleur
+          </button>
+        </div>
+      </div>
       <Slider
-        label="Intensity"
+        label={w.gradcamMode == "blue" ? "Intensité" : "Opacité"}
         value={w.gradcamIntensity}
         onChange={w.setGradcamIntensity}
         disabled={!w.gradcamOn}
         display={`${w.gradcamIntensity}%`}
       />
-      <label className="block">
-        <span className="mb-1.5 block text-[12px] text-ink-2">Focus class</span>
-        <select
-          value={focus}
-          onChange={(e) => setFocus(e.target.value)}
-          className="w-full rounded-xl border border-border bg-btn px-2.5 py-1.5 text-[12.5px] text-ink outline-none transition-colors duration-150 ease-out hover:bg-hover focus:border-accent/60"
-        >
-          <option>Emphysema</option>
-          <option>Pneumothorax</option>
-          <option>Cardiomegaly</option>
-        </select>
-      </label>
-      <Divider />
-      <KV k="Peak activation" v="0.87" />
-      <KV k="Active area" v="12.4%" />
     </Section>
   );
 }
 
-/* ------------------------------- Measurements ----------------------------- */
+/* -------------------------------- Diagnostics ----------------------------- */
 
-function measureValue(s: Shape, pixelSpacingMm: ReturnType<typeof useWorkspace>["pixelSpacingMm"]): string {
-  if (s.type === "measure" || s.type === "distance") {
-    return formatDistance(s.w, s.h, pixelSpacingMm);
-  }
-  if (s.type === "angle") {
-    const p2 = s.points[0] ?? { x: s.x, y: s.y };
-    const len1 = Math.hypot(s.w, s.h);
-    const len2 = Math.hypot(p2.x - s.x, p2.y - s.y);
-    const cos = Math.max(-1, Math.min(1, (s.w * (p2.x - s.x) + s.h * (p2.y - s.y)) / ((len1 || 1) * (len2 || 1))));
-    return `${((Math.acos(cos) * 180) / Math.PI).toFixed(1)}°`;
-  }
-  return "";
-}
+const SEVERITY_STYLE: Record<string, string> = {
+  high: "bg-[#f87171]/15 text-[#f87171]",
+  medium: "bg-[#facc15]/15 text-[#facc15]",
+  low: "bg-[#4ade80]/15 text-[#4ade80]",
+};
 
-function measureLabel(s: Shape): string {
-  return s.type === "angle" ? "Angle" : "Distance";
-}
-
-function MeasurementsSection() {
+function DiagnosticsSection() {
   const w = useWorkspace();
-  const items = w.shapes.filter((s) => shapeLayerId(s) === "measurements");
   return (
-    <Section id="measurements" title="Measurements">
-      {items.length === 0 && (
-        <p className="text-[11.5px] text-ink-3">No measurements yet — draw one on the canvas.</p>
-      )}
-      {items.map((s) => (
-        <div
-          key={s.id}
-          data-attr={`measure-row-${s.id}`}
-          className="flex items-center justify-between gap-2 rounded-lg px-1 py-0.5 transition-colors duration-150 ease-out hover:bg-hover"
-        >
-          <button
-            type="button"
-            data-attr={`measure-eye-${s.id}`}
-            onClick={() => w.updateShape(s.id, { visible: s.visible === false })}
-            className="shrink-0 text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
-            title="Toggle visibility"
-          >
-            {s.visible === false ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-[12px]",
-              s.visible === false ? "text-ink-3/60 line-through" : "text-ink-2",
-            )}
-          >
-            {measureLabel(s)}
-          </span>
-          <span className="shrink-0 text-[11px] tabular-nums text-ink">{measureValue(s, w.pixelSpacingMm)}</span>
-          <button
-            type="button"
-            data-attr={`measure-delete-${s.id}`}
-            onClick={() => {
-              w.pushHistory();
-              w.removeShape(s.id);
-            }}
-            className="shrink-0 text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
-            title="Remove measurement"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-      ))}
-      <div className="flex gap-1.5">
-        <Button className="flex-1" data="measure-add-distance" onClick={() => w.setTool("measure")}>
-          <Plus size={13} />
-          Distance
-        </Button>
-        <Button className="flex-1" data="measure-add-angle" onClick={() => w.setTool("angle")}>
-          Angle
-        </Button>
+    <Section id="diagnostics" title="Diagnostics">
+      <div data-attr="ai-card-diagnostics">
+        {w.aiResults.diagnostics.length === 0 ? (
+          <p className="px-1 text-[11px] text-ink-3">
+            Aucune analyse — lancez une commande comme « Analyse cette radiographie. »
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {w.aiResults.diagnostics.map((d) => (
+              <button
+                key={d.label}
+                type="button"
+                onClick={() => d.region && w.focusAiRegion(d.region)}
+                className="w-full rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:border-accent/40 hover:bg-accent/5"
+                title="Zoom sur la région suspecte"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[11.5px] text-ink">{d.label}</span>
+                  <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink">{Math.round(d.prob * 100)}%</span>
+                  <span className={cn("shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium", SEVERITY_STYLE[d.severity])}>
+                    {d.severity === "high" ? "Élevé" : d.severity === "medium" ? "Modéré" : "Faible"}
+                  </span>
+                </div>
+                <div className="mt-1">
+                  <ProgressBar value={Math.round(d.prob * 100)} tone={d.prob >= 0.3 ? "accent" : "neutral"} />
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </Section>
   );
 }
 
-/* -------------------------------- Annotations ----------------------------- */
+/* ----------------------------------- Rapport ------------------------------ */
 
-function AnnotationsSection() {
+function ReportSection() {
   const w = useWorkspace();
-  const items = w.shapes.filter((s) => s.type === "annotation");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-
-  const startEdit = (s: Shape) => {
-    setDraft(s.label ?? "");
-    setEditingId(s.id);
-    w.setSelection(s.id);
-  };
-  const commitEdit = (id: string) => {
-    const n = draft.trim();
-    if (n) w.updateShape(id, { label: n });
-    setEditingId(null);
-  };
-
   return (
-    <Section id="annotations" title="Annotations">
-      {items.length === 0 && (
-        <p className="text-[11.5px] text-ink-3">No annotations yet — draw one on the canvas.</p>
-      )}
-      {items.map((s) => (
-        <div
-          key={s.id}
-          data-attr={`annotation-row-${s.id}`}
-          className="flex items-center justify-between gap-2 rounded-lg px-1 py-0.5 transition-colors duration-150 ease-out hover:bg-hover"
-        >
-          <button
-            type="button"
-            data-attr={`annotation-eye-${s.id}`}
-            onClick={() => w.updateShape(s.id, { visible: s.visible === false })}
-            className="shrink-0 text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
-            title="Toggle visibility"
-          >
-            {s.visible === false ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
-          {editingId === s.id ? (
-            <input
-              autoFocus
-              data-attr={`annotation-edit-${s.id}`}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => commitEdit(s.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitEdit(s.id);
-                if (e.key === "Escape") setEditingId(null);
-              }}
-              className="min-w-0 flex-1 rounded-md border border-border bg-btn px-1.5 py-0.5 text-[12px] text-ink outline-none focus:border-accent/60"
-            />
-          ) : (
+    <Section id="report" title="Rapport">
+      {!w.aiResults.report ? (
+        <p className="px-1 text-[11px] text-ink-3">
+          Aucun rapport — commande « Génère un rapport ».
+        </p>
+      ) : (
+        <>
+          <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink-2">
+            {w.aiResults.report}
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
             <button
               type="button"
-              data-attr={`annotation-label-${s.id}`}
-              onClick={() => startEdit(s)}
-              className={cn(
-                "min-w-0 flex-1 truncate text-left text-[12px] transition-colors duration-150 ease-out hover:text-ink",
-                s.visible === false ? "text-ink-3/60 line-through" : "text-ink-2",
-              )}
-              title="Click to edit"
+              data-attr="ai-report-edit"
+              onClick={() => w.openReportEditor()}
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-btn px-2 py-1.5 text-[11.5px] text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
             >
-              {s.label || "Note"}
+              <Pencil size={12} />
+              Éditer
             </button>
-          )}
-          <button
-            type="button"
-            data-attr={`annotation-delete-${s.id}`}
-            onClick={() => {
-              w.pushHistory();
-              w.removeShape(s.id);
-              if (w.selection === s.id) w.setSelection(null);
-            }}
-            className="shrink-0 text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
-            title="Remove annotation"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-      ))}
-      <Button className="w-full" data="annotation-add" onClick={() => w.setTool("annotation")}>
-        <Plus size={13} />
-        Add annotation
-      </Button>
-    </Section>
-  );
-}
-
-/* ---------------------------------- Layers -------------------------------- */
-
-const LAYER_ICONS: Record<LayerId, LucideIcon> = {
-  image: ImageIcon,
-  annotations: Highlighter,
-  measurements: Ruler,
-  gradcam: Map,
-};
-
-function LayersSection() {
-  const w = useWorkspace();
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<LayerId | null>(null);
-  const [draft, setDraft] = useState("");
-
-  const counts: Record<LayerId, number> = {
-    image: 1,
-    annotations: w.shapes.filter((s) => shapeLayerId(s) === "annotations").length,
-    measurements: w.shapes.filter((s) => shapeLayerId(s) === "measurements").length,
-    gradcam: w.gradcamOn ? 1 : 0,
-  };
-
-  const startRename = (l: LayerDef) => {
-    setRenaming(l.id);
-    setDraft(l.name);
-  };
-  const commitRename = (id: LayerId) => {
-    const n = draft.trim();
-    if (n) w.setLayerName(id, n);
-    setRenaming(null);
-  };
-
-  return (
-    <Section id="layers" title="Layers">
-      {w.layers.map((l, i) => {
-        const Icon = LAYER_ICONS[l.id];
-        return (
-          <div key={l.id} className="space-y-1">
-            <div
-              data-attr={`layer-row-${l.id}`}
-              data-layer-order={i}
-              draggable
-              onDragStart={(e) => {
-                setDragId(l.id);
-                e.dataTransfer.setData("text/plain", l.id);
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const src = (dragId || e.dataTransfer.getData("text/plain")) as LayerId | "";
-                if (src && src !== l.id) w.moveLayer(src, i);
-                setDragId(null);
-              }}
-              onDragEnd={() => setDragId(null)}
-              className={cn(
-                "flex cursor-grab items-center gap-1.5 rounded-lg px-1 py-0.5 transition-colors duration-150 ease-out hover:bg-hover active:cursor-grabbing",
-                dragId === l.id && "opacity-40",
-              )}
+            <button
+              type="button"
+              data-attr="ai-report-export"
+              onClick={() =>
+                downloadJson(
+                  { app: "AImaging", kind: "ai-report", text: w.aiResults.report, exportedAt: new Date().toISOString() },
+                  `rapport-ia-${new Date().toISOString().slice(0, 10)}.json`,
+                )
+              }
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-btn px-2 py-1.5 text-[11.5px] text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
             >
-              <GripVertical size={12} className="shrink-0 text-ink-3/60" />
-              <button
-                type="button"
-                data-attr={`layer-eye-${l.id}`}
-                onClick={() => w.setLayerVisible(l.id, !l.visible)}
-                className="shrink-0 text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
-                title="Toggle visibility"
-              >
-                {l.visible ? <Eye size={13} /> : <EyeOff size={13} />}
-              </button>
-              <Icon size={13} className="shrink-0 text-ink-3" />
-              {renaming === l.id ? (
-                <input
-                  autoFocus
-                  data-attr={`layer-name-input-${l.id}`}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onBlur={() => commitRename(l.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitRename(l.id);
-                    if (e.key === "Escape") setRenaming(null);
-                  }}
-                  className="min-w-0 flex-1 rounded-md border border-border bg-btn px-1.5 py-0.5 text-[12px] text-ink outline-none focus:border-accent/60"
-                />
-              ) : (
-                <button
-                  type="button"
-                  data-attr={`layer-name-${l.id}`}
-                  onClick={() => startRename(l)}
-                  className="min-w-0 flex-1 truncate text-left text-[12px] text-ink transition-colors duration-150 ease-out hover:text-ink"
-                  title="Click to rename"
-                >
-                  {l.name}
-                </button>
-              )}
-              <Badge data={`layer-count-${l.id}`}>{counts[l.id]}</Badge>
-              <button
-                type="button"
-                data-attr={`layer-lock-${l.id}`}
-                onClick={() => w.setLayerLocked(l.id, !l.locked)}
-                className={cn(
-                  "shrink-0 transition-colors duration-150 ease-out hover:text-ink",
-                  l.locked ? "text-accent" : "text-ink-3/60",
-                )}
-                title="Lock / unlock layer"
-              >
-                {l.locked ? <Lock size={12} /> : <LockOpen size={12} />}
-              </button>
-              {l.id !== "image" && (
-                <button
-                  type="button"
-                  data-attr={`layer-delete-${l.id}`}
-                  onClick={() => w.deleteLayerContent(l.id)}
-                  className="shrink-0 text-ink-3/60 transition-colors duration-150 ease-out hover:text-ink"
-                  title="Delete layer content"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-            <div className="px-6">
-              <Slider
-                data={`layer-opacity-${l.id}`}
-                label="Opacity"
-                value={l.opacity}
-                onChange={(v) => w.setLayerOpacity(l.id, v)}
-                display={`${l.opacity}%`}
-              />
-            </div>
+              <Download size={12} />
+              Exporter
+            </button>
           </div>
-        );
-      })}
-    </Section>
-  );
-}
-
-/* --------------------------------- Metadata ------------------------------- */
-
-function MetadataSection() {
-  const w = useWorkspace();
-  const tags = useMemo(
-    () => deriveMetadata({ name: w.imageName, dims: w.dims, metadata: w.imageMetadata, wl: w.wl }),
-    [w.imageName, w.dims, w.imageMetadata, w.wl],
-  );
-  return (
-    <Section id="metadata" title="Metadata">
-      {tags.map(([k, v]) => (
-        <div key={k} data-attr={`meta-${k.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
-          <KV k={k} v={v} />
-        </div>
-      ))}
+        </>
+      )}
     </Section>
   );
 }
 
 /* -------------------------------- Right panel ------------------------------ */
 
+const CARD_TITLES: Record<SectionId, string> = {
+  document: "Document",
+  image: "Régler l'image",
+  gradcam: "Grad-CAM",
+  anatomy: "Segmentation",
+  landmarks: "Mesures landmarks",
+  anatomymap: "Carte anatomique",
+  diagnostics: "Diagnostics",
+  report: "Rapport",
+};
+
+function renderCard(id: SectionId) {
+  switch (id) {
+    case "document":
+      return <DocumentSection />;
+    case "image":
+      return <ImageSection />;
+    case "gradcam":
+      return <GradCamSection />;
+    case "anatomy":
+      return (
+        <Section id="anatomy" title={CARD_TITLES.anatomy}>
+          <AnatomySegmentationCard />
+        </Section>
+      );
+    case "landmarks":
+      return (
+        <Section id="landmarks" title={CARD_TITLES.landmarks}>
+          <LandmarksMeasurementsCard />
+        </Section>
+      );
+    case "anatomymap":
+      return (
+        <Section id="anatomymap" title={CARD_TITLES.anatomymap}>
+          <AnatomyMapCard />
+        </Section>
+      );
+    case "diagnostics":
+      return <DiagnosticsSection />;
+    case "report":
+      return <ReportSection />;
+  }
+}
+
+function isCardVisible(id: SectionId, w: ReturnType<typeof useWorkspace>): boolean {
+  switch (id) {
+    case "document":
+    case "diagnostics":
+    case "report":
+      return true;
+    case "image":
+      return w.imageCardOpen;
+    case "gradcam":
+      return w.gradcamCardOpen;
+    case "anatomy":
+      return w.anatomyCardOpen;
+    case "landmarks":
+      return w.landmarkCardOpen;
+    case "anatomymap":
+      return w.tool === "probe";
+  }
+}
+
+function CardsBody({
+  dragId,
+  onDragStart,
+  onDrop,
+  onDragEnd,
+}: {
+  dragId: SectionId | null;
+  onDragStart: (id: SectionId) => void;
+  onDrop: (from: SectionId, to: SectionId) => void;
+  onDragEnd: () => void;
+}) {
+  const w = useWorkspace();
+  const visibleCards = w.cardOrder.filter((id) => isCardVisible(id, w));
+  return (
+    <div className="space-y-2.5">
+      {visibleCards.map((id) => (
+        <div
+          key={id}
+          data-attr={`right-card-slot-${id}`}
+          draggable
+          onDragStart={() => onDragStart(id)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragId) onDrop(dragId, id);
+            onDragEnd();
+          }}
+          onDragEnd={onDragEnd}
+          className={cn("cursor-grab active:cursor-grabbing", dragId === id && "opacity-40")}
+        >
+          {renderCard(id)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function RightPanel() {
   const w = useWorkspace();
+  const [dragId, setDragId] = useState<SectionId | null>(null);
 
   const onResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = w.rightWidth;
     const move = (ev: PointerEvent) => {
-      w.setRightWidth(Math.min(520, Math.max(264, startW + (startX - ev.clientX))));
+      w.setRightWidth(Math.min(560, Math.max(280, startW + (startX - ev.clientX))));
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -923,11 +617,18 @@ export function RightPanel() {
     window.addEventListener("pointerup", up);
   };
 
+  const moveCard = (from: SectionId, to: SectionId) => {
+    const order = [...w.cardOrder];
+    const fromIdx = order.indexOf(from);
+    const toIdx = order.indexOf(to);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+    order.splice(fromIdx, 1);
+    order.splice(toIdx, 0, from);
+    w.setCardOrder(order);
+  };
+
   return (
-    <aside
-      className="relative z-40 shrink-0 border-l border-border bg-panel"
-      style={{ width: w.rightWidth }}
-    >
+    <aside className="relative z-40 shrink-0 border-l border-border bg-panel" style={{ width: w.rightWidth }}>
       <div
         onPointerDown={onResizeDown}
         className="group absolute -left-1.5 top-0 z-50 h-full w-3 cursor-ew-resize"
@@ -935,18 +636,31 @@ export function RightPanel() {
         <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-transparent transition-colors duration-150 ease-out group-hover:bg-accent/60" />
       </div>
       <div className="h-full overflow-y-auto px-2.5 py-2.5">
-        <div className="space-y-2.5">
-          <DocumentSection />
-          <ImageSection />
-          <AiAnalysisSection />
-          <OpenCxrSection />
-          <GradCamSection />
-          <MeasurementsSection />
-          <AnnotationsSection />
-          <LayersSection />
-          <MetadataSection />
-        </div>
+        <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
       </div>
     </aside>
+  );
+}
+
+export function RightPanelDrawer() {
+  const w = useWorkspace();
+  const [dragId, setDragId] = useState<SectionId | null>(null);
+
+  const moveCard = (from: SectionId, to: SectionId) => {
+    const order = [...w.cardOrder];
+    const fromIdx = order.indexOf(from);
+    const toIdx = order.indexOf(to);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+    order.splice(fromIdx, 1);
+    order.splice(toIdx, 0, from);
+    w.setCardOrder(order);
+  };
+
+  return (
+    <div className="fixed inset-y-0 right-0 z-[130] flex max-w-[380px] flex-col border-l border-border bg-panel shadow-2xl shadow-black/60">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
+        <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
+      </div>
+    </div>
   );
 }

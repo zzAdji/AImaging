@@ -24,7 +24,6 @@ import {
   Tooltip,
   type MenuEntry,
 } from "./ui";
-import { ModeSwitch } from "./ai/ModeSwitch";
 
 const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
@@ -357,33 +356,33 @@ export function TitleBar({
       ],
     },
     {
-      label: "AI",
-      entries: [
-        {
-          label: "Run Analysis",
-          shortcut: "Ctrl+Enter",
-          onSelect: w.runAnalysis,
-        },
-        { label: "Auto Segmentation", dividerBefore: true },
-        { label: "Magic Wand", onSelect: () => w.setTool("magicwand") },
-        { label: "AI Selection", onSelect: () => w.setTool("aiselection") },
-        {
-          label: "Grad-CAM",
-          selected: w.gradcamOn,
-          onSelect: () => w.setGradcamOn(!w.gradcamOn),
-        },
-        {
-          label: "Model",
-          dividerBefore: true,
-          children: [
-            { label: "ChestNet v3.1", selected: true },
-            { label: "FetalBrain v2.1" },
-            { label: "Radiomics v1.2" },
+          label: "AI",
+          entries: [
+            {
+              label: "Run Analysis",
+              shortcut: "Ctrl+Enter",
+              onSelect: w.runAnalysis,
+            },
+            {
+              label: "Auto Segmentation",
+              dividerBefore: true,
+              onSelect: () => w.toggleAnatomyCard(),
+            },
+            {
+              label: "Mesures landmarks",
+              onSelect: () => w.toggleLandmarksCard(),
+            },
+            {
+              label: "Grad-CAM",
+              dividerBefore: true,
+              selected: w.gradcamOn,
+              onSelect: () => {
+                w.setGradcamCardOpen(true);
+                w.setGradcamOn(!w.gradcamOn);
+              },
+            },
           ],
         },
-        { label: "AI Settings…" },
-      ],
-    },
     {
       label: "Analyze",
       entries: [
@@ -417,6 +416,7 @@ export function TitleBar({
         {
           label: "2 Windows",
           selected: w.splitOn,
+          disabled: w.imageLocked,
           onSelect: () => w.setSplitOn(true),
         },
       ],
@@ -588,14 +588,6 @@ export function TitleBar({
       </Tooltip>
 
       <div className="mx-2.5 h-4 w-px shrink-0 bg-border" />
-
-      {/* Mode switch: Normal ⇄ AI */}
-      <ModeSwitch
-        aiMode={w.aiMode}
-        onChange={(v) => {
-          w.setAiMode(v);
-        }}
-      />
 
       {/* Document info — right side */}
       <div className="ml-auto flex items-center gap-1">

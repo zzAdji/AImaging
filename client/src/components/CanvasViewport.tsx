@@ -726,28 +726,7 @@ export function CanvasViewport({
   /* ------------------------------ View helpers ------------------------------ */
 
   /* AI mode: the image is the absolute reference — the view can never leave it */
-  const clampView = useCallback(
-    (v: Viewport) => {
-      if (!w.aiMode) return v;
-      const cw = containerSize.w;
-      const ch = containerSize.h;
-      if (cw <= 0 || ch <= 0 || dims.w <= 0 || dims.h <= 0) return v;
-      const iw = dims.w * v.s;
-      const ih = dims.h * v.s;
-      if (iw <= cw) {
-        v = { ...v, x: (cw - iw) / 2 };
-      } else {
-        v = { ...v, x: Math.min(0, Math.max(cw - iw, v.x)) };
-      }
-      if (ih <= ch) {
-        v = { ...v, y: (ch - ih) / 2 };
-      } else {
-        v = { ...v, y: Math.min(0, Math.max(ch - ih, v.y)) };
-      }
-      return v;
-    },
-    [w.aiMode, containerSize, dims],
-  );
+  const clampView = useCallback((v: Viewport) => v, []);
 
   const fit = useCallback(() => {
     const el = containerRef.current;
@@ -1089,6 +1068,10 @@ export function CanvasViewport({
     }
 
     if (e.button === 1 || (e.button === 0 && (spaceHeld.current || w.tool === "hand"))) {
+      if (w.imageLocked) {
+        /* Verrou IA : l'image ne peut pas être déplacée dans le canvas. */
+        return;
+      }
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       gesture.current = { kind: "pan", lastX: e.clientX, lastY: e.clientY };
@@ -1224,7 +1207,10 @@ export function CanvasViewport({
         return;
       }
       if (isOverImage(px, py)) {
-        gesture.current = { kind: "imageDrag", startX: px, startY: py, moved: false };
+        if (!w.imageLocked) {
+          /* Verrou : l'image ne peut pas être déplacée dans le canvas. */
+          gesture.current = { kind: "imageDrag", startX: px, startY: py, moved: false };
+        }
       } else {
         setMarquee({ x0: px, y0: py, x1: px, y1: py });
       }
@@ -1594,7 +1580,7 @@ export function CanvasViewport({
         </div>
       )}
       {/* Grid */}
-      {w.gridOn && !w.aiMode && (
+      {w.gridOn && (
         <div
           data-grid
           className="pointer-events-none absolute inset-0"
@@ -1856,54 +1842,7 @@ export function CanvasViewport({
         </div>
       )}
 
-      {/* Grad-CAM badge + intensity/mode control — viewport space (fixed size) */}
-   
-      {w.gradcamOn && w.gradcamResult && (
-        <div className="pointer-events-none absolute left-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
-          xAI
-        </div>
-      )}
-      {w.gradcamOn && w.gradcamResult && (
-        <div
-          data-attr="gradcam-intensity-bar"
-          className="absolute top-12 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-border bg-[#0e0e0e]/95 px-3 py-1.5 shadow-xl shadow-black/40"
-        >
-          <span className="text-[11px] leading-none text-ink-2">Intensité</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={w.gradcamIntensity}
-            onChange={(e) => w.setGradcamIntensity(Number(e.target.value))}
-            data-attr="gradcam-intensity"
-            className="h-1 w-36 cursor-pointer accent-blue-500"
-          />
-          <span className="w-9 text-right text-[11px] tabular-nums leading-none text-ink">
-            {w.gradcamIntensity}%
-          </span>
-          <span className="h-3.5 w-px bg-border" />
-          <div className="flex items-center gap-0.5 rounded-md border border-border bg-btn p-0.5">
-            <button
-              type="button"
-              data-attr="gradcam-mode-blue"
-              onClick={() => w.setGradcamMode("blue")}
-              className={`rounded px-2 py-0.5 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "blue" ? "bg-blue-500/25 text-blue-300" : "text-ink-3 hover:text-ink"}`}
-            >
-              Bleu
-            </button>
-            <button
-              type="button"
-              data-attr="gradcam-mode-heatmap"
-              onClick={() => w.setGradcamMode("heatmap")}
-              className={`rounded px-2 py-0.5 text-[10.5px] leading-none transition-colors ${w.gradcamMode === "heatmap" ? "bg-accent/25 text-accent" : "text-ink-3 hover:text-ink"}`}
-            >
-              Chaleur
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Grad-CAM badge + intensité/mode déplacés dans la carte du panneau droit. */}
 
       {/* Shapes — viewport-mapped document space.
           The doc layer maps doc → screen as local = view.offset + doc * scale, so the

@@ -1,6 +1,21 @@
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Crosshair, History, Lightbulb, List, Map, Ruler, Save, Scan, Stethoscope, Trash2, X, Zap,
+  ArrowLeft,
+  Crosshair,
+  History,
+  Lightbulb,
+  List,
+  Lock,
+  LockOpen,
+  Map,
+  Ruler,
+  Save,
+  Scan,
+  SlidersHorizontal,
+  Stethoscope,
+  Trash2,
+  X,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -345,6 +360,8 @@ export function AiSidebarLeft({
   const drawer = variant === "drawer";
 
   const toggleGradcam = () => {
+    /* Le clic ouvre toujours la carte Grad-CAM du panneau droit. */
+    w.setGradcamCardOpen(true);
     if (w.gradcamResult) {
       const next = !w.gradcamOn;
       w.recordAiAction(next ? "Grad-CAM affichée" : "Grad-CAM masquée", {
@@ -454,6 +471,25 @@ export function AiSidebarLeft({
 
           <Divider className="mx-3 my-2" />
 
+          {/* Outils IA */}
+          <SectionTitle icon={Zap}>Outils IA</SectionTitle>
+          <div className="mx-3 grid grid-cols-2 gap-2">
+            <RadioToolButton
+              label="Grad-CAM"
+              icon={Map}
+              active={w.gradcamOn && Boolean(w.gradcamResult)}
+              dataAttr="ai-tool-gradcam"
+              onClick={toggleGradcam}
+            />
+            <RadioToolButton
+              label="Verrou"
+              icon={w.imageLocked ? Lock : LockOpen}
+              active={w.imageLocked}
+              dataAttr="ai-tool-lock"
+              onClick={() => w.setImageLocked(!w.imageLocked)}
+            />
+          </div>
+
           {/* Outils radio */}
           <SectionTitle icon={Stethoscope}>Outils radio</SectionTitle>
           <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
@@ -465,11 +501,11 @@ export function AiSidebarLeft({
               onClick={() => w.setTool(w.tool === "probe" ? "move" : "probe")}
             />
             <RadioToolButton
-              label="Grad-CAM"
-              icon={Map}
-              active={w.gradcamOn}
-              dataAttr="ai-tool-gradcam"
-              onClick={toggleGradcam}
+              label="Régler l'image"
+              icon={SlidersHorizontal}
+              active={w.imageCardOpen}
+              dataAttr="ai-tool-fenetrage"
+              onClick={() => w.setImageCardOpen(!w.imageCardOpen)}
             />
             <RadioToolButton
               label="Segmentation"

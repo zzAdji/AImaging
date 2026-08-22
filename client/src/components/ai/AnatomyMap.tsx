@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapPin, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useWorkspace } from "../../state/workspace";
 import {
   ANATOMY_MAP_HEIGHT,
@@ -188,13 +188,7 @@ export function AnatomyMapCard() {
     : w.aiResults.diagnostics;
 
   return (
-    <section data-attr="ai-card-anatomy" className="mx-3 mt-3 overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex items-center gap-1.5 px-3 pt-2.5">
-        <MapPin size={13} strokeWidth={2.2} className="text-icon" />
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2">Carte anatomique</h3>
-      </div>
-
-      <div className="flex items-start gap-2.5 px-3 pb-3 pt-2">
+    <div data-attr="ai-card-anatomy" className="flex items-start gap-2.5">
         {/* Minimap — gauche (fond statique + canvas interactif) */}
         <div
           data-attr="ai-anatomy-minimap"
@@ -295,7 +289,6 @@ export function AnatomyMapCard() {
             </div>
           </div>
         </div>
-      </div>
-    </section>
+    </div>
   );
 }

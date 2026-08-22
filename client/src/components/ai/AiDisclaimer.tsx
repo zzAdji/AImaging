@@ -7,7 +7,7 @@ export function AiDisclaimer({
   onBack,
 }: {
   onContinue: (ack: boolean) => void;
-  onBack: () => void;
+  onBack?: () => void;
 }) {
   const [ack, setAck] = useState(false);
 
@@ -71,13 +71,15 @@ export function AiDisclaimer({
         </label>
 
         <div className="mt-5 flex justify-end gap-2">
-          <Button
-            variant="secondary"
-            data="ai-disclaimer-back"
-            onClick={onBack}
-          >
-            Retour
-          </Button>
+          {onBack && (
+            <Button
+              variant="secondary"
+              data="ai-disclaimer-back"
+              onClick={onBack}
+            >
+              Retour
+            </Button>
+          )}
           <Button
             variant="primary"
             data="ai-disclaimer-continue"
