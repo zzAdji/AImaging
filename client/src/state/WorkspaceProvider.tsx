@@ -41,6 +41,12 @@ import { buildWorkspaceManifest, captureAnnotatedImage } from "../lib/workspaceP
 import type { AnatomyRegionPayload, OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
 import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyAnalysis, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, toAnatomyContext } from "../lib/workspaceApi";
 import { ANATOMY_REGIONS } from "../lib/anatomyMap";
+import {
+  computeLandmarkMeasurements,
+  contoursEdited,
+  type LandmarkContours,
+  type LandmarkOrganKey,
+} from "../lib/landmarkMeasure";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -60,6 +66,16 @@ const cloneShape = (s: Shape): Shape => ({
   ...s,
   points: s.points.map((p) => ({ ...p })),
 });
+
+/** Copie profonde des contours HybridGNet (édition sans muter la sortie modèle). */
+const cloneContours = (source: WorkspaceLandmarksResult["contours"]): LandmarkContours => {
+  const out = {} as LandmarkContours;
+  for (const key of Object.keys(source) as LandmarkOrganKey[]) {
+    const c = source[key];
+    out[key] = { x: [...c.x], y: [...c.y], std: [...c.std] };
+  }
+  return out;
+};
 
 /** Full history snapshot: drawings + shape transforms + image adjustments */
 interface Snapshot {
@@ -381,6 +397,19 @@ export function WorkspaceProvider({
   const [landmarkCardOpen, setLandmarkCardOpenState] = useState(false);
   const landmarkCardOpenRef = useRef(false);
   const [landmarksSelected, setLandmarksSelectedState] = useState<string | null>(null);
+  /* --- Édition des contours (modelage des mesures) --- */
+  const [landmarkContours, setLandmarkContoursState] = useState<LandmarkContours | null>(null);
+  const landmarkContoursRef = useRef<LandmarkContours | null>(null);
+  /* Mesures recalculées en temps réel pendant le drag d'un nœud (réplique du
+     calcul serveur, voir lib/landmarkMeasure.ts). */
+  const landmarkLive = useMemo(
+    () => (landmarkContours ? computeLandmarkMeasurements(landmarkContours, pixelSpacingMm) : null),
+    [landmarkContours, pixelSpacingMm],
+  );
+  const landmarkEdited = useMemo(
+    () => contoursEdited(landmarkContours, landmarkResult?.contours),
+    [landmarkContours, landmarkResult],
+  );
 
   /* ------------------------------ OpenCXR (tri + normalisation) ------------------------------ */
   const [cxrResult, setCxrResultState] = useState<OpenCxrImageResult | null>(null);
@@ -509,6 +538,8 @@ export function WorkspaceProvider({
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
     setLandmarkError(null);
+    landmarkContoursRef.current = null;
+    setLandmarkContoursState(null);
     cxrResultRef.current = null;
     setCxrResultState(null);
   }, [imageId]);
@@ -555,6 +586,8 @@ export function WorkspaceProvider({
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
     setLandmarkError(null);
+    landmarkContoursRef.current = null;
+    setLandmarkContoursState(null);
     cxrResultRef.current = null;
     setCxrResultState(null);
   }, [setRotation, setFlipH, setFlipV, setWl, setBrightness, setContrast, setInverted, setGradcamOn, setGradcamResult, setThreeDOn, setThreeDResult, setThreeDRunning, setThreeDProgress, setPixelSpacingMm]);
@@ -1068,6 +1101,44 @@ export function WorkspaceProvider({
     if (newShapes.length > 0) commit([...shapesRef.current, ...newShapes]);
   }, [commit, removeShapes]);
 
+  /* --- Édition des contours (modelage des mesures) --- */
+
+  const applyLandmarkContours = useCallback((next: LandmarkContours | null) => {
+    landmarkContoursRef.current = next;
+    setLandmarkContoursState(next);
+  }, []);
+
+  /* Repart des contours du modèle (nouvelle analyse ou reset utilisateur). */
+  const adoptModelContours = useCallback(
+    (result: WorkspaceLandmarksResult | null) => {
+      const source = result && result.status === "ok" ? result.contours : null;
+      applyLandmarkContours(source ? cloneContours(source) : null);
+    },
+    [applyLandmarkContours],
+  );
+
+  const setLandmarkContourNode = useCallback(
+    (organ: LandmarkOrganKey, index: number, x: number, y: number) => {
+      const current = landmarkContoursRef.current;
+      const contour = current?.[organ];
+      if (!contour || index < 0 || index >= contour.x.length) return;
+      const next: LandmarkContours = {
+        ...current,
+        [organ]: {
+          x: contour.x.map((v, i) => (i === index ? x : v)),
+          y: contour.y.map((v, i) => (i === index ? y : v)),
+          std: contour.std,
+        },
+      };
+      applyLandmarkContours(next);
+    },
+    [applyLandmarkContours],
+  );
+
+  const resetLandmarkContours = useCallback(() => {
+    adoptModelContours(landmarkResultRef.current);
+  }, [adoptModelContours]);
+
   /** Analyse anatomique unifiée : segmentation CXAS + landmarks HybridGNet en une
    *  seule requête, résultats tracés par source (CXAS / HybridGNet). Remplit à la
    *  fois le panneau "Segmentation" (source CXAS) et le panneau "Mesures" (source
@@ -1155,6 +1226,7 @@ export function WorkspaceProvider({
       setAnatomyResultState(anatomy);
       landmarkResultRef.current = landmarks;
       setLandmarkResultState(landmarks);
+      adoptModelContours(landmarks);
       placeLandmarkMeasurements();
 
       recordAiAction(
@@ -1174,10 +1246,11 @@ export function WorkspaceProvider({
       setAnatomyLoading(false);
       setLandmarkLoading(false);
     }
-  }, [placeLandmarkMeasurements, recordAiAction]);
+  }, [adoptModelContours, placeLandmarkMeasurements, recordAiAction]);
 
-  const runLandmarksAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
-    if (waitForImage) {
+  const runLandmarksAnalysis = useCallback(
+    async (waitForImage = false, options?: { autoPlace?: boolean }): Promise<boolean> => {
+      if (waitForImage) {
       let waited = 0;
       while (!imageIdRef.current || !imageSrcRef.current) {
         if (waited >= 8000) break;
@@ -1222,12 +1295,18 @@ export function WorkspaceProvider({
       if (imageIdRef.current !== imageIdValue) return false;
       landmarkResultRef.current = response.result;
       setLandmarkResultState(response.result);
+      adoptModelContours(response.result);
       const ctr = response.result.measurements.ctr;
       recordAiAction(
         `Mesures landmarks : CTR=${ctr.value.toFixed(3)} ± ${ctr.std.toFixed(3)}, ` +
           `σ max=${response.result.uncertainty.max_node_std_px.toFixed(1)} px.`,
       );
-      placeLandmarkMeasurements();
+      if (options?.autoPlace !== false) {
+        /* Placement automatique des mesures sur l'image uniquement en usage
+           manuel ; la chaîne automatique au chargement garde le canvas propre
+           (le bouton « Poser les mesures » reste disponible). */
+        placeLandmarkMeasurements();
+      }
       return true;
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Analyse landmarks impossible.";
@@ -1238,7 +1317,9 @@ export function WorkspaceProvider({
       landmarkLoadingRef.current = false;
       setLandmarkLoading(false);
     }
-  }, [recordAiAction, placeLandmarkMeasurements]);
+    },
+    [adoptModelContours, recordAiAction, placeLandmarkMeasurements],
+  );
 
   const toggleLandmarksCard = useCallback(() => {
     const next = !landmarkCardOpenRef.current;
@@ -1898,6 +1979,11 @@ const closeDocument = useCallback(() => {
       runLandmarksAnalysis,
       placeLandmarkMeasurements,
       removeLandmarkMeasurements,
+      landmarkContours,
+      landmarkLive,
+      landmarkEdited,
+      setLandmarkContourNode,
+      resetLandmarkContours,
       cxrResult,
       setCxrResult,
       brightness,
@@ -1997,6 +2083,7 @@ imageSrc,
       anatomyRegionTexts, anatomyRegionTextsLoading, anatomyRegionTextsError, loadAnatomyRegionTexts,
       landmarkResult, landmarkLoading, landmarkError, landmarkCardOpen, setLandmarkCardOpen, toggleLandmarksCard, landmarksSelected, setLandmarksSelected, runLandmarksAnalysis,
       placeLandmarkMeasurements, removeLandmarkMeasurements,
+      landmarkContours, landmarkLive, landmarkEdited, setLandmarkContourNode, resetLandmarkContours,
       brightness, setBrightness, contrast, setContrast, inverted, setInverted,
       probe, setProbe,
       collapsed, toggleSection, analysis,

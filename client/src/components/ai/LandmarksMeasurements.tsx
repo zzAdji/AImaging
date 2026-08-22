@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Ruler } from "lucide-react";
 import { useWorkspace } from "../../state/workspace";
 import { fitWithinLongSide } from "../../lib/anatomy";
+import { smoothClosedSvgPath } from "../../lib/landmarkMeasure";
 import type { LandmarkContour, WorkspaceLandmarksResult } from "../../lib/workspaceApi";
 
 /* Contours poumons + cœur issus des landmarks HybridGNet : tracés vectoriels
@@ -63,6 +64,8 @@ export function LandmarksMeasurementsCard() {
   const error = w.landmarkError;
   const imageReady = Boolean(w.imageId && w.imageSrc);
   const ok = result && result.status === "ok" ? result : null;
+  /* Contours édités s'il y en a, sinon sortie modèle (affichage carte + canvas). */
+  const contours = w.landmarkContours ?? ok?.contours ?? null;
   const placedCount = w.shapes.filter((shape) => shape.actionId?.startsWith("landmarks:")).length;
 
   useEffect(() => {
@@ -85,7 +88,7 @@ export function LandmarksMeasurementsCard() {
       ctx.filter = "none";
 
       for (const organ of LANDMARK_ORGAN_ORDER) {
-        const contour = ok.contours[organ as keyof WorkspaceLandmarksResult["contours"]];
+        const contour = contours?.[organ as keyof WorkspaceLandmarksResult["contours"]];
         const style = LANDMARK_ORGAN_STYLE[organ];
         if (!contour || !style) continue;
 
@@ -102,18 +105,15 @@ export function LandmarksMeasurementsCard() {
           ctx.shadowColor = `rgba(${style.rgb},${selected ? 0.5 : 0.3})`;
           ctx.shadowBlur = selected ? 16 : 10;
         }
-        ctx.beginPath();
-        ctx.moveTo(xs[0], ys[0]);
-        for (let i = 1; i < xs.length; i++) ctx.lineTo(xs[i], ys[i]);
-        ctx.closePath();
+        /* Tracé lissé (Catmull-Rom -> Bézier) identique à l'overlay du canvas. */
         ctx.strokeStyle = `rgba(${style.rgb},${alpha})`;
         ctx.lineWidth = lineWidth;
-        ctx.stroke();
+        ctx.stroke(new Path2D(smoothClosedSvgPath(xs, ys)));
         ctx.restore();
       }
     };
     base.src = w.imageSrc;
-  }, [ok, w.imageSrc, w.landmarksSelected, hovered]);
+  }, [ok, contours, w.imageSrc, w.landmarksSelected, hovered]);
 
   const organAt = (event: { clientX: number; clientY: number }): string | null => {
     const canvas = overlayRef.current;
@@ -124,7 +124,7 @@ export function LandmarksMeasurementsCard() {
     let best = HIT_TOLERANCE_PX;
     let found: string | null = null;
     for (const organ of LANDMARK_ORGAN_ORDER) {
-      const contour = ok?.contours[organ as keyof WorkspaceLandmarksResult["contours"]];
+      const contour = contours?.[organ as keyof WorkspaceLandmarksResult["contours"]];
       if (!contour) continue;
       const d = distanceToPolyline(px, py, contour.x.map((x) => (x / GRID) * canvas.width), contour.y.map((y) => (y / GRID) * canvas.height));
       if (d < best) {
@@ -135,7 +135,8 @@ export function LandmarksMeasurementsCard() {
     return found;
   };
 
-  const m = ok?.measurements;
+  /* Mesures temps réel pendant l'édition des contours, sinon sortie modèle. */
+  const m = w.landmarkLive?.measurements ?? ok?.measurements;
   const ctr = m?.ctr;
   const activeInfo = w.landmarksSelected ?? hovered;
   const highUncertainty = ok && ok.uncertainty.max_node_std_px > 12;
@@ -304,7 +305,9 @@ export function LandmarksMeasurementsCard() {
             </div>
 
             <p className="text-[9.5px] text-ink-3">
-              Survolez un contour pour l'identifier ; cliquez pour le sélectionner.
+              Survolez un contour pour l'identifier ; cliquez : il s'affiche sur
+              l'image où vous pouvez le modeler (poignées aux sommets), les
+              mesures se recalculant en direct.
             </p>
 
             <div className="flex items-center gap-1.5">
@@ -327,7 +330,6 @@ export function LandmarksMeasurementsCard() {
                 </button>
               )}
             </div>
-           
           </div>
         )}
       </div>

@@ -246,7 +246,7 @@ export function AnatomyMapCard() {
 
           <div className="border-t border-border/70 pt-1.5">
             <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-              {effectiveRegion ? `Observation — ${effectiveRegion.label}` : "Observation"}
+              Observation
             </p>
 
             {/* Interprétation IA (ex-« Votre image (IA) ») — générée à l'ouverture */}

@@ -20,12 +20,12 @@ import {
   type WlValue,
 } from "../state/workspace";
 import { useWorkspace, type ToolId } from "../state/workspace";
+import { smoothClosedSvgPath, type LandmarkContours } from "../lib/landmarkMeasure";
 import { ShapesLayer, type AngleDraft } from "./ShapesLayer";
 import type { LinearImageBuffer } from "../lib/dicom";
 import { paintLinearFrame } from "../lib/dicomRenderer";
 import {
   ANATOMY_KEY_INDEX,
-  anatomyKeyColor,
   anatomyKeyRgb,
   anatomyMaskSrc,
   decodeMaskToCanvas,
@@ -562,6 +562,124 @@ function LinearCanvas({
       className="absolute inset-0 h-full w-full select-none"
       style={{ transform, transformOrigin: "50% 50%" }}
     />
+  );
+}
+
+/* --------------------- Landmarks (HybridGNet) — overlay contours --------------------- */
+
+/* Palette identique à la carte « Mesures landmarks » (LandmarksMeasurements.tsx). */
+const LANDMARK_OVERLAY_STYLE: Record<string, { rgb: string; label: string }> = {
+  right_lung: { rgb: "184,0,91", label: "Poumon droit" },
+  left_lung: { rgb: "255,128,61", label: "Poumon gauche" },
+  heart: { rgb: "0,236,2", label: "Cœur" },
+};
+
+const LANDMARK_OVERLAY_GRID = 1024; // grille d'inférence du modèle
+
+/** Contour de l'organe sélectionné dans la carte « Mesures landmarks », posé
+    sur l'image principale et directement modelable : chaque sommet est une
+    poignée déplaçable, les mesures (CTR, diamètres, surfaces) se recalculent
+    en temps réel via ``landmarkLive``. Le tracé passe par un lissage
+    Catmull-Rom -> Bézier (plus d'effet « droite »), et le drag est throttlé
+    par requestAnimationFrame pour rester fluide. Le mapping écran -> grille
+    1024 passe par getScreenCTM() : correct quelles que soient rotation,
+    échelle et pan du viewport. */
+function LandmarksContourOverlay({
+  dims,
+  transform,
+}: {
+  dims: { w: number; h: number };
+  transform?: string;
+}) {
+  const w = useWorkspace();
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ organ: string; index: number } | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingPtRef = useRef<{ x: number; y: number } | null>(null);
+
+  const toGrid = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return { x: (pt.x / dims.w) * LANDMARK_OVERLAY_GRID, y: (pt.y / dims.h) * LANDMARK_OVERLAY_GRID };
+  };
+
+  /* Un seul setLandmarkContourNode par frame : les re-rendus suivent le rythme
+     de l'écran au lieu de celui des événements pointeur. */
+  const flushDrag = () => {
+    rafRef.current = null;
+    const drag = dragRef.current;
+    const pt = pendingPtRef.current;
+    pendingPtRef.current = null;
+    if (!drag || !pt) return;
+    w.setLandmarkContourNode(drag.organ as keyof LandmarkContours, drag.index, pt.x, pt.y);
+  };
+
+  const contours = w.landmarkContours;
+  const organKey = w.landmarksSelected;
+  if (!organKey || !contours) return null;
+  const style = LANDMARK_OVERLAY_STYLE[organKey];
+  const contour = contours[organKey as keyof typeof contours];
+  if (!style || !contour) return null;
+
+  const sx = (v: number) => (v / LANDMARK_OVERLAY_GRID) * dims.w;
+  const sy = (v: number) => (v / LANDMARK_OVERLAY_GRID) * dims.h;
+
+  return (
+    <svg
+      ref={svgRef}
+      width={dims.w}
+      height={dims.h}
+      viewBox={`0 0 ${dims.w} ${dims.h}`}
+      data-attr="landmarks-contour-overlay"
+      className="pointer-events-none absolute left-0 top-0 z-10"
+      style={{ transform, touchAction: "none" }}
+      onPointerMove={(e) => {
+        if (!dragRef.current) return;
+        pendingPtRef.current = toGrid(e.clientX, e.clientY);
+        if (rafRef.current == null) {
+          rafRef.current = requestAnimationFrame(flushDrag);
+        }
+      }}
+      onPointerUp={() => {
+        dragRef.current = null;
+      }}
+      onPointerLeave={() => {
+        dragRef.current = null;
+      }}
+    >
+      <path
+        d={smoothClosedSvgPath(contour.x.map(sx), contour.y.map(sy))}
+        fill={`rgba(${style.rgb},0.10)`}
+        stroke={`rgba(${style.rgb},0.95)`}
+        strokeWidth={2.5}
+        vectorEffect="non-scaling-stroke"
+      />
+      {contour.x.map((x, i) => (
+        <circle
+          key={i}
+          cx={sx(x)}
+          cy={sy(contour.y[i])}
+          r={Math.max(3.5, 5 / Math.max(w.view.s, 1e-3))}
+          fill="#ffffff"
+          stroke={`rgba(${style.rgb},1)`}
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+          className="cursor-grab transition-[fill] duration-100 hover:fill-current"
+          style={{ pointerEvents: "auto", color: `rgb(${style.rgb})` }}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+            dragRef.current = { organ: organKey, index: i };
+          }}
+          onPointerUp={() => {
+            dragRef.current = null;
+          }}
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -1679,6 +1797,10 @@ export function CanvasViewport({
               />
             )}
 
+          {w.landmarksSelected && w.landmarkContours && (
+            <LandmarksContourOverlay dims={dims} transform={imgTransform} />
+          )}
+
           {/* Sonde anatomique — vague qui se pose au point pointé, puis marqueur au repos */}
           {w.probe && (
             <div
@@ -1735,28 +1857,17 @@ export function CanvasViewport({
       )}
 
       {/* Grad-CAM badge + intensity/mode control — viewport space (fixed size) */}
-      {w.anatomySelected && w.anatomyResult && w.anatomyResult.status === "ok" && (
-        <div
-          data-attr="anatomy-selected-badge"
-          className="pointer-events-none absolute right-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink"
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{ backgroundColor: anatomyKeyColor(w.anatomySelected) ?? "#fff" }}
-          />
-          {w.anatomyResult.segmentation.labels[ANATOMY_KEY_INDEX[w.anatomySelected]] ?? w.anatomySelected}
-        </div>
-      )}
+   
       {w.gradcamOn && w.gradcamResult && (
         <div className="pointer-events-none absolute left-2 top-2 z-50 flex items-center gap-1.5 rounded-md border border-accent/40 bg-[#0e0e0e]/90 px-2 py-1 text-[11px] text-ink">
           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-soft" />
-          Grad-CAM · {w.gradcamResult.className} · {w.gradcamResult.modelCount} modèles
+          xAI
         </div>
       )}
       {w.gradcamOn && w.gradcamResult && (
         <div
           data-attr="gradcam-intensity-bar"
-          className="absolute top-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-border bg-[#0e0e0e]/95 px-3 py-1.5 shadow-xl shadow-black/40"
+          className="absolute top-12 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-lg border border-border bg-[#0e0e0e]/95 px-3 py-1.5 shadow-xl shadow-black/40"
         >
           <span className="text-[11px] leading-none text-ink-2">Intensité</span>
           <input

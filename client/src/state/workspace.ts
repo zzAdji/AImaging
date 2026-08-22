@@ -2,6 +2,7 @@ import { createContext, useContext, type RefObject } from "react";
 import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
 import type { OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult } from "../lib/workspaceApi";
+import type { LandmarkContours, LiveLandmarkAnalysis } from "../lib/landmarkMeasure";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
@@ -575,15 +576,27 @@ export interface WorkspaceState {
   setLandmarkCardOpen: (open: boolean) => void;
   /** Ouvre/ferme la carte ; relance l'analyse si aucune n'existe encore. */
   toggleLandmarksCard: () => void;
-  /** Organe (right_lung | left_lung | heart) illuminé sur le canvas principal. */
+  /** Organe (right_lung | left_lung | heart) sélectionné : son contour est
+      affiché et modelable directement sur le canvas principal. */
   landmarksSelected: string | null;
   setLandmarksSelected: (organ: string | null) => void;
   /** Lance la traque des landmarks + mesures de l'image active. */
-  runLandmarksAnalysis: (waitForImage?: boolean) => Promise<boolean>;
+  runLandmarksAnalysis: (waitForImage?: boolean, options?: { autoPlace?: boolean }) => Promise<boolean>;
   /** Pose les droites de mesure (diamètres + étiquette CTR) sur le canvas. */
   placeLandmarkMeasurements: () => void;
   /** Retire les mesures landmarks posées automatiquement. */
   removeLandmarkMeasurements: () => void;
+  /* --- Édition des contours (modelage des mesures) --- */
+  /** Contours courants (édités ou sortie modèle) de l'image active. */
+  landmarkContours: LandmarkContours | null;
+  /** Mesures + segments recalculés en temps réel depuis ``landmarkContours``. */
+  landmarkLive: LiveLandmarkAnalysis | null;
+  /** Les contours ont été modifiés par rapport à la sortie modèle. */
+  landmarkEdited: boolean;
+  /** Déplace un nœud d'un contour (coordonnées grille 1024). */
+  setLandmarkContourNode: (organ: keyof LandmarkContours, index: number, x: number, y: number) => void;
+  /** Restaure les contours de la sortie modèle. */
+  resetLandmarkContours: () => void;
 
   /* ----------------------------- OpenCXR (tri + normalisation) ----------------------------- */
   /** Résultats opencxr (sorter + image standardisée) de l'image active. */

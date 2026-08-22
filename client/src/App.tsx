@@ -183,6 +183,8 @@ function Shell({
   const autoAnatomyStartedFor = useRef<string | null>(null);
   const autoOpenCxrStartedFor = useRef<string | null>(null);
   const autoGradcamStartedFor = useRef<string | null>(null);
+  const anatomyAutoDecidedFor = useRef<string | null>(null);
+  const anatomyAutoAllowed = useRef(true);
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   /* Pipeline de préparation de l'espace de travail : alimente l'overlay noir
@@ -191,7 +193,7 @@ function Shell({
      `rejected` = une image a été rejetée par le tri (Type notCXR) et reste
      affichée jusqu'à l'action de l'utilisateur. */
   const [cxrPipeline, setCxrPipeline] = useState<{
-    phase: "loading" | "classifying" | "standardizing" | "ready" | "rejected";
+    phase: "loading" | "classifying" | "standardizing" | "ready" | "rejected" | "error";
     completed: number;
     total: number;
     message?: string;
@@ -213,7 +215,7 @@ function Shell({
     });
   }, [w]);
 
-  const analyzeExamImages = useCallback(async (scope: "active" | "all" = "active") => {
+  const analyzeExamImages = useCallback(async (scope: "active" | "all" | "missing" = "active") => {
     if (!exam) throw new Error("Ouvrez un examen avant de lancer une analyse.");
     const snapshot = w.captureImageState();
     const current = exam.images[imageIndex];
@@ -223,7 +225,12 @@ function Shell({
       images: exam.images.map((image, index) => index === imageIndex && snapshot ? { ...image, state: snapshot } : image),
     };
     const session = await createWorkspaceExam(buildWorkspaceManifest(synchronizedExam, current.id));
-    const requestedTargets = scope === "all" ? synchronizedExam.images : [current];
+    const requestedTargets =
+      scope === "all"
+        ? synchronizedExam.images
+        : scope === "missing"
+          ? synchronizedExam.images.filter((image) => !image.prediction)
+          : [current];
     const unsupportedTargets = requestedTargets.filter((image) => !isRadiographyCompatible(image));
 
     /* Phase 3 — filtrage fail-closed : une Image rejetée
@@ -743,41 +750,76 @@ function Shell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examCtx?.examId, imageIndex]);
 
+  /* Classification automatique — uniquement ce qui manque :
+     - examen déjà évalué (toutes les radios compatibles ont une prédiction)
+       → ouverture sans AUCUNE analyse ;
+     - nouvelle image ajoutée à l'examen → elle seule est analysée. */
   useEffect(() => {
-    if (!exam || exam.images.length === 0 || exam.images.every((image) => image.prediction)) return;
-    if (autoAnalysisStartedFor.current === exam.id) return;
-    autoAnalysisStartedFor.current = exam.id;
-    if (!exam.images.some(isRadiographyCompatible)) {
-      w.recordAiAction("Analyse automatique ignorée : aucun DICOM CR/DX compatible avec le modèle radiographique.");
+    if (!exam || exam.images.length === 0) return;
+    const missing = exam.images.filter(isRadiographyCompatible).filter((image) => !image.prediction);
+    if (missing.length === 0) {
+      if (!exam.images.some(isRadiographyCompatible) && autoAnalysisStartedFor.current !== exam.id) {
+        autoAnalysisStartedFor.current = exam.id;
+        w.recordAiAction("Analyse automatique ignorée : aucun DICOM CR/DX compatible avec le modèle radiographique.");
+      }
       return;
     }
+    const signature = `${exam.id}:${missing.map((image) => image.id).join(",")}`;
+    if (autoAnalysisStartedFor.current === signature) return;
+    autoAnalysisStartedFor.current = signature;
     window.setTimeout(() => {
-      void analyzeExamImages("all").catch((error: unknown) => {
+      void analyzeExamImages("missing").catch((error: unknown) => {
         const message = error instanceof Error ? error.message : "Analyse automatique impossible.";
         w.recordAiAction(`Analyse automatique : ${message}`);
       });
     }, 0);
   }, [analyzeExamImages, exam, w]);
 
-  /* Segmentation anatomique automatique à l'ouverture de l'espace de travail,
-     au même moment que la classification : l'analyse attend que l'image soit
-     réellement chargée (waitForImage) puis s'exécute une fois par examen. */
+  /* Analyses anatomiques automatiques au chargement de CHAQUE image :
+     1. Segmentation CXAS (mesures CTR/SCD) — lancée dès que l'image est
+        chargée (waitForImage), en parallèle de la classification ;
+     2. Observations IA par région — générées par runAnatomyAnalysis elle-
+        même en cas de succès (toutes les régions d'un coup) ;
+     3. Mesures HybridGNet — enchaînées APRÈS la segmentation (jamais en
+        parallèle : deux pipelines lourds simultanés saturaient le serveur).
+     Le guard est par image (exam.id:imageId) : changer d'image relance la
+     chaîne, les résultats étant réinitialisés par image dans le provider.
+     Les boutons « Segmentation » / « Mesures » ouvrent alors les cartes
+     sans rechargement. */
   useEffect(() => {
     if (!exam || exam.images.length === 0) return;
-    if (autoAnatomyStartedFor.current === exam.id) return;
-    autoAnatomyStartedFor.current = exam.id;
-    /* Phase 3 — segmentation CXAS lancée une seule fois à l'ouverture, en
-       même temps que la classification (comportement initial, éprouvé).
-       Les textes d'interprétation par région sont générés par
-       runAnatomyAnalysis elle-même en cas de succès. Les boutons
-       « Segmentation » / « Mesures » ouvrent alors les cartes sans
-       rechargement ; HybridGNet (Mesures) reste calculé à la demande pour
-       ne pas saturer le serveur avec plusieurs pipelines lourds à la fois. */
-    void w.runAnatomyAnalysis(true).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : "Segmentation automatique impossible.";
-      w.recordAiAction(`Segmentation automatique : ${message}`);
-    });
-  }, [exam, w]);
+    const current = exam.images[imageIndex];
+    if (!current) return;
+    if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
+    /* Examen déjà évalué une fois → ouverture SANS analyse anatomique
+       (la chaîne CXAS + HybridGNet était relancée à chaque entrée, d'où des
+       ouvertures très lentes). Une nouvelle image ajoutée n'a pas encore de
+       prédiction : la chaîne reste alors autorisée pour cet examen. Décision
+       prise une seule fois par signature (examen + liste des images). */
+    const examSignature = `${exam.id}:${exam.images.map((image) => image.id).join(",")}`;
+    if (anatomyAutoDecidedFor.current !== examSignature) {
+      anatomyAutoDecidedFor.current = examSignature;
+      const compatible = exam.images.filter(isRadiographyCompatible);
+      const evaluated = compatible.filter(
+        (image) => image.cxrSort && image.prediction && !isImageRejectedByOpenCxr(image),
+      );
+      anatomyAutoAllowed.current = !(compatible.length > 0 && evaluated.length === compatible.length);
+    }
+    if (!anatomyAutoAllowed.current) return;
+    const guardKey = `${exam.id}:${current.id}`;
+    if (autoAnatomyStartedFor.current === guardKey) return;
+    autoAnatomyStartedFor.current = guardKey;
+    void (async () => {
+      try {
+        const segmented = await w.runAnatomyAnalysis(true);
+        if (!segmented) return;
+        await w.runLandmarksAnalysis(false, { autoPlace: false });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Analyse anatomique automatique impossible.";
+        w.recordAiAction(`Analyse anatomique automatique : ${message}`);
+      }
+    })();
+  }, [exam, imageIndex, w]);
 
   /* Phase 3 — Grad-CAM générée une seule fois à l'ouverture, mais uniquement
      APRÈS la classification (current.prediction disponible) : cela séquence
@@ -793,13 +835,25 @@ function Shell({
        Grad-CAM (l'effet re-tournera quand onSavePredictions mettra à jour
        l'examen). */
     if (!current.prediction) return;
-    if (autoGradcamStartedFor.current === exam.id) return;
-    autoGradcamStartedFor.current = exam.id;
     if (current.gradcam) {
       w.setGradcamResult(current.gradcam);
       w.setGradcamOn(true);
       return;
     }
+    /* Examen déjà évalué une fois → aucune régénération automatique de la
+       Grad-CAM : ouverture sans analyse (le bouton « Grad-CAM » reste
+       disponible pour relancer à la demande). */
+    const compatibleNoRej = exam.images
+      .filter(isRadiographyCompatible)
+      .filter((image) => !isImageRejectedByOpenCxr(image));
+    if (
+      compatibleNoRej.length > 0 &&
+      compatibleNoRej.every((image) => image.prediction)
+    ) {
+      return;
+    }
+    if (autoGradcamStartedFor.current === exam.id) return;
+    autoGradcamStartedFor.current = exam.id;
     window.setTimeout(() => {
       void (async () => {
         try {
@@ -825,105 +879,162 @@ function Shell({
   }, [exam, imageIndex, onSaveGradcams, w]);
 
 
-  /* Tri + standardisation opencxr automatiques à l'ouverture de l'espace de
-     travail, au même moment que la classification. Le tri peut rejeter une
-     image (Type = notCXR) : la standardisation est alors sautée, un toast
-     d'erreur est affiché et l'overlay de chargement passe en « rejeté »
-     (bloquant jusqu'à validation de l'utilisateur). */
-  useEffect(() => {
-    if (!exam || exam.images.length === 0) return;
-    if (autoOpenCxrStartedFor.current === exam.id) return;
-    autoOpenCxrStartedFor.current = exam.id;
+  /* Tri + standardisation opencxr à l'ouverture de l'espace de travail.
+     - L'IMAGE ACTIVE est traitée en premier : l'overlay se lève dès qu'elle
+       est triée et standardisée (entrée en quelques secondes) ; les autres
+       images de l'examen continuent en tâche de fond.
+     - Image active rejetée par le tri (non-CXR / illisible) → message puis
+       RETOUR À L'ACCUEIL, plus aucune requête envoyée.
+     - Erreur serveur (tri ou standardisation) sur l'image active → overlay
+       bloquant avec « Réessayer » / « Retour à l'accueil » : on n'entre
+       jamais dans une image dans cet état. */
+  const runOpenCxrPipeline = useCallback(async () => {
+    if (!exam) return;
     const compatible = exam.images.filter(isRadiographyCompatible);
+    const activeImage = exam.images[imageIndex] ?? exam.images[0] ?? null;
     const pending = compatible.filter((image) => !image.cxrSort || !image.cxrStandardize);
-    if (pending.length === 0) return;
-    void (async () => {
-      try {
-        const manifest = buildWorkspaceManifest(exam, compatible[0].id);
-        const session = await createWorkspaceExam(manifest);
-        const records: Record<string, OpenCxrImageResult> = {};
-        compatible.forEach((image) => {
-          if (image.cxrSort) {
-            records[image.id] = {
-              sort: image.cxrSort,
-              standardize: image.cxrStandardize ?? null,
-              rejected: image.cxrRejected,
+    if (pending.length === 0) {
+      setCxrPipeline(null);
+      return;
+    }
+    /* L'image active passe devant : entrée rapide dans l'espace de travail. */
+    pending.sort((a, b) => (a.id === activeImage?.id ? -1 : b.id === activeImage?.id ? 1 : 0));
+    const total = pending.length;
+    const records: Record<string, OpenCxrImageResult> = {};
+    compatible.forEach((image) => {
+      if (image.cxrSort) {
+        records[image.id] = {
+          sort: image.cxrSort,
+          standardize: image.cxrStandardize ?? null,
+          rejected: image.cxrRejected,
+        };
+      }
+    });
+    const warnings: string[] = [];
+    let rejectedCount = 0;
+    let completed = 0;
+    let aborted = false; // image active rejetée → retour à l'accueil
+    let lifted = false; // image active prête → overlay levé, suite en fond
+    let failedMessage: string | null = null;
+    const updatePhase = (phase: "classifying" | "standardizing") => {
+      if (!lifted && !aborted && !failedMessage) setCxrPipeline({ phase, completed, total });
+    };
+    setCxrPipeline({ phase: "loading", completed: 0, total });
+    try {
+      const manifest = buildWorkspaceManifest(exam, compatible[0].id);
+      const session = await createWorkspaceExam(manifest);
+      for (const image of pending) {
+        if (aborted || failedMessage) break;
+        try {
+          const sort = image.cxrSort ?? (await sortWorkspaceImageOpenCxr(session.workspace_id, image));
+          const status = sort.status ?? (sort.Type === "notCXR" ? "REJECTED_NON_CXR" : "ACCEPTED_CXR");
+          let rejection: OpenCxrImageResult["rejected"] | null = null;
+          if (status === "REJECTED_INVALID_IMAGE") {
+            rejection = {
+              status,
+              reason: `« ${image.name} » : cette image ne peut pas être lue ou est endommagée. Aucune analyse n'a été lancée.`,
+              at: Date.now(),
+              decoder: sort.decoder,
+            };
+          } else if (status === "REJECTED_NON_CXR" || sort.Type === "notCXR") {
+            rejection = {
+              status: "REJECTED_NON_CXR",
+              reason:
+                "Cette image ne semble pas être une radiographie thoracique. " +
+                "AImaging v1 ne prend pas en charge d'autre type de radiographie.",
+              at: Date.now(),
+              decoder: sort.decoder,
             };
           }
-        });
-        const warnings: string[] = [];
-        let rejectedCount = 0;
-        let sortCount = 0;
-        let standardizeCount = 0;
-        const total = pending.length;
-        setCxrPipeline({ phase: "loading", completed: 0, total });
-        await Promise.all(pending.map(async (image) => {
-          try {
-            const sort = image.cxrSort ?? (await sortWorkspaceImageOpenCxr(session.workspace_id, image));
-            sortCount += 1;
-            const status = sort.status ?? (sort.Type === "notCXR" ? "REJECTED_NON_CXR" : "ACCEPTED_CXR");
-            if (status === "REJECTED_INVALID_IMAGE") {
-              rejectedCount += 1;
-              const reason =
-                `« ${image.name} » : cette image ne peut pas être lue ou est endommagée. ` +
-                `Aucune analyse n'a été lancée.`;
-              records[image.id] = {
-                sort,
-                standardize: null,
-                rejected: { status, reason, at: Date.now(), decoder: sort.decoder },
-              };
-              warnings.push(reason);
+          if (rejection) {
+            rejectedCount += 1;
+            records[image.id] = { sort, standardize: null, rejected: rejection };
+            warnings.push(rejection.reason);
+            completed += 1;
+            if (image.id === activeImage?.id) {
+              /* Image ACTIVE rejetée : on n'entre pas — retour à l'accueil,
+                 et plus aucune requête (analyse/Grad-CAM/anatomie) n'est
+                 envoyée (les effets suivants filtrent les images rejetées). */
+              aborted = true;
+              onSaveOpenCxr(exam.id, records);
+              w.notify("Image rejetée", "error", rejection.reason);
+              setCxrPipeline({ phase: "rejected", completed, total, message: rejection.reason });
+              window.setTimeout(() => onBack(), 1800);
               return;
             }
-            if (status === "REJECTED_NON_CXR" || sort.Type === "notCXR") {
-              rejectedCount += 1;
-              const reason =
-                `Cette image ne semble pas être une radiographie thoracique.    ` +
-                `AImaging v1 ne prend pas en charge d'autre type de radiographie.`;
-              records[image.id] = {
-                sort,
-                standardize: null,
-                rejected: { status: "REJECTED_NON_CXR", reason, at: Date.now(), decoder: sort.decoder },
-              };
-              warnings.push(reason);
-              return;
-            }
-            setCxrPipeline({ phase: "classifying", completed: sortCount, total });
-            const standardize = image.cxrStandardize ?? (await standardizeWorkspaceImageOpenCxr(session.workspace_id, image));
-            standardizeCount += 1;
-            records[image.id] = { sort, standardize };
-            setCxrPipeline({ phase: "standardizing", completed: standardizeCount, total });
-          } catch (error) {
-            warnings.push(error instanceof Error ? error.message : `Tri opencxr impossible pour '${image.name}'.`);
+            continue;
           }
-        }));
-        if (Object.keys(records).length > 0) {
-          onSaveOpenCxr(exam.id, records);
-          const activeImageId = w.imageIdRef.current;
-          if (activeImageId && records[activeImageId]) w.setCxrResult(records[activeImageId]);
+          updatePhase("classifying");
+          const standardize =
+            image.cxrStandardize ?? (await standardizeWorkspaceImageOpenCxr(session.workspace_id, image));
+          records[image.id] = { sort, standardize };
+          completed += 1;
+          if (image.id === activeImage?.id) {
+            /* Image active prête : on lève l'overlay immédiatement. */
+            lifted = true;
+            w.setCxrResult(records[image.id]);
+            setCxrPipeline({ phase: "ready", completed, total });
+          } else {
+            updatePhase("standardizing");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : `Tri opencxr impossible pour '${image.name}'.`;
+          if (image.id === activeImage?.id) {
+            /* Erreur serveur sur l'image ACTIVE : bloquant — overlay avec
+               boutons Réessayer / Retour à l'accueil, jamais d'entrée. */
+            failedMessage = message;
+            break;
+          }
+          warnings.push(message);
         }
-        const done = Object.keys(records).length;
-        if (rejectedCount > 0) {
-          w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
-          w.notify("Image rejetée", "error", warnings.join("\n"));
-          setCxrPipeline({ phase: "rejected", completed: done, total, message: warnings.join("\n") });
-        } else if (done > 0) {
-          w.recordAiAction(`OpenCXR : ${done} image(s) triée(s) et normalisée(s) automatiquement.`);
-          w.notify("Analyse opencxr terminée", "success", `${done} image(s) triée(s) et standardisée(s).`);
-          setCxrPipeline({ phase: "ready", completed: done, total });
-        } else if (warnings.length > 0) {
-          w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
-          w.notify("Tri opencxr impossible", "warning", warnings.join("\n"));
-          setCxrPipeline(null);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Tri opencxr automatique impossible.";
-        w.recordAiAction(`Tri automatique opencxr : ${message}`);
-        w.notify("Tri opencxr impossible", "error", message);
-        setCxrPipeline(null);
       }
-    })();
-  }, [exam, onSaveOpenCxr, w]);
+      if (failedMessage) {
+        w.recordAiAction(`Tri opencxr : ${failedMessage}`);
+        setCxrPipeline({ phase: "error", completed, total, message: failedMessage });
+        return;
+      }
+      if (Object.keys(records).length > 0) {
+        onSaveOpenCxr(exam.id, records);
+        const activeImageId = w.imageIdRef.current;
+        if (activeImageId && records[activeImageId] && !records[activeImageId].rejected) {
+          w.setCxrResult(records[activeImageId]);
+        }
+      }
+      if (rejectedCount > 0) {
+        w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
+        w.notify("Image rejetée", "error", warnings.join("\n"));
+      } else if (!lifted && Object.keys(records).length > 0) {
+        w.recordAiAction(`OpenCXR : ${Object.keys(records).length} image(s) triée(s) et normalisée(s) automatiquement.`);
+        w.notify(
+          "Analyse opencxr terminée",
+          "success",
+          `${Object.keys(records).length} image(s) triée(s) et standardisée(s).`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tri opencxr automatique impossible.";
+      w.recordAiAction(`Tri automatique opencxr : ${message}`);
+      if (!aborted) {
+        /* Échec de la création de session / erreur serveur globale : bloquant. */
+        setCxrPipeline({ phase: "error", completed: 0, total, message });
+      }
+    }
+  }, [exam, imageIndex, onBack, onSaveOpenCxr, w]);
+
+  useEffect(() => {
+    if (!exam || exam.images.length === 0) return;
+    /* Signature examen + images : l'ajout d'une image relance le tri pour
+       elle seule ; un examen déjà trié n'entraîne aucune requête. */
+    const signature = `${exam.id}:${exam.images.map((image) => image.id).join(",")}`;
+    if (autoOpenCxrStartedFor.current === signature) return;
+    autoOpenCxrStartedFor.current = signature;
+    void runOpenCxrPipeline();
+  }, [exam, runOpenCxrPipeline]);
+
+  const retryOpenCxr = useCallback(() => {
+    autoOpenCxrStartedFor.current = null;
+    void runOpenCxrPipeline();
+  }, [runOpenCxrPipeline]);
 
   const switchImage = (i: number) => {
     if (!exam || i === imageIndex) return;
@@ -1248,14 +1359,20 @@ const doExport = async () => {
           <div className="w-[min(400px,calc(100vw-48px))] text-center">
             <img src="/logo_dark_transparent.png" alt="AImaging" className="app-logo mx-auto h-10 w-auto animate-pulse-soft" />
             <h2 className="mt-7 text-[14px] font-semibold text-ink">
-              {cxrPipeline.phase === "rejected" ? "Image rejetée" : "Préparation de la radiographie"}
+              {cxrPipeline.phase === "rejected"
+                ? "Image rejetée"
+                : cxrPipeline.phase === "error"
+                  ? "Le serveur ne répond pas"
+                  : "Préparation de la radiographie"}
             </h2>
             <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-3">
               {cxrPipeline.phase === "rejected"
-                ? "La standardisation n'a pas été lancée pour cette image."
-                : cxrPipeline.phase === "loading"
-                  ? "Chargement de l'image en cours…"
-                  : "Analyse automatique par l'ensemble radiographique — patientez quelques secondes."}
+                ? "Retour à l'accueil…"
+                : cxrPipeline.phase === "error"
+                  ? "La préparation de l'image a échoué."
+                  : cxrPipeline.phase === "loading"
+                    ? "Chargement de l'image en cours…"
+                    : "Veuillez patienter quelques secondes."}
             </p>
             {(cxrPipeline.phase === "rejected") && (
               <>
@@ -1264,12 +1381,37 @@ const doExport = async () => {
                 </p>
                 <button
                   type="button"
-                  data-attr="exam-loading-dismiss"
-                  onClick={() => setCxrPipeline(null)}
+                  data-attr="exam-loading-back"
+                  onClick={handleBack}
                   className="mt-5 rounded-lg border border-border bg-btn px-4 py-2 text-[12px] font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
                 >
-                  Voir l'image
+                  Retour à l'accueil
                 </button>
+              </>
+            )}
+            {(cxrPipeline.phase === "error") && (
+              <>
+                <p className="mt-5 whitespace-pre-line rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-left text-[11.5px] leading-relaxed text-red-200">
+                  {cxrPipeline.message}
+                </p>
+                <div className="mt-5 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    data-attr="exam-loading-retry"
+                    onClick={retryOpenCxr}
+                    className="rounded-lg border border-accent/50 bg-accent/15 px-4 py-2 text-[12px] font-medium text-accent transition-colors duration-150 ease-out hover:bg-accent/25"
+                  >
+                    Réessayer
+                  </button>
+                  <button
+                    type="button"
+                    data-attr="exam-loading-back"
+                    onClick={handleBack}
+                    className="rounded-lg border border-border bg-btn px-4 py-2 text-[12px] font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
+                  >
+                    Retour à l'accueil
+                  </button>
+                </div>
               </>
             )}
             {cxrPipeline.phase === "ready" && (
