@@ -90,8 +90,6 @@ export function MobileShell({
         w.setWl({ window: image.metadata.windowWidth, level: image.metadata.windowCenter ?? 127.5 });
       }
       w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
-      imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
-      if (imported.images.length > 1) w.recordAiAction("Import : première frame d'un DICOM multi-frame ouverte.");
       recordRecent(image.name, image.src);
     },
     [w],

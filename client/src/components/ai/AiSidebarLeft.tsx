@@ -3,28 +3,37 @@ import {
   ArrowLeft,
   Crosshair,
   History,
-  Lightbulb,
   List,
   Lock,
   LockOpen,
   Map,
+  Pencil,
   Ruler,
   Save,
   Scan,
   SlidersHorizontal,
   Stethoscope,
+  Terminal,
   Trash2,
   X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { AI_PROMPTS } from "../../lib/aiCommands";
+import { COMMAND_SUGGESTIONS } from "../../lib/aiCommandSyntax";
 import { cn } from "../../lib/cn";
 import { useWorkspace } from "../../state/workspace";
 import { Divider } from "../ui";
 
-type View = "main" | "history" | "prompts" | "new-prompt";
+type View = "main" | "history" | "commands" | "command-form";
+
+/** État du formulaire de création / modification d'une commande. */
+interface CommandFormState {
+  /** id de la commande modifiée, null pour une nouvelle commande. */
+  id: string | null;
+  name: string;
+  command: string;
+}
 
 function SectionTitle({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
@@ -74,13 +83,17 @@ function BackHeader({ onBack, title, dataBack, children }: {
 
 function HistoryView({ onBack }: { onBack: () => void }) {
   const w = useWorkspace();
+  const saveAsCommand = (text: string) => {
+    const base = text.trim().replace(/^@/, "").split(/\s/, 1)[0]?.toLowerCase() || "commande";
+    let name = base;
+    let n = 2;
+    while (w.aiCustomCommands.some((cmd) => cmd.name === name)) name = `${base}-${n++}`;
+    w.addAiCustomCommand(name, text);
+    onBack();
+  };
   return (
     <div className="flex h-full min-h-0 flex-col" data-attr="ai-history-view">
-      <BackHeader
-        onBack={onBack}
-        title="Historique"
-        dataBack="ai-history-back"
-      >
+      <BackHeader onBack={onBack} title="Historique" dataBack="ai-history-back">
         {w.aiHistory.length > 0 && (
           <button
             type="button"
@@ -114,12 +127,6 @@ function HistoryView({ onBack }: { onBack: () => void }) {
                 </div>
                 {h.answer && <p className="mt-1 whitespace-pre-wrap text-[11px] leading-snug text-ink-2">{h.answer}</p>}
                 <p className="mt-0.5 text-[10.5px] leading-snug text-ink-3">{h.summary}</p>
-                {h.limitations && h.limitations.length > 0 && (
-                  <p className="mt-1 text-[10px] leading-snug text-ink-3">Limites : {h.limitations.join(" ")}</p>
-                )}
-                {h.warnings && h.warnings.length > 0 && (
-                  <p className="mt-1 text-[10px] leading-snug text-amber-300">{h.warnings.join(" ")}</p>
-                )}
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <button
                     type="button"
@@ -132,10 +139,8 @@ function HistoryView({ onBack }: { onBack: () => void }) {
                   <button
                     type="button"
                     data-attr={`ai-history-save-${h.id}`}
-                    onClick={() => {
-                      w.addAiCustomPrompt(h.text);
-                      onBack();
-                    }}
+                    onClick={() => saveAsCommand(h.text)}
+                    title="Enregistrer comme commande personnalisée"
                     className="flex-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] text-accent transition-colors duration-150 ease-out hover:bg-accent/20"
                   >
                     Enregistrer
@@ -159,133 +164,153 @@ function HistoryView({ onBack }: { onBack: () => void }) {
   );
 }
 
-/* ----------------------------- Vue créer un prompt ---------------------------- */
+/* --------------------- Vue créer / modifier une commande --------------------- */
 
-function NewPromptView({ onBack }: { onBack: () => void }) {
+function CommandFormView({ initial, onBack }: { initial: CommandFormState; onBack: () => void }) {
   const w = useWorkspace();
-  const [text, setText] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(w.aiActionLog.filter((a) => a.type).map((a) => a.id)),
-  );
-  const toggle = (id: string) => {
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const [name, setName] = useState(initial.name);
+  const [command, setCommand] = useState(initial.command);
+  const [error, setError] = useState<string | null>(null);
   const save = () => {
-    const t = text.trim();
-    if (!t) return;
-    w.addAiCustomPrompt(t, w.aiActionLog.filter((a) => selected.has(a.id)));
+    const n = name.trim().replace(/^@/, "").toLowerCase();
+    const c = command.trim();
+    if (!n || !c) {
+      setError("Le nom et la commande sont requis.");
+      return;
+    }
+    if (!c.startsWith("@")) {
+      setError("La commande doit commencer par « @ » (ex. @wl preset:lung).");
+      return;
+    }
+    if (w.aiCustomCommands.some((cmd) => cmd.name === n && cmd.id !== initial.id)) {
+      setError(`Une commande « @${n} » existe déjà.`);
+      return;
+    }
+    if (initial.id) w.updateAiCustomCommand(initial.id, n, c);
+    else w.addAiCustomCommand(n, c);
     onBack();
   };
   return (
-    <div className="flex h-full min-h-0 flex-col" data-attr="ai-new-prompt-view">
-      <BackHeader onBack={onBack} title="Créer un prompt" dataBack="ai-new-prompt-back" />
+    <div className="flex h-full min-h-0 flex-col" data-attr="ai-command-form-view">
+      <BackHeader
+        onBack={onBack}
+        title={initial.id ? "Modifier la commande" : "Nouvelle commande"}
+        dataBack="ai-command-form-back"
+      />
       <Divider className="mx-3 my-2" />
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
-        <p className="mb-2 px-1 text-[10.5px] leading-snug text-ink-3">
-          Sélectionnez les actions réalisées, puis attribuez-leur une phrase.
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3">
+        <label className="block">
+          <span className="mb-1 block px-1 text-[10.5px] uppercase tracking-[0.08em] text-ink-3">Nom</span>
+          <input
+            data-attr="ai-command-name-input"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+            }}
+            placeholder="mon-fenetrage"
+            spellCheck={false}
+            className="w-full rounded-lg border border-border bg-canvas px-2.5 py-1.5 text-[12px] text-ink outline-none transition-colors duration-150 ease-out focus:border-accent/60"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block px-1 text-[10.5px] uppercase tracking-[0.08em] text-ink-3">Commande</span>
+          <textarea
+            data-attr="ai-command-value-input"
+            value={command}
+            onChange={(e) => {
+              setCommand(e.target.value);
+              setError(null);
+            }}
+            placeholder="@wl preset:lung"
+            rows={3}
+            spellCheck={false}
+            className="w-full resize-none rounded-lg border border-border bg-canvas px-2.5 py-1.5 font-mono text-[12px] text-ink outline-none transition-colors duration-150 ease-out focus:border-accent/60"
+          />
+        </label>
+        {error && <p className="px-1 text-[11px] text-red-400">{error}</p>}
+        <p className="px-1 text-[10.5px] leading-snug text-ink-3">
+          La commande sera exécutable depuis la barre de commandes et cette liste.
         </p>
-        <input
-          data-attr="ai-prompt-input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Phrase associée aux actions…"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") save();
-          }}
-          className="w-full rounded-lg border border-border bg-canvas px-2.5 py-1.5 text-[12px] text-ink outline-none transition-colors duration-150 ease-out focus:border-accent/60"
-        />
-        <div className="mb-2 mt-3 flex items-center gap-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-3">
-          <Zap size={12} strokeWidth={2.2} />
-          Actions récentes ({w.aiActionLog.length})
-        </div>
-        {w.aiActionLog.length === 0 ? (
-          <p className="px-1 text-[11px] text-ink-3">
-            Aucune action enregistrée pour l'instant. Réalisez des réglages (fenêtrage, inversion, dessin…) en mode normal
-            pour les retrouver ici.
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {w.aiActionLog.map((a) => (
-              <label
-                key={a.id}
-                data-attr={`ai-action-select-${a.id}`}
-                className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/70 bg-card/60 px-2.5 py-1.5 transition-colors duration-150 ease-out hover:border-accent/40"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(a.id)}
-                  onChange={() => toggle(a.id)}
-                  className="h-3 w-3 shrink-0 accent-blue-500"
-                />
-                <span className={cn("min-w-0 flex-1 truncate text-[11px]", selected.has(a.id) ? "text-ink" : "text-ink-2")}>
-                  {a.label}
-                </span>
-                {!a.type && <span className="shrink-0 text-[9px] text-ink-3">non rejouable</span>}
-              </label>
-            ))}
-          </div>
-        )}
       </div>
       <div className="border-t border-border px-3 py-2.5">
         <button
           type="button"
-          data-attr="ai-prompt-save"
+          data-attr="ai-command-save"
           onClick={save}
-          disabled={!text.trim()}
+          disabled={!name.trim() || !command.trim()}
           className="w-full rounded-lg bg-accent py-1.5 text-[12px] font-medium text-white transition-colors duration-150 ease-out hover:bg-accent/90 disabled:opacity-40"
         >
-          Enregistrer{selected.size > 0 ? ` · ${selected.size} action${selected.size > 1 ? "s" : ""}` : ""}
+          {initial.id ? "Mettre à jour" : "Enregistrer"}
         </button>
       </div>
     </div>
   );
 }
 
-/* --------------------------- Vue tous les prompts --------------------------- */
+/* --------------------------- Vue toutes les commandes --------------------------- */
 
-function PromptsView({ onBack }: { onBack: () => void }) {
+function CommandsView({
+  onBack,
+  onNew,
+  onEdit,
+}: {
+  onBack: () => void;
+  onNew: () => void;
+  onEdit: (id: string) => void;
+}) {
   const w = useWorkspace();
   return (
-    <div className="flex h-full min-h-0 flex-col" data-attr="ai-prompts-view">
-      <BackHeader onBack={onBack} title="Prompts & commandes" dataBack="ai-prompts-back" />
+    <div className="flex h-full min-h-0 flex-col" data-attr="ai-commands-view">
+      <BackHeader onBack={onBack} title="Commandes" dataBack="ai-commands-back">
+        <button
+          type="button"
+          data-attr="ai-commands-new"
+          onClick={onNew}
+          title="Créer une nouvelle commande"
+          className="ml-auto flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10.5px] text-accent transition-colors duration-150 ease-out hover:bg-accent/20"
+        >
+          Nouvelle
+        </button>
+      </BackHeader>
       <Divider className="mx-3 my-2" />
       <div className="flex-1 overflow-y-auto px-3 pb-3">
         <div className="mb-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-3">
-          Mes prompts ({w.aiCustomPrompts.length})
+          Mes commandes ({w.aiCustomCommands.length})
         </div>
-        {w.aiCustomPrompts.length === 0 ? (
-          <p className="mb-3 px-1 text-[11px] text-ink-3">Aucun prompt enregistré.</p>
+        {w.aiCustomCommands.length === 0 ? (
+          <p className="mb-3 px-1 text-[11px] text-ink-3">Aucune commande enregistrée.</p>
         ) : (
           <div className="mb-3 space-y-1">
-            {w.aiCustomPrompts.map((p, i) => (
+            {w.aiCustomCommands.map((cmd, i) => (
               <div
-                key={p.id}
-                data-attr={`ai-custom-prompt-${i}`}
+                key={cmd.id}
+                data-attr={`ai-custom-command-row-${i}`}
                 className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-2 py-1.5"
               >
                 <button
                   type="button"
-                  onClick={() => w.runAiPrompt(p)}
-                  title="Exécuter ce prompt"
+                  onClick={() => w.runAiCommand(cmd.command)}
+                  title="Exécuter cette commande"
                   className="min-w-0 flex-1 truncate text-left text-[11px] text-accent transition-colors duration-150 ease-out hover:text-ink"
                 >
-                  {p.text}
-                  {p.actions.length > 0 && (
-                    <span className="ml-1.5 text-[9.5px] text-accent/60">
-                      · {p.actions.length} action{p.actions.length > 1 ? "s" : ""}
-                    </span>
-                  )}
+                  @{cmd.name}
+                  <span className="ml-1.5 font-mono text-[9.5px] text-accent/60">{cmd.command}</span>
                 </button>
                 <button
                   type="button"
-                  data-attr={`ai-custom-prompt-remove-${i}`}
-                  onClick={() => w.removeAiCustomPrompt(p.id)}
-                  title="Supprimer ce prompt"
+                  data-attr={`ai-custom-command-edit-${i}`}
+                  onClick={() => onEdit(cmd.id)}
+                  title="Modifier cette commande"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-accent/60 transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-accent"
+                >
+                  <Pencil size={11} strokeWidth={2.2} />
+                </button>
+                <button
+                  type="button"
+                  data-attr={`ai-custom-command-remove-${i}`}
+                  onClick={() => w.removeAiCustomCommand(cmd.id)}
+                  title="Supprimer cette commande"
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-accent/60 transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-accent"
                 >
                   <X size={11} strokeWidth={2.5} />
@@ -295,11 +320,11 @@ function PromptsView({ onBack }: { onBack: () => void }) {
           </div>
         )}
         <div className="mb-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-3">
-          Commandes IA
+          Commandes intégrées
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {AI_PROMPTS.map((p) => (
-            <Chip key={p} label={p} onClick={() => w.runAiCommand(p)} />
+          {COMMAND_SUGGESTIONS.map((s) => (
+            <Chip key={s.name} label={`@${s.name}`} onClick={() => w.runAiCommand(s.usage)} />
           ))}
         </div>
       </div>
@@ -356,19 +381,27 @@ export function AiSidebarLeft({
 }) {
   const w = useWorkspace();
   const [view, setView] = useState<View>("main");
+  const [form, setForm] = useState<CommandFormState | null>(null);
 
   const drawer = variant === "drawer";
+
+  const openNewCommand = () => {
+    setForm({ id: null, name: "", command: "" });
+    setView("command-form");
+  };
+
+  const openEditCommand = (id: string) => {
+    const cmd = w.aiCustomCommands.find((c) => c.id === id);
+    if (!cmd) return;
+    setForm({ id: cmd.id, name: cmd.name, command: cmd.command });
+    setView("command-form");
+  };
 
   const toggleGradcam = () => {
     /* Le clic ouvre toujours la carte Grad-CAM du panneau droit. */
     w.setGradcamCardOpen(true);
     if (w.gradcamResult) {
-      const next = !w.gradcamOn;
-      w.recordAiAction(next ? "Grad-CAM affichée" : "Grad-CAM masquée", {
-        type: "show_gradcam",
-        payload: { visible: next, opacity: w.gradcamIntensity / 100 },
-      });
-      w.setGradcamOn(next);
+      w.setGradcamOn(!w.gradcamOn);
     } else {
       w.runAiCommand("@gradcam");
     }
@@ -389,12 +422,14 @@ export function AiSidebarLeft({
       )}
     >
       {view === "history" && <HistoryView onBack={() => setView("main")} />}
-      {view === "new-prompt" && <NewPromptView onBack={() => setView("main")} />}
-      {view === "prompts" && <PromptsView onBack={() => setView("main")} />}
+      {view === "command-form" && form && <CommandFormView initial={form} onBack={() => setView("main")} />}
+      {view === "commands" && (
+        <CommandsView onBack={() => setView("main")} onNew={openNewCommand} onEdit={openEditCommand} />
+      )}
 
       {view === "main" && (
         <div className="flex min-h-0 flex-col overflow-y-auto">
-          {/* Header: history + save prompt */}
+          {/* Header : historique + nouvelle commande */}
           <div className="flex items-center gap-1.5 px-3 pb-1 pt-3">
             <button
               type="button"
@@ -407,65 +442,72 @@ export function AiSidebarLeft({
             </button>
             <button
               type="button"
-              data-attr="ai-save-prompt-open"
-              onClick={() => setView("new-prompt")}
+              data-attr="ai-new-command-open"
+              onClick={openNewCommand}
+              title="Créer une nouvelle commande"
               className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[11.5px] text-accent transition-colors duration-150 ease-out hover:bg-accent/20"
             >
               <Save size={13} strokeWidth={2.2} />
-              New prompt
+              Nouvelle commande
             </button>
           </div>
 
           <Divider className="mx-3 my-2" />
 
-          {/* Prompts */}
-          <SectionTitle icon={Lightbulb}>Prompts</SectionTitle>
+          {/* Commandes */}
+          <SectionTitle icon={Terminal}>Commandes</SectionTitle>
           <div className="mx-3 mb-2 space-y-1.5">
-            {w.aiCustomPrompts.length > 0 && (
-              <div data-attr="ai-custom-prompts" className="flex flex-wrap gap-1.5">
-                {w.aiCustomPrompts.slice(0, 8).map((p, i) => (
-                  <span
-                    key={p.id}
-                    data-attr={`ai-custom-prompt-${i}`}
-                    className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 py-1 pl-2.5 pr-1 text-[11px] text-accent"
+            {w.aiCustomCommands.length > 0 && (
+              <div data-attr="ai-custom-commands" className="space-y-1">
+                {w.aiCustomCommands.slice(0, 8).map((cmd, i) => (
+                  <div
+                    key={cmd.id}
+                    data-attr={`ai-custom-command-${i}`}
+                    className="flex items-center gap-1 rounded-lg border border-accent/30 bg-accent/10 px-2 py-1"
                   >
                     <button
                       type="button"
-                      onClick={() => w.runAiPrompt(p)}
-                      title={p.actions.length > 0 ? `Rejoue ${p.actions.length} action(s)` : "Envoyer la phrase"}
-                      className="transition-colors duration-150 ease-out hover:text-ink"
+                      onClick={() => w.runAiCommand(cmd.command)}
+                      title={`Exécute ${cmd.command}`}
+                      className="min-w-0 truncate text-left text-[11px] text-accent transition-colors duration-150 ease-out hover:text-ink"
                     >
-                      {p.text}
-                      {p.actions.length > 0 && (
-                        <span className="ml-1 text-[9.5px] text-accent/60">· {p.actions.length}</span>
-                      )}
+                      @{cmd.name}
                     </button>
                     <button
                       type="button"
-                      data-attr={`ai-custom-prompt-remove-${i}`}
-                      onClick={() => w.removeAiCustomPrompt(p.id)}
-                      title="Supprimer ce prompt"
-                      className="flex h-4 w-4 items-center justify-center rounded-full text-accent/60 transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-accent"
+                      data-attr={`ai-custom-command-edit-${i}`}
+                      onClick={() => openEditCommand(cmd.id)}
+                      title="Modifier cette commande"
+                      className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-accent/60 transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-accent"
+                    >
+                      <Pencil size={10} strokeWidth={2.2} />
+                    </button>
+                    <button
+                      type="button"
+                      data-attr={`ai-custom-command-remove-${i}`}
+                      onClick={() => w.removeAiCustomCommand(cmd.id)}
+                      title="Supprimer cette commande"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-accent/60 transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-accent"
                     >
                       <X size={10} strokeWidth={2.5} />
                     </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">
-              {AI_PROMPTS.slice(0, 8).map((p) => (
-                <Chip key={p} label={p} onClick={() => w.runAiCommand(p)} />
+              {COMMAND_SUGGESTIONS.map((s) => (
+                <Chip key={s.name} label={`@${s.name}`} onClick={() => w.runAiCommand(s.usage)} />
               ))}
             </div>
             <button
               type="button"
-              data-attr="ai-prompts-see-all"
-              onClick={() => setView("prompts")}
+              data-attr="ai-commands-see-all"
+              onClick={() => setView("commands")}
               className="flex items-center gap-1 rounded-md border border-border bg-btn px-2 py-1 text-[10.5px] text-ink-3 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
             >
               <List size={11} strokeWidth={2.2} />
-              Voir tout ({w.aiCustomPrompts.length + AI_PROMPTS.length})
+              Voir tout ({w.aiCustomCommands.length + COMMAND_SUGGESTIONS.length})
             </button>
           </div>
 
@@ -527,3 +569,7 @@ export function AiSidebarLeft({
     </motion.aside>
   );
 }
+
+
+
+

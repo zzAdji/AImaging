@@ -139,7 +139,6 @@ function ImageSection() {
         <Toggle
           checked={w.inverted}
           onChange={(v) => {
-            w.recordAiAction(v ? "Image inversée" : "Image réinversée", { type: "invert", payload: { value: v } });
             w.setInverted(v);
           }}
         />
@@ -184,7 +183,6 @@ function ImageSection() {
         min={0}
         max={100}
         onChange={w.setBrightness}
-        onSettle={(v) => w.recordAiAction(`Luminosité réglée à ${v}`, { type: "set_brightness", payload: { value: v } })}
         inputData="brightness-input"
       />
       <SliderRow
@@ -193,14 +191,12 @@ function ImageSection() {
         min={0}
         max={100}
         onChange={w.setContrast}
-        onSettle={(v) => w.recordAiAction(`Contraste réglé à ${v}`, { type: "set_contrast", payload: { value: v } })}
         inputData="contrast-input"
       />
       <PresetChips
         options={BC_PRESETS}
         isActive={(p) => p.brightness === w.brightness && p.contrast === w.contrast}
         onSelect={(p) => {
-          w.recordAiAction(`Réglages ${p.label} appliqués`, { type: "brightness_contrast", payload: { brightness: p.brightness, contrast: p.contrast } });
           w.setBrightness(p.brightness);
           w.setContrast(p.contrast);
         }}
@@ -212,7 +208,6 @@ function ImageSection() {
         min={native ? 1 : 20}
         max={native ? Math.max(512, Math.round((w.dicomLinear?.max ?? 255) - (w.dicomLinear?.min ?? 0) + 1)) : 512}
         onChange={(v) => w.setWl({ ...w.wl, window: v })}
-        onSettle={(v) => w.recordAiAction(`Fenêtrage réglé : ${v}/${w.wl.level}`, { type: "set_window_level", payload: { window: v, level: w.wl.level } })}
         inputData="window-input"
       />
       <SliderRow
@@ -221,14 +216,12 @@ function ImageSection() {
         min={native ? Math.floor(w.dicomLinear?.min ?? 0) : 0}
         max={native ? Math.ceil(w.dicomLinear?.max ?? 255) : 255}
         onChange={(v) => w.setWl({ ...w.wl, level: v })}
-        onSettle={(v) => w.recordAiAction(`Niveau réglé : ${w.wl.window}/${v}`, { type: "set_window_level", payload: { window: w.wl.window, level: v } })}
         inputData="level-input"
       />
       <PresetChips
         options={native ? WL_PRESETS_HU : WL_PRESETS}
         isActive={(p) => p.wl.window === w.wl.window && p.wl.level === w.wl.level}
         onSelect={(p) => {
-          w.recordAiAction(`Fenêtrage ${p.label} appliqué`, { type: "set_window_level", payload: { window: p.wl.window, level: p.wl.level } });
           w.setWl(p.wl);
         }}
       />

@@ -15,8 +15,7 @@ import {
   type AiCommandResolver,
   type AiFocus,
   type AiHistoryItem,
-  type AiPrompt,
-  type AiRecordedAction,
+  type AiCustomCommand,
   type AiResults,
   type AppNotification,
   type LayerDef,
@@ -840,31 +839,32 @@ export function WorkspaceProvider({
   const [aiDisclaimerDismissed, setAiDisclaimerDismissed] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiHistory, setAiHistory] = useState<AiHistoryItem[]>([]);
-  const [aiCustomPrompts, setAiCustomPrompts] = useState<AiPrompt[]>(() => {
+  const [aiCustomCommands, setAiCustomCommands] = useState<AiCustomCommand[]>(() => {
     try {
-      const raw = localStorage.getItem("aimaging.aiPrompts");
+      const raw = localStorage.getItem("aimaging.aiCommands");
       const arr = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(arr)) return [];
       return arr
-        .map((x: unknown): AiPrompt | null => {
-          if (typeof x === "string") return { id: randomId(), text: x, actions: [], at: Date.now() };
-          if (x && typeof x === "object" && typeof (x as AiPrompt).text === "string") {
+        .map((x: unknown): AiCustomCommand | null => {
+          if (x && typeof x === "object" && typeof (x as AiCustomCommand).name === "string") {
             return {
-              id: (x as AiPrompt).id ?? randomId(),
-              text: (x as AiPrompt).text,
-              actions: Array.isArray((x as AiPrompt).actions) ? (x as AiPrompt).actions : [],
-              at: Number((x as AiPrompt).at) || Date.now(),
+              id: typeof (x as AiCustomCommand).id === "string" ? (x as AiCustomCommand).id : randomId(),
+              name: ((x as AiCustomCommand).name as string).trim().replace(/^@/, "").toLowerCase(),
+              command: String((x as AiCustomCommand).command ?? "").trim(),
+              at: Number((x as AiCustomCommand).at) || Date.now(),
             };
           }
           return null;
         })
-        .filter((p: AiPrompt | null): p is AiPrompt => p !== null)
+        .filter(
+          (c: AiCustomCommand | null): c is AiCustomCommand =>
+            c !== null && c.name.length > 0 && c.command.length > 0,
+        )
         .slice(0, 24);
     } catch {
       return [];
     }
   });
-  const [aiActionLog, setAiActionLog] = useState<AiRecordedAction[]>([]);
 
   /* ------------------------------ Notifications (toasts) ------------------------------ */
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -939,37 +939,35 @@ export function WorkspaceProvider({
 
   useEffect(() => {
     try {
-      localStorage.setItem("aimaging.aiPrompts", JSON.stringify(aiCustomPrompts));
+      localStorage.setItem("aimaging.aiCommands", JSON.stringify(aiCustomCommands));
     } catch {
       /* localStorage unavailable ÔÇö prompts stay in memory */
     }
-  }, [aiCustomPrompts]);
+  }, [aiCustomCommands]);
 
-  const addAiCustomPrompt = useCallback((text: string, actions: AiRecordedAction[] = []) => {
-    const t = text.trim();
-    if (!t) return;
-    setAiCustomPrompts((prompts) => [
-      { id: randomId(), text: t, actions: actions.slice(0, 10), at: Date.now() },
-      ...prompts.filter((p) => p.text !== t),
+  const addAiCustomCommand = useCallback((name: string, command: string) => {
+    const n = name.trim().replace(/^@/, "").toLowerCase();
+    const c = command.trim();
+    if (!n || !c) return;
+    setAiCustomCommands((commands) => [
+      { id: randomId(), name: n, command: c, at: Date.now() },
+      ...commands.filter((cmd) => cmd.name !== n),
     ].slice(0, 24));
   }, []);
 
-  const removeAiCustomPrompt = useCallback((id: string) => {
-    setAiCustomPrompts((prompts) => prompts.filter((p) => p.id !== id));
+  const updateAiCustomCommand = useCallback((id: string, name: string, command: string) => {
+    const n = name.trim().replace(/^@/, "").toLowerCase();
+    const c = command.trim();
+    if (!n || !c) return;
+    setAiCustomCommands((commands) =>
+      commands.map((cmd) => (cmd.id === id ? { ...cmd, name: n, command: c } : cmd)),
+    );
   }, []);
 
-  const recordAiAction = useCallback((text: string, action?: { type: string; payload: Record<string, unknown> }) => {
-    const t = text.trim();
-    if (!t) return;
-    const rec: AiRecordedAction = {
-      id: randomId(),
-      label: t,
-      type: action?.type ?? "",
-      payload: action?.payload ?? {},
-      at: Date.now(),
-    };
-    setAiActionLog((log) => [rec, ...log.filter((x) => !(x.label === t && x.type === rec.type))].slice(0, 30));
+  const removeAiCustomCommand = useCallback((id: string) => {
+    setAiCustomCommands((commands) => commands.filter((cmd) => cmd.id !== id));
   }, []);
+
 
   /* --------------------------- Segmentation anatomique --------------------------- */
   const setAnatomyCardOpen = useCallback((open: boolean) => {
@@ -1070,7 +1068,6 @@ export function WorkspaceProvider({
     if (!imageIdValue || !imageSrcValue) {
       const message = "Chargez une radiographie avant de lancer la segmentation.";
       setAnatomyError(message);
-      recordAiAction(`Segmentation anatomique : ${message}`);
       return false;
     }
     if (anatomyLoadingRef.current) return false;
@@ -1105,22 +1102,16 @@ export function WorkspaceProvider({
       if (response.result.status === "ok") {
         void loadAnatomyRegionTexts();
       }
-      recordAiAction(
-        `Segmentation anatomique : ${response.result.segmentation.label_ids_available.length} structures détectées, ` +
-          `CTR=${response.result.measurements["Cardio-Thoracic Ratio"]?.available ? "oui" : "n.d."}, ` +
-          `SCD=${response.result.measurements["Spine-Center Distance"]?.available ? "oui" : "n.d."}.`,
-      );
       return true;
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Segmentation anatomique impossible.";
       setAnatomyError(message);
-      recordAiAction(`Segmentation anatomique : ${message}`);
       return false;
     } finally {
       anatomyLoadingRef.current = false;
       setAnatomyLoading(false);
     }
-  }, [loadAnatomyRegionTexts, recordAiAction]);
+  }, [loadAnatomyRegionTexts]);
 
   const toggleAnatomyCard = useCallback(() => {
     const next = !anatomyCardOpenRef.current;
@@ -1263,7 +1254,6 @@ export function WorkspaceProvider({
       const message = "Chargez une radiographie avant l'analyse anatomique.";
       setAnatomyError(message);
       setLandmarkError(message);
-      recordAiAction(`Analyse anatomique : ${message}`);
       return false;
     }
     if (anatomyLoadingRef.current || landmarkLoadingRef.current) return false;
@@ -1334,16 +1324,11 @@ export function WorkspaceProvider({
       adoptModelContours(landmarks);
       placeLandmarkMeasurements();
 
-      recordAiAction(
-        `Analyse anatomique : CXAS ${cx?.status === "ok" ? "ok" : "erreur"}, ` +
-          `HybridGNet ${response.hybridgnet?.status === "ok" ? "ok" : "erreur"}.`,
-      );
       return true;
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Analyse anatomique impossible.";
       setAnatomyError(message);
       setLandmarkError(message);
-      recordAiAction(`Analyse anatomique : ${message}`);
       return false;
     } finally {
       anatomyLoadingRef.current = false;
@@ -1351,7 +1336,7 @@ export function WorkspaceProvider({
       setAnatomyLoading(false);
       setLandmarkLoading(false);
     }
-  }, [adoptModelContours, placeLandmarkMeasurements, recordAiAction]);
+  }, [adoptModelContours, placeLandmarkMeasurements]);
 
   const runLandmarksAnalysis = useCallback(
     async (waitForImage = false, options?: { autoPlace?: boolean }): Promise<boolean> => {
@@ -1368,7 +1353,6 @@ export function WorkspaceProvider({
     if (!imageIdValue || !imageSrcValue) {
       const message = "Chargez une radiographie avant de lancer les mesures.";
       setLandmarkError(message);
-      recordAiAction(`Mesures landmarks : ${message}`);
       return false;
     }
     if (landmarkLoadingRef.current) return false;
@@ -1401,11 +1385,6 @@ export function WorkspaceProvider({
       landmarkResultRef.current = response.result;
       setLandmarkResultState(response.result);
       adoptModelContours(response.result);
-      const ctr = response.result.measurements.ctr;
-      recordAiAction(
-        `Mesures landmarks : CTR=${ctr.value.toFixed(3)} ± ${ctr.std.toFixed(3)}, ` +
-          `σ max=${response.result.uncertainty.max_node_std_px.toFixed(1)} px.`,
-      );
       if (options?.autoPlace !== false) {
         /* Placement automatique des mesures sur l'image uniquement en usage
            manuel ; la chaîne automatique au chargement garde le canvas propre
@@ -1416,14 +1395,13 @@ export function WorkspaceProvider({
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Analyse landmarks impossible.";
       setLandmarkError(message);
-      recordAiAction(`Mesures landmarks : ${message}`);
       return false;
     } finally {
       landmarkLoadingRef.current = false;
       setLandmarkLoading(false);
     }
     },
-    [adoptModelContours, recordAiAction, placeLandmarkMeasurements],
+    [adoptModelContours, placeLandmarkMeasurements],
   );
 
   const toggleLandmarksCard = useCallback(() => {
@@ -1523,7 +1501,6 @@ export function WorkspaceProvider({
     const appliedActionIds: string[] = [];
     const warnings: string[] = [];
     const actionList = [...plan.actions].sort((a, b) => a.order - b.order);
-    const actionShapeIds = new Set<string>();
 
 pushHistory();
     for (const action of actionList) {
@@ -1610,7 +1587,6 @@ pushHistory();
             actionId: action.id,
           };
           commit([...shapesRef.current, shape]);
-          actionShapeIds.add(shape.id);
           setSelection(shape.id);
           break;
         }
@@ -1670,7 +1646,6 @@ pushHistory();
           void runUnifiedAnatomyAnalysis().catch((error: unknown) => {
             const message = error instanceof Error ? error.message : "Analyse anatomique impossible.";
             warnings.push(message);
-            recordAiAction(`Analyse anatomique : ${message}`);
           });
           break;
         case "generate_gradcam":
@@ -1693,108 +1668,13 @@ pushHistory();
       pastRef.current.pop();
       setCanUndo(pastRef.current.length > 0);
     }
-    if (actionShapeIds.size > 0) recordAiAction(`${actionShapeIds.size} objet(s) ajout├®(s) par l'IA.`);
     return { appliedActionIds, warnings };
-  }, [commit, pushHistory, recordAiAction, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl, notify, runUnifiedAnatomyAnalysis]);
+  }, [commit, pushHistory, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setLayerOpacity, setLayerVisible, setThreeDOn, setWl, notify, runUnifiedAnatomyAnalysis]);
 
   useEffect(() => {
     executePlanRef.current = executeAiActionPlan;
   }, [executeAiActionPlan]);
 
-  /** Rejoue les actions enregistr├®es d'un prompt (d├®terministe, une seule
-   *  transaction Ctrl+Z). Sans action rejouable, retombe sur la commande IA. */
-  const runAiPrompt = useCallback((prompt: AiPrompt) => {
-    const replayable = prompt.actions.filter((a) => a.type);
-    if (replayable.length === 0) {
-      runAiCommand(prompt.text);
-      return;
-    }
-    pushHistory();
-    const warnings: string[] = [];
-    let applied = 0;
-    for (const a of replayable) {
-      const p = a.payload;
-      switch (a.type) {
-        case "invert":
-          setInverted(Boolean(p.value));
-          applied++;
-          break;
-        case "set_window_level":
-          setWl({ window: Number(p.window), level: Number(p.level) });
-          applied++;
-          break;
-        case "set_brightness":
-          setBrightness(Number(p.value));
-          applied++;
-          break;
-        case "set_contrast":
-          setContrast(Number(p.value));
-          applied++;
-          break;
-        case "brightness_contrast":
-          setBrightness(Number(p.brightness));
-          setContrast(Number(p.contrast));
-          applied++;
-          break;
-        case "show_gradcam":
-          if (gradcamResultRef.current) {
-            setGradcamOn(Boolean(p.visible));
-            if (typeof p.opacity === "number") {
-              setGradcamIntensity(Math.min(100, Math.max(0, Math.round(p.opacity * 100))));
-            }
-            applied++;
-          } else {
-            warnings.push("Aucune Grad-CAM n'est disponible pour cette image : action ignor├®e.");
-          }
-          break;
-        case "probe": {
-          const x = Math.min(1, Math.max(0, Number(p.x)));
-          const y = Math.min(1, Math.max(0, Number(p.y)));
-          setProbe({ x, y, ts: Date.now() });
-          applied++;
-          break;
-        }
-        case "create_shape": {
-          const source = p.shape as { type: Shape["type"]; x: number; y: number; w: number; h: number; points?: Array<{ x: number; y: number }>; label?: string; visible?: boolean; style?: { color?: string; stroke_color?: string; fill_color?: string; stroke_width?: number; font_size?: number; font_family?: Shape["fontFamily"]; font_weight?: Shape["fontWeight"] } };
-          const style = source.style ?? {};
-          const shape: Shape = {
-            id: randomId(),
-            type: source.type,
-            x: Number(source.x),
-            y: Number(source.y),
-            w: Number(source.w),
-            h: Number(source.h),
-            points: source.points ?? [],
-            label: source.label,
-            visible: source.visible,
-            strokeWidth: style.stroke_width ?? 2,
-            strokeColor: style.stroke_color,
-            fillColor: style.fill_color,
-            color: style.color,
-            fontSize: style.font_size,
-            fontFamily: style.font_family,
-            fontWeight: style.font_weight,
-            createdBy: "ai",
-            actionId: `replay-${a.id}`,
-          };
-          commit([...shapesRef.current, shape]);
-          setSelection(shape.id);
-          applied++;
-          break;
-        }
-      }
-    }
-    if (applied === 0) {
-      pastRef.current.pop();
-      setCanUndo(pastRef.current.length > 0);
-      runAiCommand(prompt.text);
-      return;
-    }
-    const summary = `${applied} action(s) rejou├®e(s) depuis le prompt.${warnings.length ? ` ${warnings[0]}` : ""}`;
-    const item: AiHistoryItem = { id: randomId(), text: prompt.text, summary, at: Date.now() };
-    setAiHistory((history) => [{ ...item }, ...history].slice(0, 20));
-    setAiResults((results) => ({ ...results, lastSummary: summary }));
-  }, [commit, gradcamResultRef, pastRef, pushHistory, runAiCommand, setBrightness, setContrast, setGradcamIntensity, setGradcamOn, setInverted, setProbe, setSelection, setWl, shapesRef]);
 
   const requestFit = useCallback((pane?: "A" | "B") => {
     const p = pane ?? activePaneRef.current;
@@ -2116,12 +1996,10 @@ const closeDocument = useCallback(() => {
       setAiDisclaimerDismissed,
       aiBusy,
       aiHistory,
-      aiCustomPrompts,
-      addAiCustomPrompt,
-      removeAiCustomPrompt,
-      aiActionLog,
-      recordAiAction,
-      runAiPrompt,
+      aiCustomCommands,
+      addAiCustomCommand,
+      updateAiCustomCommand,
+      removeAiCustomCommand,
       removeAiHistory,
       clearAiHistory,
       aiResults,
@@ -2200,8 +2078,8 @@ imageSrc,
       imageLocked, setImageLocked, imageCardOpen, setImageCardOpen, gradcamCardOpen, setGradcamCardOpen, cardOrder, setCardOrder,
       aiDisclaimerAck, setAiDisclaimerAck,
       aiDisclaimerDismissed, setAiDisclaimerDismissed, aiBusy, aiHistory,
-      aiCustomPrompts, addAiCustomPrompt, removeAiCustomPrompt,
-      aiActionLog, recordAiAction, runAiPrompt, removeAiHistory, clearAiHistory, notifications, notify, dismissNotification,
+      aiCustomCommands, addAiCustomCommand, updateAiCustomCommand, removeAiCustomCommand,
+      removeAiHistory, clearAiHistory, notifications, notify, dismissNotification,
       aiResults, setAiDiagnostics, aiFocus, focusAiRegion, runAiCommand, setAiCommandResolver, executeAiActionPlan,
       setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,

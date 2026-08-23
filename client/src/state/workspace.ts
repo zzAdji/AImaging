@@ -378,21 +378,14 @@ export interface AiHistoryItem {
   at: number;
 }
 
-/** Action réelle capturée pendant l'utilisation normale (réglages, dessin…).
- *  `type` vide = simple libellé non rejouable. */
-export interface AiRecordedAction {
+/** Commande personnalisée enregistrée par l'utilisateur : un nom unique (utilisé
+ *  comme raccourci) associé à une commande IA à exécuter. */
+export interface AiCustomCommand {
   id: string;
-  label: string;
-  type: string;
-  payload: Record<string, unknown>;
-  at: number;
-}
-
-/** Prompt enregistré : une phrase attribuée à une série d'actions capturées. */
-export interface AiPrompt {
-  id: string;
-  text: string;
-  actions: AiRecordedAction[];
+  /** Nom de la commande, sans le « @ ». */
+  name: string;
+  /** Commande(s) exécutée(s), ex. « @wl preset:lung ». */
+  command: string;
   at: number;
 }
 
@@ -689,16 +682,11 @@ export interface WorkspaceState {
   aiTransactionUndoable: boolean;
   setAiTransactionUndoable: (v: boolean) => void;
 
-  /** User-saved prompts (phrase + actions capturées), persisted to localStorage (`aimaging.aiPrompts`) */
-  aiCustomPrompts: AiPrompt[];
-  addAiCustomPrompt: (text: string, actions?: AiRecordedAction[]) => void;
-  removeAiCustomPrompt: (id: string) => void;
-  /** Recent user actions recorded in normal mode (drawing, windowing…) — source for new prompts */
-  aiActionLog: AiRecordedAction[];
-  recordAiAction: (text: string, action?: { type: string; payload: Record<string, unknown> }) => void;
-  /** Exécute un prompt : rejoue ses actions enregistrées, ou envoie sa phrase
-   *  à la commande IA si aucune action rejouable n'est disponible. */
-  runAiPrompt: (prompt: AiPrompt) => void;
+  /** Commandes personnalisées enregistrées, persistées dans localStorage (`aimaging.aiCommands`). */
+  aiCustomCommands: AiCustomCommand[];
+  addAiCustomCommand: (name: string, command: string) => void;
+  updateAiCustomCommand: (id: string, name: string, command: string) => void;
+  removeAiCustomCommand: (id: string) => void;
   /** Supprime une entrée de l'historique des commandes. */
   removeAiHistory: (id: string) => void;
   /** Vide l'historique des commandes. */

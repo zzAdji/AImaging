@@ -228,12 +228,10 @@ function Shell({
         : scope === "missing"
           ? synchronizedExam.images.filter((image) => !image.prediction)
           : [current];
-    const unsupportedTargets = requestedTargets.filter((image) => !isRadiographyCompatible(image));
 
     /* Phase 3 — filtrage fail-closed : une Image rejetée
        (non-CXR ou invalide) ne doit JAMAIS passer dans le pipeline médical
        (ensemble, Grad-CAM, CXAS, HybridGNet, rapport). */
-    const rejectedTargets = requestedTargets.filter((image) => isImageRejectedByOpenCxr(image));
     const targets = requestedTargets.filter(isRadiographyCompatible).filter((image) => !isImageRejectedByOpenCxr(image));
     if (targets.length === 0) {
       throw new Error(
@@ -246,14 +244,6 @@ function Shell({
     }
     setAnalysisProgress({ completed: 0, total: targets.length });
     const response = await analyzeWorkspaceImages(session.workspace_id, targets);
-    [
-      ...(session.consistency_issues ?? []).map((issue) => issue.message),
-      ...response.warnings,
-      ...unsupportedTargets.map((image) => `${image.name} : modèle radiographique non applicable à la modalité ${image.metadata?.modality ?? "DICOM inconnue"}.`),
-      ...rejectedTargets.map((image) => image.cxrRejected?.reason ?? `${image.name} : image exclue de l'analyse médicale par le tri CXR.`),
-    ]
-      .filter((message, index, all) => all.indexOf(message) === index)
-      .forEach((warning) => w.recordAiAction(`Cohérence examen : ${warning}`));
     setAnalysisProgress({ completed: response.results.length, total: targets.length });
     onSavePredictions(exam.id, Object.fromEntries(response.results.map((result) => [result.image_id, result.prediction])));
     const activeResult = response.results.find((result) => result.image_id === current.id);
@@ -311,7 +301,6 @@ function Shell({
     if (record.originalIndex !== imageIndex) {
       setImageIndex(record.originalIndex);
     }
-    w.recordAiAction("Annulation globale de la dernière transaction IA multi-images.");
     w.setAiTransactionUndoable(transactionStack.current.length > 0);
     return true;
   }, [exam, imageIndex, onClearImageState, onSaveImageState, w]);
@@ -423,7 +412,6 @@ function Shell({
             generated[targetImageId] = response.result;
             if (targetImageId === current.id) {
               w.setThreeDResult(response.result);
-              w.recordAiAction(`Reconstruction 3D terminée (${Math.round(response.result.elapsedSec / 60)} min, ${response.result.device}).`);
             }
           } catch (error) {
             warnings.push(error instanceof Error ? error.message : "Échec de la reconstruction 3D.");
@@ -757,7 +745,6 @@ function Shell({
     if (missing.length === 0) {
       if (!exam.images.some(isRadiographyCompatible) && autoAnalysisStartedFor.current !== exam.id) {
         autoAnalysisStartedFor.current = exam.id;
-        w.recordAiAction("Analyse automatique ignorée : aucun DICOM CR/DX compatible avec le modèle radiographique.");
       }
       return;
     }
@@ -765,9 +752,8 @@ function Shell({
     if (autoAnalysisStartedFor.current === signature) return;
     autoAnalysisStartedFor.current = signature;
     window.setTimeout(() => {
-      void analyzeExamImages("missing").catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : "Analyse automatique impossible.";
-        w.recordAiAction(`Analyse automatique : ${message}`);
+      void analyzeExamImages("missing").catch(() => {
+        /* Échec silencieux de l'analyse automatique. */
       });
     }, 0);
   }, [analyzeExamImages, exam, w]);
@@ -811,9 +797,8 @@ function Shell({
         const segmented = await w.runAnatomyAnalysis(true);
         if (!segmented) return;
         await w.runLandmarksAnalysis(false, { autoPlace: false });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Analyse anatomique automatique impossible.";
-        w.recordAiAction(`Analyse anatomique automatique : ${message}`);
+      } catch {
+        /* Échec silencieux de l'analyse anatomique automatique. */
       }
     })();
   }, [exam, imageIndex, w]);
@@ -867,9 +852,8 @@ function Shell({
           w.setGradcamResult(response.result);
           w.setGradcamOn(true);
           onSaveGradcams(exam.id, { [current.id]: response.result });
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : "Génération Grad-CAM automatique impossible.";
-          w.recordAiAction(`Génération Grad-CAM automatique : ${message}`);
+        } catch {
+          /* Échec silencieux de la génération Grad-CAM automatique. */
         }
       })();
     }, 0);
@@ -986,7 +970,6 @@ function Shell({
         }
       }
       if (failedMessage) {
-        w.recordAiAction(`Tri opencxr : ${failedMessage}`);
         setCxrPipeline({ phase: "error", completed, total, message: failedMessage });
         return;
       }
@@ -998,10 +981,8 @@ function Shell({
         }
       }
       if (rejectedCount > 0) {
-        w.recordAiAction(`OpenCXR : ${warnings.join(" ")}`);
         w.notify("Image rejetée", "error", warnings.join("\n"));
       } else if (!lifted && Object.keys(records).length > 0) {
-        w.recordAiAction(`OpenCXR : ${Object.keys(records).length} image(s) triée(s) et normalisée(s) automatiquement.`);
         w.notify(
           "Analyse opencxr terminée",
           "success",
@@ -1010,7 +991,6 @@ function Shell({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tri opencxr automatique impossible.";
-      w.recordAiAction(`Tri automatique opencxr : ${message}`);
       if (!aborted) {
         /* Échec de la création de session / erreur serveur globale : bloquant. */
         setCxrPipeline({ phase: "error", completed: 0, total, message });
@@ -1062,17 +1042,13 @@ function Shell({
     if (!image) {
       throw new Error(imported.warnings[0] ?? `Impossible d'ouvrir '${file.name}'.`);
     }
-w.openImageData(image.src, image.name);
+    w.openImageData(image.src, image.name);
     w.setImageMetadata(image.metadata ?? null);
     w.setDicomLinear(image.linear ?? null);
     if (image.metadata?.windowWidth && image.metadata.windowWidth > 1) {
       w.setWl({ window: image.metadata.windowWidth, level: image.metadata.windowCenter ?? 127.5 });
     }
     w.setPixelSpacingMm(image.metadata?.pixelSpacingMm ?? null);
-    imported.warnings.forEach((warning) => w.recordAiAction(`Import : ${warning}`));
-    if (imported.images.length > 1) {
-      w.recordAiAction(`Import : DICOM multi-frame détecté ; la première frame est ouverte dans cet espace autonome.`);
-    }
     recordRecent(image.name, image.src);
   }, [w]);
 

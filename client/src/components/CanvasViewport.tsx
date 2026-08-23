@@ -36,29 +36,6 @@ import {
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 16;
 
-/** Sérialise une forme pour son enregistrement dans un prompt (rejeu `create_shape`). */
-function serializeShapeForReplay(shape: Shape) {
-  return {
-    type: shape.type,
-    x: shape.x,
-    y: shape.y,
-    w: shape.w,
-    h: shape.h,
-    points: shape.points,
-    label: shape.label,
-    visible: shape.visible,
-    style: {
-      stroke_width: shape.strokeWidth,
-      stroke_color: shape.strokeColor,
-      fill_color: shape.fillColor,
-      color: shape.color,
-      font_size: shape.fontSize,
-      font_family: shape.fontFamily,
-      font_weight: shape.fontWeight,
-    },
-  };
-}
-
 interface Dims {
   w: number;
   h: number;
@@ -123,20 +100,6 @@ const DRAW_TOOLS: Partial<Record<ToolId, ShapeType>> = {
   freedraw: "freedraw",
   measure: "measure",
   distance: "distance",
-};
-
-/** French action label recorded in normal mode when a shape is drawn */
-const DRAW_ACTION_LABEL: Record<ShapeType, string> = {
-  rectangle: "Rectangle tracé",
-  ellipse: "Ellipse tracée",
-  arrow: "Flèche tracée",
-  line: "Ligne tracée",
-  freedraw: "Traçage libre",
-  measure: "Mesure tracée",
-  distance: "Distance mesurée",
-  angle: "Angle mesuré",
-  annotation: "Annotation ajoutée",
-  text: "Texte ajouté",
 };
 
 /** Shape types that expose stroke width / stroke color controls */
@@ -1122,7 +1085,6 @@ export function CanvasViewport({
           shape.id = randomId();
           w.pushHistory();
           w.addShape(shape);
-          w.recordAiAction("Angle mesuré");
           w.setSelection(shape.id);
           setAngleDraft(null);
         }
@@ -1152,7 +1114,6 @@ export function CanvasViewport({
       shape.id = randomId();
       w.pushHistory();
       w.addShape(shape);
-      w.recordAiAction(w.tool === "annotation" ? "Annotation ajoutée" : "Texte ajouté");
       w.setSelection(shape.id);
       setEditing({ id: shape.id, original: shape.label ?? "" });
       setEditText(shape.label ?? "");
@@ -1165,10 +1126,6 @@ export function CanvasViewport({
       const p = screenToDoc(px, py);
       const frac = { x: p.x / dims.w, y: p.y / dims.h, ts: Date.now() };
       w.setProbe(frac);
-      w.recordAiAction("Sonde posée sur l'image — zone affichée sur la carte anatomique.", {
-        type: "probe",
-        payload: frac,
-      });
       e.currentTarget.setPointerCapture(e.pointerId);
       return;
     }
@@ -1360,10 +1317,6 @@ export function CanvasViewport({
         if (g.pushed && size > 4) {
           const shape = { ...g.draft, id: randomId() };
           w.addShape(shape);
-          w.recordAiAction(DRAW_ACTION_LABEL[shape.type], {
-            type: "create_shape",
-            payload: { shape: serializeShapeForReplay(shape) },
-          });
           w.setSelection(shape.id);
         }
         setDraft(null);
@@ -1374,10 +1327,6 @@ export function CanvasViewport({
           const shape = makeShape("freedraw", 0, 0, 0, 0, [...g.points]);
           shape.id = randomId();
           w.addShape(shape);
-          w.recordAiAction("Traçage libre", {
-            type: "create_shape",
-            payload: { shape: serializeShapeForReplay(shape) },
-          });
           w.setSelection(shape.id);
         }
         setDraft(null);
