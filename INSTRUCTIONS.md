@@ -1,610 +1,171 @@
-# AIMAGING — PHASE 4
-# CONSTRUCTION DU MODULE ÉCHOGRAPHIE FŒTALE
-#
-# OBJECTIF :
-# transformer les briques échographiques actuellement disponibles
-# en un véritable pipeline exploitable dans AImaging.
+# AIMAGING — MODULE ÉCHOGRAPHIE FŒTALE
+# PRIORITÉ : UI/UX ET WORKFLOW
 #
 # IMPORTANT :
-# la radiographie est maintenant considérée comme le premier module
-# fonctionnel du produit.
+# Pour cette tâche, NE PAS commencer par développer les modèles IA.
+# NE PAS chercher à reconstruire DeepFetal.
+# NE PAS créer d'endpoint complexe.
 #
-# Cette phase concerne principalement l'ÉCHOGRAPHIE FŒTALE.
+# Nous devons d'abord construire une UX complète et cohérente pour
+# l'analyse échographique fœtale dans AImaging.
 #
-# NE PAS réouvrir les anciens chantiers radiographiques sauf si une
-# dépendance directe empêche l'intégration échographique.
+# Le but est de définir et implémenter l'interface et son workflow,
+# depuis le chargement des images jusqu'à la génération et l'édition
+# du compte rendu échographique.
+#
+# Les résultats IA peuvent être mockés temporairement avec des données
+# structurées réalistes.
+#
+# L'architecture doit cependant être pensée pour recevoir plus tard
+# les vrais résultats DeepFetal, FetalCLIP et les futurs modèles
+# de détection d'anomalies.
 
-==================================================
-1. CONTEXTE ACTUEL
-==================================================
+# ⚠️ CONSIGNE ABSOLUE — NE PAS CRÉER UNE NOUVELLE APPLICATION
 
-Le projet AImaging est un logiciel d'édition et d'analyse d'images médicales.
+AImaging existe déjà.
 
-La radiographie thoracique possède maintenant :
+Le module de RADIOGRAPHIE THORACIQUE existe déjà et fonctionne.
 
-- pipeline de tri CXR ;
-- validation technique ;
-- 5 modèles de classification ;
-- ensemble soft voting ;
+Il possède déjà :
+
+- le shell global de l'application ;
+- le TitleBar ;
+- le CanvasViewport ;
+- la LeftToolbar ;
+- le RightPanel ;
+- le WorkspaceProvider ;
+- les outils d'édition ;
+- les outils IA ;
+- les outils spécifiques à la radiographie ;
+- la command bar ;
+- les annotations ;
+- les mesures ;
 - Grad-CAM ;
 - CXAS ;
 - HybridGNet ;
-- mesures anatomiques ;
 - DICOM ;
-- rapports ;
-- AI command bar ;
-- outils d'édition.
+- les rapports ;
+- le système de persistance frontend ;
+- le système d'actions IA.
 
-La 3D est définitivement abandonnée.
+NE CRÉE DONC PAS :
 
-NE PAS :
-- réintroduire la 3D ;
-- réparer la 3D ;
-- ajouter la 3D ;
-- exposer des outils 3D.
+- une nouvelle application ;
+- une nouvelle SPA ;
+- un deuxième éditeur ;
+- un deuxième Canvas ;
+- une deuxième Toolbar ;
+- une deuxième architecture globale ;
+- un deuxième système de navigation ;
+- une nouvelle page indépendante pour l'échographie ;
+- un nouveau Dashboard.
+
+Tu dois UNIQUEMENT AJOUTER LE MODULE ÉCHOGRAPHIE FŒTALE À L'APPLICATION AIMAGING EXISTANTE.
+
+L'éditeur de radiographie est la référence UX/UI.
+
+Tu dois réutiliser son infrastructure autant que possible.
+
+Le module échographique doit être une NOUVELLE MODALITÉ de l'éditeur existant.
 
 ==================================================
-2. NOUVELLE ORGANISATION UI
+ARCHITECTURE À RESPECTER
 ==================================================
 
-IMPORTANT :
+L'application possède déjà un éditeur commun :
 
-La séparation :
+AImaging Editor
+│
+├── Shared Editor Core
+│   ├── TitleBar
+│   ├── CanvasViewport
+│   ├── WorkspaceProvider
+│   ├── LeftToolbar
+│   ├── RightPanel
+│   ├── StatusBar
+│   ├── command bar
+│   ├── annotations
+│   ├── measurements
+│   └── history
+│
+├── Radiography Module
+│   ├── outils radio
+│   ├── diagnostics
+│   ├── Grad-CAM
+│   ├── CXAS
+│   ├── HybridGNet
+│   └── rapport radiologique
+│
+└── Fetal Ultrasound Module
+    ├── outils échographie
+    ├── qualité
+    ├── plans
+    ├── sélection
+    ├── biométrie
+    ├── findings
+    └── rapport obstétrical
+
+L'objectif est donc :
+
+EXISTANT
++
+Fetal Ultrasound Module
+
+et NON :
+
+nouvelle application échographique.
+
+==================================================
+1. CONTEXTE DU PRODUIT
+==================================================
+
+AImaging est un logiciel professionnel d'analyse d'images médicales
+avec une interface d'édition inspirée de Figma.
+
+Ce n'est PAS un dashboard.
+
+Ce n'est PAS un logiciel de gestion de patients.
+
+Ce n'est PAS une application de gestion hospitalière.
+
+Le cœur de l'application est un espace de travail centré sur l'image.
+
+L'utilisateur ouvre un examen.
+
+Il travaille sur ses images.
+
+Il utilise des outils d'édition.
+
+Il utilise des outils IA.
+
+Il consulte les résultats.
+
+Il produit ensuite un compte rendu.
+
+La radiographie thoracique possède déjà son propre ensemble d'outils.
+
+Nous allons étendre l'éditeur AImaging existant avec une deuxième modalité : l'échographie fœtale.
+
+==================================================
+2. NOUVELLE PHILOSOPHIE DES OUTILS
+==================================================
+
+AImaging utilise désormais UNE SEULE interface d'édition.
+
+Il n'y a plus :
 
 NORMAL MODE
-/
 AI MODE
 
-n'existe plus.
+Les outils sont regroupés par familles.
 
-Les modes ont été fusionnés.
+Pour chaque modalité :
 
-Pour la radiographie, l'éditeur fonctionne désormais comme une toolbox unique regroupant trois familles :
+1. Outils simples
+2. Outils IA
+3. Outils spécifiques à la modalité
 
-1. OUTILS SIMPLES
-2. OUTILS IA
-3. OUTILS RADIO
-
-Cette logique doit devenir la base de l'architecture future multi-modalité.
-
-Exemple :
-
-RADIOGRAPHIE
-
-Outils simples
-- Move
-- Hand
-- Zoom
-- Crop
-- Rotate
-- Brightness
-- Contrast
-- Window/Level
-- Annotation
-- Text
-- Measure
-- Angle
-- Distance
-
-Outils IA
-- Grad-CAM
-- Diagnostics
-- Report
-
-Outils radio
-- CXR Sort
-- Lung Analysis
-- Anatomy Analysis
-- Thoracic Measurements
-- autres fonctions radiologiques
-
-IMPORTANT :
-
-Ne crée pas un nouveau "mode IA".
-
-Les outils doivent être présentés comme des outils du logiciel.
-
-Le système doit pouvoir changer automatiquement de toolbox
-selon la modalité de l'examen.
-
-==================================================
-3. OBJECTIF DE CETTE PHASE
-==================================================
-
-Construire le module échographie fœtale.
-
-Architecture cible :
-
-                  EXAMEN ÉCHOGRAPHIQUE
-                          │
-                          ▼
-                    Plusieurs images
-                          │
-                          ▼
-                   QUALITY FILTER
-                          │
-                          ▼
-                PLANE CLASSIFICATION
-                          │
-                          ▼
-                   SCORE DES PLANS
-                          │
-                          ▼
-                  IMAGE SELECTION
-                          │
-                          ▼
-                 FetalCLIP / FEATURES
-                          │
-                          ▼
-                ANOMALY ANALYSIS
-                          │
-                          ▼
-                    MULTIMODAL
-                          │
-                          ▼
-                    RÉSULTATS
-
-Cette architecture est inspirée de la méthodologie DeepFetal,
-mais AImaging doit rester maître de son propre pipeline.
-
-NE PAS simplement copier DeepFetal.
-
-==================================================
-4. CE QUI EXISTE DÉJÀ
-==================================================
-
-D'après l'audit précédent, les éléments suivants existent :
-
-- scripts/fetal_ultrasound/deepfetal_adapter/
-- plane_inference.py
-- quality_inference.py
-- fetalclip_model.py
-- fetalclip_embeddings.py
-- infer_single_image.py
-- infer_folder.py
-- plane_grouping.py
-- extract_embeddings.py
-
-Poids présents :
-
-- plane_classifier.pth ≈ 111 Mo
-- filter.pt ≈ 3 Mo
-- FetalCLIP_weights.pt ≈ 1,7 Go
-
-Mais :
-
-- aucun endpoint FastAPI échographie ;
-- aucun workflow examen complet ;
-- aucun test échographie ;
-- package fetal_ultrasound/exam incomplet ;
-- sources Python manquantes dans exam/ ;
-- fetalclip_adapter vide.
-
-L'audit indique que exam/ contient seulement des fichiers .pyc.
-
-==================================================
-5. RÈGLE IMPORTANTE SUR LE CODE DEEPFETAL
-==================================================
-
-NE PAS essayer de restaurer artificiellement tout le pipeline DeepFetal
-à partir des .pyc sans d'abord déterminer ce qui est réellement disponible.
-
-Inspecter :
-
-- dépôt DeepFetal cloné ;
-- dépôt FetalCLIP ;
-- adapters locaux ;
-- scripts existants ;
-- checkpoints ;
-- configurations ;
-- README ;
-- scripts d'inférence officiels.
-
-Comparer :
-
-ce qui existe dans le dépôt original
-vs
-ce qui existe dans AImaging.
-
-Si un composant DeepFetal n'est pas récupérable proprement,
-réimplémenter uniquement l'équivalent nécessaire dans AImaging.
-
-NE PAS copier l'intégralité du projet original.
-
-==================================================
-6. PHASE 4A — AUDIT DE L'ÉCHOGRAPHIE EXISTANTE
-==================================================
-
-Avant de coder :
-
-analyse complètement :
-
-scripts/fetal_ultrasound/
-DeepFetal/
-FetalCLIP/
-
-Vérifie :
-
-- architecture des modèles ;
-- preprocessing ;
-- résolution d'entrée ;
-- classes ;
-- mapping des 41 plans ;
-- format des outputs ;
-- checkpoints ;
-- device CPU/GPU ;
-- dépendances ;
-- fonctions d'inférence ;
-- format des images ;
-- possibilité de traiter un dossier ;
-- possibilité de traiter un examen complet.
-
-Produis un tableau :
-
-| Module | Code | Checkpoint | Fonctionne seul | API | Statut |
-|---|---|---|---|---|---|
-
-Ne modifie rien durant cette sous-phase.
-
-==================================================
-7. PHASE 4B — QUALITY FILTER
-==================================================
-
-Créer un service d'inférence propre :
-
-fetal_quality_analyze(image)
-
-Le modèle doit produire au minimum :
-
-- score qualité ;
-- état accepted / rejected ;
-- éventuellement score détaillé si disponible.
-
-Exemple :
-
-{
-  "status": "accepted",
-  "quality_score": 0.93
-}
-
-Une image refusée ne doit pas continuer automatiquement dans le pipeline
-si le système considère qu'elle est inutilisable.
-
-Créer un endpoint :
-
-POST /fetal/quality
-
-ou un endpoint groupé si l'architecture existante s'y prête mieux.
-
-Utiliser les Pydantic schemas existants ou en créer de nouveaux.
-
-==================================================
-8. PHASE 4C — PLANE CLASSIFICATION
-==================================================
-
-Créer un service :
-
-fetal_plane_analyze(image)
-
-Le classifieur couvre 41 plans.
-
-IMPORTANT :
-
-récupérer le mapping EXACT des 41 classes depuis le code/dataset.
-
-Ne pas réinventer les noms.
-
-Le résultat doit contenir :
-
-- plan principal ;
-- confiance ;
-- probabilités des classes ;
-- top-k éventuellement.
-
-Exemple :
-
-{
-  "predicted_plane": "...",
-  "confidence": 0.91,
-  "probabilities": {
-      "...": 0.91,
-      "...": 0.04
-  }
-}
-
-Tester au moins 5 classes différentes
-avant de traiter un dataset.
-
-==================================================
-9. PHASE 4D — PIPELINE IMAGE UNIQUE
-==================================================
-
-Avant de construire le pipeline examen,
-faire fonctionner le workflow image unique :
-
-image
-↓
-quality
-↓
-plane
-↓
-result
-
-Créer :
-
-POST /fetal/analyze-image
-
-Le résultat doit être structuré.
-
-Exemple conceptuel :
-
-{
-  "quality": {...},
-  "plane": {...}
-}
-
-Ce endpoint sert de brique de base.
-
-==================================================
-10. PHASE 4E — PIPELINE MULTI-IMAGE
-==================================================
-
-Ensuite seulement, implémenter le traitement d'un examen.
-
-Un examen échographique peut contenir :
-
-image_001
-image_002
-image_003
-...
-image_N
-
-Le système doit pouvoir :
-
-1. recevoir plusieurs images ;
-2. appliquer le quality filter ;
-3. classifier les plans ;
-4. grouper les images par plan ;
-5. sélectionner les images pertinentes.
-
-Exemple :
-
-EXAM
-│
-├── Brain
-│   ├── image_001
-│   └── image_007
-│
-├── Heart
-│   ├── image_012
-│   └── image_019
-│
-└── Abdomen
-    ├── image_024
-    └── image_029
-
-IMPORTANT :
-
-Ne sélectionne pas arbitrairement les images.
-
-Définis une règle claire :
-
-- score de qualité ;
-- score du plan ;
-- éventuellement diversité ;
-- éventuellement top-k par plan.
-
-Documente cette règle.
-
-==================================================
-11. PHASE 4F — FETALCLIP
-==================================================
-
-Inspecte le modèle FetalCLIP déjà présent.
-
-Objectif :
-
-utiliser FetalCLIP comme extracteur de caractéristiques visuelles,
-pas comme générateur de rapport.
-
-Créer une abstraction :
-
-fetalclip_encode(images)
-
-qui retourne un format exploitable par la suite.
-
-Exemple conceptuel :
-
-{
-  "image_id": "...",
-  "embedding_path": "...",
-  "embedding_shape": [...]
-}
-
-Ne stocke pas inutilement les embeddings en base
-à ce stade si ce n'est pas nécessaire.
-
-Prévoir cependant une architecture permettant de les référencer.
-
-==================================================
-12. PHASE 4G — ANOMALY MODEL
-==================================================
-
-IMPORTANT :
-
-Le simple plane classifier ne détecte PAS une anomalie.
-
-Le système doit explicitement séparer :
-
-QUESTION 1 :
-"Quel est le plan ?"
-
-QUESTION 2 :
-"Le plan est-il normal ou anormal ?"
-
-Pour cette phase :
-
-analyse l'état réel du code existant.
-
-Si aucun modèle d'anomalie n'existe réellement :
-
-NE PAS inventer une implémentation.
-
-Créer uniquement l'interface prévue :
-
-fetal_anomaly_predict(...)
-
-avec un contrat clair.
-
-Le statut doit rester :
-
-NOT_IMPLEMENTED
-
-jusqu'à ce qu'un véritable modèle et des données annotées soient disponibles.
-
-IMPORTANT :
-
-Ne transforme jamais FetalCLIP ou le plane classifier en prétendu détecteur
-d'anomalies sans justification.
-
-==================================================
-13. PHASE 4H — MULTIMODAL
-==================================================
-
-Je veux introduire l'idée multimodale de DeepFetal,
-mais progressivement.
-
-Le modèle multimodal doit recevoir uniquement des informations réellement
-produites par le pipeline.
-
-Exemple :
-
-IMAGES
-+
-PLANS
-+
-QUALITY SCORES
-+
-FETALCLIP FEATURES
-+
-INFORMATIONS CLINIQUES DISPONIBLES
-
-↓
-
-MULTIMODAL MODEL
-
-↓
-
-INTERPRETATION STRUCTURÉE
-
-IMPORTANT :
-
-Le multimodal n'est PAS le modèle primaire de détection d'anomalies
-s'il ne possède pas de validation spécifique pour cette tâche.
-
-Le multimodal sert à combiner/interpréter les informations.
-
-Si le modèle multimodal n'est pas encore implémenté :
-
-créer seulement l'abstraction et le schema.
-
-Ne pas fabriquer de résultat médical.
-
-==================================================
-14. PHASE 4I — API
-==================================================
-
-Créer les endpoints nécessaires.
-
-Minimum :
-
-POST /fetal/quality
-POST /fetal/plane
-POST /fetal/analyze-image
-POST /fetal/analyze-exam
-
-Si possible, un endpoint unifié :
-
-POST /fetal/analyze-exam
-
-doit orchestrer :
-
-quality
-→ plane
-→ grouping
-→ selection
-→ features
-→ anomaly (si disponible)
-→ multimodal (si disponible)
-
-Le résultat doit indiquer clairement le statut de chaque étape.
-
-Exemple :
-
-{
-  "quality": {
-      "status": "ok"
-  },
-
-  "planes": [...],
-
-  "selection": [...],
-
-  "features": {
-      "status": "ok"
-  },
-
-  "anomaly": {
-      "status": "not_implemented"
-  },
-
-  "multimodal": {
-      "status": "not_implemented"
-  }
-}
-
-Ainsi le frontend pourra évoluer sans devoir attendre que tout le pipeline
-soit terminé.
-
-==================================================
-15. PHASE 4J — WORKSPACE PROTOCOL
-==================================================
-
-L'échographie doit pouvoir être commandée depuis le même système d'actions
-que la radiographie.
-
-Créer les commandes UNIQUEMENT si elles correspondent à des actions
-réellement implémentées.
-
-Exemples possibles :
-
-@fetal_quality
-@fetal_plane
-@fetal_analyze
-
-Ne crée pas :
-
-@fetal_anomaly
-
-tant qu'aucun modèle d'anomalie réel n'existe.
-
-Mettre à jour :
-
-- workspace protocol ;
-- catalogue des commandes ;
-- validation ;
-- moteur d'exécution.
-
-Toutes les actions doivent être validées côté serveur.
-
-==================================================
-16. PHASE 4K — UI ÉCHOGRAPHIE
-==================================================
-
-L'interface utilise maintenant une philosophie de TOOLBOX,
-pas de modes séparés.
-
-Pour un examen échographique :
+Pour l'échographie fœtale :
 
 OUTILS SIMPLES
 
@@ -616,352 +177,1444 @@ OUTILS SIMPLES
 - Brightness
 - Contrast
 - Annotation
-- Measure
-- Angle
-- Distance
 - Text
+- Measure
+- Distance
+- Angle
 
 OUTILS IA
 
 - Analyze
-- Plane detection
-- AI features
-- AI selection
-- Anomaly analysis (uniquement si disponible)
-- Grad-CAM (uniquement si applicable)
-- rapport
-
-OUTILS ÉCHO
-
 - Quality
-- Plane classification
-- Plane grouping
-- Selected views
-- FetalCLIP
-- Multimodal analysis
+- Plane Detection
+- AI Selection
+- Biometrics
+- Findings
+- Anomaly Analysis
+- Grad-CAM lorsqu'il est disponible
+- Report
 
-Ne copie pas exactement les outils radio.
+OUTILS ÉCHOGRAPHIE
 
-Chaque modalité doit avoir ses propres outils spécifiques.
+- Examination
+- Plan
+- Fetal Profile
+- Biometry
+- Fetus 1
+- Fetus 2
+- Measurements
+- Pregnancy
+- Placenta
+- Amniotic Fluid
+- Cervix
+- Report
 
-==================================================
-17. PHASE 4L — ÉCRAN D'EXAMEN
-==================================================
+IMPORTANT :
 
-L'éditeur doit pouvoir recevoir un examen contenant plusieurs images.
+Ces outils doivent être visibles dans la sidebar gauche sous forme
+d'une toolbox professionnelle inspirée de Figma.
 
-Créer une navigation adaptée :
-
-- filmstrip ;
-- sélection d'image ;
-- groupe par plan ;
-- images sélectionnées ;
-- qualité ;
-- résultat IA.
-
-L'utilisateur doit pouvoir :
-
-- ouvrir une image ;
-- voir son plan ;
-- voir le score de qualité ;
-- voir les images appartenant au même plan ;
-- visualiser les images sélectionnées.
-
-Ne pas transformer l'écran en dashboard.
-
-Il reste un logiciel d'édition.
+Ils ne doivent pas ressembler à des boutons de dashboard.
 
 ==================================================
-18. PHASE 4M — VISUALISATIONS
+3. STRUCTURE GÉNÉRALE DE L'ÉDITEUR
 ==================================================
 
-Prévoir des visualisations pour :
+L'écran doit conserver la structure de l'éditeur AImaging.
 
-Quality
+┌──────────────────────────────────────────────────────────────┐
+│                         TITLE BAR                             │
+├──────────────┬───────────────────────────────┬───────────────┤
+│              │                               │               │
+│ LEFT SIDEBAR │            CANVAS             │ RIGHT SIDEBAR │
+│              │                               │               │
+│ Tools        │       Medical image          │ Context       │
+│              │                               │ information   │
+│              │                               │ AI results    │
+│              │                               │ Measurements  │
+│              │                               │ Report        │
+│              │                               │               │
+├──────────────┴───────────────────────────────┴───────────────┤
+│                         STATUS BAR                           │
+└──────────────────────────────────────────────────────────────┘
 
-Plane
+La structure visuelle doit rester très proche de l'éditeur de
+radiographie existant.
 
-Selection
+Même :
 
-Features
+- top bar ;
+- dark theme ;
+- spacing ;
+- iconography ;
+- typography ;
+- card system ;
+- interactions ;
+- animations ;
+- status bar.
 
-Les résultats doivent être visuels.
+La modalité échographique ne doit pas donner l'impression d'être
+une autre application.
+
+==================================================
+4. CHARGEMENT D'UN EXAMEN ÉCHOGRAPHIQUE
+==================================================
+
+Le workflow commence lorsque l'utilisateur crée un nouvel examen.
+
+Il doit pouvoir :
+
+- sélectionner plusieurs images ;
+- sélectionner un dossier ;
+- glisser-déposer plusieurs images ;
+- importer progressivement des images ;
+- supprimer une image ;
+- réordonner les images.
+
+Les images peuvent être :
+
+- JPG
+- PNG
+- DICOM si disponible.
+
+Après l'import, ne pas envoyer immédiatement toutes les images
+dans le pipeline d'analyse.
+
+Créer d'abord un état :
+
+IMPORTING
+
+puis :
+
+READY FOR ANALYSIS
+
+Chaque image doit posséder une miniature.
+
+Créer une filmstrip ou une zone de vignettes.
 
 Exemple :
 
-PLANE
+┌───────────────────────────────────────────────┐
+│ Exam images                                   │
+│                                               │
+│ [01] [02] [03] [04] [05] [06] [07] [08]     │
+│                                               │
+└───────────────────────────────────────────────┘
 
-4CH
-92 %
-
-QUALITY
-
-94 %
-
-Les probabilités détaillées peuvent être affichées dans un panneau
-secondaire.
+Une image sélectionnée devient l'image principale du canvas.
 
 ==================================================
-19. PHASE 4N — TESTS
+5. STRUCTURE DU DOSSIER D'EXAMEN
 ==================================================
 
-Créer une vraie suite de tests échographie.
+L'utilisateur ne doit pas penser :
 
-Minimum :
+"Je suis en train de gérer des fichiers."
 
-### Quality
-- image valide ;
-- mauvaise qualité ;
-- entrée invalide.
+Il doit penser :
 
-### Plane
-- chargement du checkpoint ;
-- mapping des classes ;
-- prédiction ;
-- probabilité.
+"Je suis en train d'analyser un examen."
 
-### Multi-image
-- regroupement ;
-- sélection ;
-- image rejetée ;
-- plusieurs plans.
+Créer donc la notion :
 
-### FetalCLIP
-- chargement ;
-- extraction ;
-- forme des embeddings.
+EXAMINATION
 
-### API
-- /fetal/quality
-- /fetal/plane
-- /fetal/analyze-image
-- /fetal/analyze-exam
+avec :
 
-### Workspace
-- action valide ;
-- action invalide ;
-- action non implémentée rejetée.
+- nom de l'examen ;
+- date ;
+- indication ;
+- type d'échographie ;
+- nombre d'images ;
+- statut de l'analyse.
 
-IMPORTANT :
+Le système doit permettre :
 
-Les tests doivent fonctionner sans modèle d'anomalie si celui-ci n'existe pas encore.
+Draft
+Analyzing
+Analyzed
+Report ready
+
+Pas de gestion patient pour l'instant.
 
 ==================================================
-20. PHASE 4O — DATASET DE TEST
+MODALITÉ DE L'EXAMEN
 ==================================================
 
-Créer un petit dataset local de test.
+Le système possède déjà un mécanisme permettant d'identifier
+le type d'examen.
 
-Pas besoin de milliers d'images.
+Utilise ce mécanisme existant.
 
-Commencer avec :
+Le système doit déterminer :
 
-- 5–10 images de bonne qualité ;
-- plusieurs plans ;
-- quelques images rejetables.
+exam.modality
 
-Idéalement :
+Exemples :
 
-5 à 10 images par plan pour les plans disponibles.
+"radiography"
+"fetal_ultrasound"
 
-Mais ne télécharge pas massivement les 41 classes pour l'instant.
+Cette information permet uniquement de déterminer quels outils
+spécifiques doivent apparaître.
 
-L'objectif est de valider le pipeline technique.
-
-==================================================
-21. PHASE 4P — PERFORMANCE
-==================================================
-
-Mesurer :
-
-- quality inference ;
-- plane inference ;
-- FetalCLIP ;
-- multi-image pipeline.
-
-Indiquer :
-
-- temps ;
-- VRAM ;
-- RAM ;
-- CPU/GPU ;
-- temps par image ;
-- temps par examen.
-
-Ne lancer aucun benchmark massif.
+Le cœur de l'éditeur reste identique.
 
 ==================================================
-22. PHASE 4Q — INTÉGRATION DANS L'ÉDITEUR
+OUTILS DYNAMIQUES
 ==================================================
 
-Le résultat doit s'intégrer au workspace actuel.
+La sidebar gauche EXISTANTE doit devenir contextuelle.
 
-IMPORTANT :
-
-Ne crée pas une deuxième application.
-
-Le même éditeur doit pouvoir gérer :
-
-Radiographie
-
-et
-
-Échographie.
-
-L'éditeur détermine la modalité de l'examen.
-
-Puis il affiche les outils correspondants.
-
-Conceptuellement :
+Pour :
 
 exam.modality === "radiography"
 
-→ outils simples
-→ outils IA
-→ outils radio
+afficher :
+
+COMMON TOOLS
++
+AI TOOLS
++
+RADIOGRAPHY TOOLS
+
+Pour :
 
 exam.modality === "fetal_ultrasound"
 
-→ outils simples
-→ outils IA
+afficher :
+
+COMMON TOOLS
++
+AI TOOLS
++
+FETAL ULTRASOUND TOOLS
+
+Les COMMON TOOLS sont partagés.
+
+Les AI TOOLS partagent le même système d'exécution.
+
+Seuls les outils spécifiques à la modalité changent.
+
+NE DUPLIQUE PAS LeftToolbar.
+
+NE DUPLIQUE PAS RightPanel.
+
+NE DUPLIQUE PAS CanvasViewport.
+
+Étends les composants existants.
+
+==================================================
+6. SIDEBAR GAUCHE — STRUCTURE
+==================================================
+
+La sidebar gauche doit être organisée en sections.
+
+------------------------------------------
+SECTION : EXAMINATION
+------------------------------------------
+
+[ Examination ]
+
+Lorsqu'on clique dessus, la sidebar affiche :
+
+Overview
+Images
+Selected views
+Analysis status
+
+Elle permet de comprendre l'état global de l'examen.
+
+------------------------------------------
+SECTION : SIMPLE TOOLS
+------------------------------------------
+
+Move
+Hand
+Zoom
+Rotate
+Crop
+Brightness
+Contrast
+Annotation
+Text
+Measure
+Distance
+Angle
+
+Ces outils se comportent comme ceux de l'éditeur radiographique.
+
+------------------------------------------
+SECTION : AI TOOLS
+------------------------------------------
+
+Quality
+Plane Detection
+AI Selection
+Analyze
+Biometry
+Findings
+Anomaly Analysis
+Report
+
+------------------------------------------
+SECTION : ULTRASOUND
+------------------------------------------
+
+Plans
+Fetus
+Biometry
+Placenta
+Amniotic Fluid
+Cervix
+Pregnancy
+
+IMPORTANT :
+
+Chaque outil doit ouvrir ou mettre à jour une zone correspondante
+dans la sidebar droite.
+
+La sidebar gauche sert à CHOISIR une fonction.
+
+La sidebar droite sert à AFFICHER et MODIFIER son résultat.
+
+==================================================
+7. COMPORTEMENT DE LA SIDEBAR GAUCHE
+==================================================
+
+Ne transforme pas la sidebar gauche en énorme panneau de texte.
+
+Elle doit rester compacte.
+
+Chaque outil :
+
+- possède une icône ;
+- un label court ;
+- un tooltip ;
+- un état actif ;
+- un état disabled si non disponible.
+
+Lorsqu'une section est ouverte :
+
+les outils apparaissent avec animation légère.
+
+Lorsqu'un outil est actif :
+
+il est visuellement sélectionné.
+
+==================================================
+8. SIDEBAR DROITE — PRINCIPE
+==================================================
+
+La sidebar droite est le panneau contextuel.
+
+Elle ne doit jamais afficher toutes les informations en même temps.
+
+Elle affiche le contenu correspondant à l'outil sélectionné.
+
+Le panneau peut être constitué de cartes repliables.
+
+Chaque carte possède :
+
+- titre ;
+- statut ;
+- contenu ;
+- actions ;
+- éventuellement un bouton "Show on image".
+
+==================================================
+9. RIGHT PANEL — EXAMINATION OVERVIEW
+==================================================
+
+Lorsque l'utilisateur ouvre "Examination", afficher :
+
+EXAMINATION
+
+Status
+Ready / Analyzing / Completed
+
+Images
+24
+
+Analyzed
+18 / 24
+
+Plans detected
+12
+
+Images rejected
+3
+
+Selected views
+9
+
+--------------------------------
+
+Action:
+
+Analyze examination
+
+==================================================
+10. RIGHT PANEL — QUALITY
+==================================================
+
+Lorsque l'utilisateur clique "Quality" :
+
+AFFICHER :
+
+IMAGE QUALITY
+
+Current image
+
+Quality score
+94 %
+
+Status
+Good
+
+Puis éventuellement :
+
+Sharpness
+Good
+
+Contrast
+Good
+
+Visibility
+Good
+
+Usability
+Accepted
+
+L'utilisateur peut cliquer :
+
+Use image
+
+ou :
+
+Exclude image
+
+Pour une analyse multi-image :
+
+présenter la qualité de chaque image sous forme de liste.
+
+Exemple :
+
+01  ✓ 94 %
+02  ✓ 91 %
+03  ✕ 32 %
+04  ✓ 88 %
+
+==================================================
+11. RIGHT PANEL — PLANE DETECTION
+==================================================
+
+Lorsque l'utilisateur clique "Plane Detection" :
+
+AFFICHER :
+
+DETECTED PLANE
+
+4CH
+
+Confidence
+
+93 %
+
+--------------------------------
+
+Top predictions
+
+4CH       93 %
+3VV        4 %
+RVOT       2 %
+Other      1 %
+
+--------------------------------
+
+Action :
+
+Show matching images
+
+Puis possibilité :
+
+View all detected planes
+
+Créer une liste :
+
+Brain
+Heart
+Abdomen
+Femur
+Spine
+Face
+etc.
+
+Chaque plan possède :
+
+- nombre d'images ;
+- score ;
+- miniature représentative.
+
+==================================================
+12. RIGHT PANEL — PLANS / GROUPING
+==================================================
+
+Lorsque l'utilisateur clique "Plans" :
+
+AFFICHER une organisation par plans.
+
+Exemple :
+
+HEART
+
+4CH
+3 images
+
+3VV
+2 images
+
+LVOT
+1 image
+
+RVOT
+2 images
+
+BRAIN
+
+BPD
+3 images
+
+Cereb
+2 images
+
+L'utilisateur peut cliquer sur un plan.
+
+Le canvas affiche alors une image représentative.
+
+Le filmstrip se filtre sur ce plan.
+
+==================================================
+13. RIGHT PANEL — AI SELECTION
+==================================================
+
+Cette fonction sert à sélectionner les meilleures images de l'examen.
+
+Afficher :
+
+SELECTED VIEWS
+
+Brain
+✓ 3 images
+
+Heart
+✓ 3 images
+
+Abdomen
+✓ 2 images
+
+Face
+✓ 2 images
+
+Total selected
+10 images
+
+Pour chaque image :
+
+miniature
+plan
+quality score
+confidence
+
+Bouton :
+
+Replace selection
+
+==================================================
+14. RIGHT PANEL — FETUS
+==================================================
+
+Cette section est importante pour les grossesses multiples.
+
+Afficher :
+
+FETUS
+
+Fetus 1
+Fetus 2
+
+si l'examen est gémellaire.
+
+Chaque fœtus doit pouvoir posséder son propre groupe de données.
+
+Exemple :
+
+FETUS 1
+
+Biometry
+Measurements
+Position
+Heart rate
+Estimated weight
+
+FETUS 2
+
+Biometry
+Measurements
+Position
+Heart rate
+Estimated weight
+
+IMPORTANT :
+
+Ne créer Fetus 2 que si le contexte de l'examen indique
+une grossesse multiple.
+
+==================================================
+15. RIGHT PANEL — BIOMETRY
+==================================================
+
+Créer une carte dédiée :
+
+BIOMETRY
+
+Pour chaque fœtus :
+
+F1
+
+CRL
+15 mm
+
+BPD
+28 mm
+
+AC
+82 mm
+
+FL
+15 mm
+
+CT
+105 mm
+
+Gestational age
+14 SA + 6 days
+
+EDD / DPA
+05/07/2026
+
+F2
+
+CRL
+16 mm
+
+BPD
+29 mm
+
+AC
+92 mm
+
+FL
+16 mm
+
+CT
+105 mm
+
+Gestational age
+15 SA + 1 day
+
+EDD / DPA
+03/07/2026
+
+Les valeurs doivent être éditables.
+
+Chaque mesure possède :
+
+- label ;
+- valeur ;
+- unité ;
+- source ;
+- éventuellement confidence.
+
+Ajouter :
+
++ Add measurement
+
+Mais ne jamais inventer une valeur.
+
+==================================================
+16. RIGHT PANEL — MEASUREMENTS
+==================================================
+
+Cette section doit fonctionner comme un outil d'édition.
+
+Une mesure sélectionnée dans le panneau droit doit pouvoir être
+mise en évidence sur l'image.
+
+Exemple :
+
+BPD
+28 mm
+
+[Show on image]
+
+Le canvas affiche alors les points / lignes correspondant à la mesure.
+
+Même logique pour :
+
+CRL
+BPD
+AC
+FL
+CT
+NT
+etc.
+
+Les noms exacts doivent dépendre des mesures effectivement disponibles.
+
+==================================================
+17. RIGHT PANEL — PLACENTA
+==================================================
+
+Créer une carte :
+
+PLACENTA
+
+Position
+
+Anterior
+Posterior
+Fundal
+etc.
+
+Grade
+
+Grade I
+
+Insertion
+
+Normal / information disponible
+
+Confidence si donnée par l'IA.
+
+Ajouter :
+
+Show on image
+
+lorsqu'une localisation visuelle est disponible.
+
+==================================================
+18. RIGHT PANEL — AMNIOTIC FLUID
+==================================================
+
+Carte :
+
+AMNIOTIC FLUID
+
+Status
+
+Normal / Abnormal / Not assessed
+
+Measurement
+
+si disponible.
+
+Ne jamais générer artificiellement une valeur.
+
+==================================================
+19. RIGHT PANEL — CERVIX
+==================================================
+
+Carte :
+
+CERVIX
+
+Status
+
+Long / Closed
+
+Cervical length
+
+si disponible
+
+Show measurement
+
+si une mesure existe.
+
+Dans les rapports montrés dans les exemples, le col peut notamment
+apparaître sous une formulation du type :
+
+"Col long et fermé."
+
+Le panneau doit donc permettre d'obtenir cette information structurée.
+
+==================================================
+20. RIGHT PANEL — FINDINGS
+==================================================
+
+Cette section rassemble les observations.
+
+Exemple :
+
+FINDINGS
+
+✓ Fetal morphology appears normal
+
+✓ Amniotic fluid quantity normal
+
+✓ Placental position available
+
+⚠ Finding requiring review
+
+Chaque finding possède :
+
+- statut ;
+- confidence ;
+- source ;
+- éventuellement image associée.
+
+Possibilité :
+
+Show evidence
+
+qui recentre le canvas sur l'image correspondante.
+
+==================================================
+21. RIGHT PANEL — ANOMALY ANALYSIS
+==================================================
+
+IMPORTANT :
+
+Cette section NE DOIT PAS inventer un diagnostic si le modèle
+d'anomalie n'est pas encore disponible.
+
+Si aucun modèle n'est branché :
+
+ANOMALY ANALYSIS
+
+Not available yet
+
+The anomaly detection model is currently not connected.
+
+Aucun faux score.
+
+Aucun faux diagnostic.
+
+Lorsque le modèle sera disponible :
+
+NORMAL
+ou
+ABNORMAL
+
+puis :
+
+Suspected anomaly
+Confidence
+Evidence
+Affected plane
+
+==================================================
+22. RIGHT PANEL — REPORT
+==================================================
+
+Le rapport doit être conçu comme un véritable compte rendu
+d'échographie obstétricale.
+
+Il ne doit PAS être un simple paragraphe de chatbot.
+
+Le rapport doit reproduire la structure observée dans les exemples
+fournis.
+
+STRUCTURE :
+
+------------------------------------------
+ÉCHOGRAPHIE OBSTÉTRICALE
+------------------------------------------
+
+Nom et Prénom : Mme [...]
+
+Indication : [...]
+
+Prescripteur : [...]
+
+Âge : [...]
+
+Date : [...]
+
+------------------------------------------
+COMPTE RENDU
+------------------------------------------
+
+Observations générales
+
+- Utérus gravide...
+- activité cardiaque...
+- présentation...
+- morphologie...
+- liquide amniotique...
+- placenta...
+- col...
+
+------------------------------------------
+BIOMÉTRIE
+------------------------------------------
+
+F1
+
+CRL = ...
+BPD = ...
+AC = ...
+FL = ...
+CT = ...
+
+Âge gestationnel = ...
+DPA = ...
+
+F2
+
+CRL = ...
+BPD = ...
+AC = ...
+FL = ...
+CT = ...
+
+Âge gestationnel = ...
+DPA = ...
+
+------------------------------------------
+CONCLUSION
+------------------------------------------
+
+- Type de grossesse
+- Évolution
+- DPA
+- Poids estimé
+- Col
+- observations importantes
+
+IMPORTANT :
+
+Le rapport doit être construit à partir des données structurées.
+
+Le texte généré doit être éditable.
+
+Le rapport ne doit jamais inventer une mesure absente.
+
+==================================================
+23. REPORT EDITOR
+==================================================
+
+Lorsqu'on clique sur "Edit report":
+
+ouvrir un vrai éditeur de compte rendu.
+
+Le contenu doit rester structuré.
+
+Sections :
+
+Header
+Findings
+Biometry
+Fetus 1
+Fetus 2
+Conclusion
+
+Chaque section peut être éditée.
+
+Ajouter :
+
+Save
+
+Regenerate section
+
+Reset section
+
+Export
+
+Le bouton Regenerate ne doit régénérer que la section concernée.
+
+==================================================
+24. GÉNÉRATION DU RAPPORT
+==================================================
+
+Le workflow doit être :
+
+IMAGES
+↓
+QUALITY
+↓
+PLANS
+↓
+SELECTED VIEWS
+↓
+BIOMETRY / FINDINGS
+↓
+STRUCTURED DATA
+↓
+GENERATE REPORT
+↓
+REPORT EDITOR
+↓
+FINAL REPORT
+
+Ne pas générer un rapport avant que l'utilisateur ait
+au minimum les informations nécessaires.
+
+Le bouton doit donc passer par plusieurs états :
+
+Generate
+
+Generating...
+
+Generated
+
+Needs review
+
+Validated
+
+==================================================
+25. COMMAND BAR
+==================================================
+
+Conserver la barre de commandes flottante de l'éditeur.
+
+Elle reste au centre inférieur du canvas.
+
+Pour l'échographie, elle peut recevoir :
+
+"Analyse cette image"
+
+"Détecte le plan"
+
+"Montre les meilleures vues"
+
+"Affiche la biométrie"
+
+"Montre F1"
+
+"Montre F2"
+
+"Génère le compte rendu"
+
+"Montre les images du cœur"
+
+"Affiche les mesures"
+
+Ce n'est toujours PAS un chatbot.
+
+C'est une barre de commandes.
+
+==================================================
+26. CANVAS
+==================================================
+
+Le canvas reste le centre absolu de l'interface.
+
+Pour une image échographique :
+
+- zoom ;
+- pan ;
+- rotation ;
+- crop ;
+- annotations ;
+- mesures.
+
+Pour une sélection de plan :
+
+le canvas affiche l'image sélectionnée.
+
+Pour une mesure :
+
+les lignes et points apparaissent directement sur l'image.
+
+Pour une finding :
+
+l'IA peut centrer le canvas sur l'image correspondante.
+
+==================================================
+27. FILMSTRIP
+==================================================
+
+La navigation multi-image doit être élégante.
+
+Ajouter une filmstrip discrète.
+
+Chaque vignette peut montrer :
+
+- miniature ;
+- numéro ;
+- plan ;
+- quality score ;
+- selected state.
+
+Exemple :
+
+[01] 4CH ✓
+[02] BPD ✓
+[03] 4CH ✓
+[04] Kidney ✓
+[05] rejected
+
+L'utilisateur peut cliquer sur une vignette
+pour l'afficher dans le canvas.
+
+==================================================
+28. ÉTATS DU WORKFLOW
+==================================================
+
+Le logiciel doit avoir des états visuels très clairs.
+
+ÉTAT 1
+
+No examination
+
+"Import ultrasound images"
+
+ÉTAT 2
+
+Images imported
+
+"24 images"
+
+ÉTAT 3
+
+Analyzing
+
+Quality...
+Plane detection...
+
+ÉTAT 4
+
+Analysis ready
+
+Planes detected
+Best views selected
+
+ÉTAT 5
+
+Report ready
+
+Report generated
+Needs review
+
+==================================================
+29. CHARGEMENT
+==================================================
+
+Le chargement doit être élégant.
+
+Ne pas afficher simplement :
+
+"Loading..."
+
+Afficher le pipeline :
+
+Preparing images
+✓
+
+Quality analysis
+✓
+
+Plane classification
+●
+
+Selecting representative views
+○
+
+Extracting features
+○
+
+Preparing report
+○
+
+Utiliser des transitions très discrètes.
+
+==================================================
+30. DESIGN
+==================================================
+
+Respecter strictement le design system existant AImaging.
+
+Thème sombre.
+
+Inspirations :
+
+Figma
+Apple
+Anthropic
+Linear
+
+Mais ne pas copier leurs interfaces.
+
+Palette très sombre.
+
+Panels légèrement plus clairs que le background.
+
+Bordures discrètes.
+
+Rayons cohérents.
+
+Typographie Inter / Geist / SF-like.
+
+Icônes Lucide.
+
+Très peu de couleurs.
+
+Couleur d'accent :
+
+bleu AImaging.
+
+Les états médicaux peuvent utiliser des couleurs secondaires
+uniquement lorsqu'elles ont une signification claire :
+
+vert = validé / normal
+orange = attention
+rouge = anomalie / erreur
+
+Ne pas multiplier les couleurs.
+
+==================================================
+31. CE QUI DOIT ÊTRE IMPLÉMENTÉ MAINTENANT
+==================================================
+
+Cette tâche concerne principalement l'UI.
+
+Tu peux utiliser des données mockées réalistes.
+
+Créer les composants nécessaires si les composants n'existent pas encore.
+
+Par exemple :
+
+FetalExaminationPanel
+
+FetalQualityPanel
+
+FetalPlanePanel
+
+FetalSelectionPanel
+
+FetalFetusPanel
+
+FetalBiometryPanel
+
+FetalFindingsPanel
+
+FetalAnomalyPanel
+
+FetalPlacentaPanel
+
+FetalFluidPanel
+
+FetalCervixPanel
+
+FetalReportPanel
+
+FetalReportEditor
+
+FetalFilmstrip
+
+FetalAnalysisProgress
+
+FetalToolbox
+
+Adapte les noms à l'architecture actuelle.
+
+==================================================
+32. IMPORTANT — NE PAS CASSER LA RADIOGRAPHIE
+==================================================
+
+Le module radiographie existe déjà.
+
+Ne remplace pas :
+
+- LeftToolbar ;
+- RightPanel ;
+- WorkspaceProvider ;
+- CanvasViewport ;
+
+si leurs abstractions peuvent être réutilisées.
+
+Étends-les proprement.
+
+L'idée est :
+
+EDITOR
+│
+├── common tools
+│
+├── modality-specific tools
+│
+└── modality-specific panels
+
+Ainsi :
+
+Radiography
+→ outils radio
+
+Fetal Ultrasound
 → outils écho
 
-La structure visuelle reste identique.
+Même éditeur.
 
-Seuls les outils spécifiques changent.
-
-==================================================
-23. PHASE 4R — DICOM / IMAGES
-==================================================
-
-L'échographie peut être composée de :
-
-- JPG ;
-- PNG ;
-- éventuellement DICOM.
-
-Ne suppose pas que tous les datasets publics sont DICOM.
-
-Construire l'abstraction pour accepter les formats réellement supportés.
-
-Documenter les différences.
+Même philosophie.
 
 ==================================================
-24. PHASE 4S — DOCUMENTATION
+33. RESPONSABILITÉ UI / BACKEND
 ==================================================
 
-Documenter le pipeline réel :
+Pour cette phase :
 
-Examen
-↓
-Quality
-↓
-Plane
-↓
-Selection
-↓
-FetalCLIP
-↓
-Anomaly [si disponible]
-↓
-Multimodal [si disponible]
+Les résultats IA peuvent être MOCKÉS.
 
-Indiquer explicitement :
+Mais les données mockées doivent respecter exactement les schémas
+que les futurs services backend devront renvoyer.
 
-✅ implémenté
-🟡 expérimental
-❌ non implémenté
+Créer des types TypeScript structurés.
 
-Ne jamais présenter l'anomalie comme fonctionnelle
-sans modèle validé.
+Exemple :
 
-==================================================
-25. PHASE 4T — FIN DE PHASE
-==================================================
+FetalExam
 
-À la fin, lancer :
+FetalImage
 
-- tous les tests backend ;
-- tests fetal ;
-- build frontend ;
-- tests workspace.
+PlaneResult
 
-Créer un scénario E2E :
+QualityResult
 
-Créer examen échographique
-↓
-Importer plusieurs images
-↓
-Quality
-↓
-Plane
-↓
-Grouping
-↓
-Selection
-↓
-FetalCLIP
-↓
-Résultat visible dans l'éditeur
+FetusData
 
-Si anomaly n'est pas encore disponible :
+BiometryData
 
-afficher clairement :
+Finding
 
-"Anomaly analysis not yet available."
+FetalReport
 
-NE PAS simuler une prédiction.
+Ne mélanger pas les données UI avec les données backend.
 
 ==================================================
-26. RAPPORT FINAL
+34. PAS DE FAUSSE IA
 ==================================================
 
-À la fin, produire :
+Même avec des mocks :
 
-1. composants échographiques trouvés ;
-2. composants réutilisés ;
-3. composants réécrits ;
-4. checkpoints utilisés ;
-5. preprocessing réel ;
-6. endpoints ajoutés ;
-7. workspace actions ajoutées ;
-8. composants frontend ajoutés ;
-9. tests ajoutés ;
-10. performances ;
-11. limites ;
-12. éléments non implémentés ;
-13. prochaine phase recommandée.
+tout ce qui concerne l'anomalie doit être clairement identifié.
 
-Créer une matrice :
+Exemple :
 
-| Fonction | Statut | Test | Endpoint | UI | Limitation |
-|---|---|---|---|---|---|
+anomaly.status = "not_implemented"
+
+et jamais :
+
+anomaly.confidence = 0.94
+
+si aucun véritable modèle n'existe.
+
+Pour la qualité et les plans :
+
+les mocks peuvent simuler les résultats du futur backend.
 
 ==================================================
-RÈGLE DE FIN
+35. OBJECTIF UX FINAL
 ==================================================
 
-Cette phase ne doit PAS chercher à terminer artificiellement
-la détection des anomalies.
+Le résultat final doit donner l'impression d'utiliser :
 
-Le pipeline doit d'abord être solide :
+"Figma pour l'échographie obstétricale."
 
-QUALITY
-→ PLANE
-→ SELECTION
-→ FEATURES
+L'utilisateur :
 
-Puis seulement :
+1. crée un examen ;
+2. importe ses images ;
+3. visualise toutes ses images ;
+4. laisse AImaging analyser la qualité ;
+5. voit les plans détectés ;
+6. voit les meilleures images sélectionnées ;
+7. peut naviguer entre les plans ;
+8. peut consulter la biométrie ;
+9. peut analyser les findings ;
+10. prépare les données du compte rendu ;
+11. génère le rapport ;
+12. relit et modifie le rapport ;
+13. exporte le rapport.
 
-ANOMALY
-→ MULTIMODAL
+Tout doit se passer dans le même espace de travail.
 
-Si les données ou modèles nécessaires aux anomalies ne sont pas présents,
-laisser cette partie explicitement "NOT IMPLEMENTED".
+Pas de dashboard.
 
-Lorsque la phase 4 est terminée :
+Pas de page patient.
 
-ARRÊTE-TOI.
+Pas de gestion hospitalière.
 
+Pas de chatbot séparé.
 
-Présente le rapport final de Phase 4.
+==================================================
+36. AVANT DE CODER
+==================================================
+
+Avant d'implémenter quoi que ce soit :
+
+1. inspecte l'architecture frontend actuelle ;
+2. identifie les composants réutilisables ;
+3. identifie comment les outils radio sont actuellement organisés ;
+4. identifie comment RightPanel gère les sections ;
+5. identifie comment le provider stocke la modalité actuelle ;
+6. propose l'architecture des composants échographie ;
+7. propose les nouveaux types TypeScript ;
+8. explique comment la modalité détermine les outils affichés.
+
+NE PAS MODIFIER LE CODE AVANT DE PRÉSENTER CE PLAN.
+
+Après validation du plan, implémente uniquement l'UI et le workflow mocké.
+
+==================================================
+37. FIN
+==================================================
+
+À la fin :
+
+- l'éditeur radiographie doit continuer de fonctionner ;
+- un examen échographique mocké doit pouvoir être ouvert ;
+- plusieurs images doivent pouvoir être affichées ;
+- les plans doivent être représentés ;
+- les panneaux doivent fonctionner ;
+- la biométrie doit pouvoir être affichée ;
+- le rapport doit pouvoir être généré avec les données mockées ;
+- le rapport doit pouvoir être édité ;
+- le build frontend doit fonctionner.
+
+Ne commence PAS encore :
+
+- l'entraînement du modèle d'anomalies ;
+- le vrai pipeline FetalCLIP ;
+- la reconstruction de DeepFetal exam ;
+- PostgreSQL ;
+- l'authentification ;
+- Docker.
+
+Cette phase est une phase UI/UX et workflow.
+
+==================================================
+RÈGLE DE NON-RÉGRESSION
+==================================================
+
+Après chaque modification du module échographique :
+
+1. ouvrir un examen radiographique existant ;
+2. vérifier que son interface est inchangée ;
+3. vérifier que les outils radiographiques fonctionnent ;
+4. vérifier Grad-CAM ;
+5. vérifier CXAS ;
+6. vérifier HybridGNet ;
+7. vérifier le rapport ;
+8. vérifier la command bar ;
+9. lancer le build frontend.
+
+Le développement du module échographique ne doit provoquer aucune
+régression sur le module radiographie.
+
+À aucun moment, ne remplacer une fonctionnalité radiographique
+par une version générique ou échographique.
+
+Le module radiographie est déjà la première modalité de référence.
+
+L'échographie est la deuxième modalité ajoutée à la même plateforme.

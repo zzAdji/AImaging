@@ -1,17 +1,31 @@
 import { motion } from "framer-motion";
 import {
+  Activity,
   ArrowLeft,
+  Baby,
   Crosshair,
+  Droplets,
+  FileText,
+  Gauge,
+  Heart,
   History,
+  Images,
+  LayoutGrid,
+  Layers,
   List,
+  ListChecks,
   Lock,
   LockOpen,
   Map,
+  MoveVertical,
   Pencil,
   Ruler,
   Save,
   Scan,
+  ShieldAlert,
   SlidersHorizontal,
+  Sparkles,
+  Star,
   Stethoscope,
   Terminal,
   Trash2,
@@ -22,8 +36,29 @@ import {
 import { useState } from "react";
 import { COMMAND_SUGGESTIONS } from "../../lib/aiCommandSyntax";
 import { cn } from "../../lib/cn";
+import { useEditorModality } from "../../state/editorModality";
 import { useWorkspace } from "../../state/workspace";
 import { Divider } from "../ui";
+
+/** Icônes des outils fœtaux (résolution UI : le registre reste pur données). */
+const FETAL_TOOL_ICONS: Record<string, LucideIcon> = {
+  "fetal-analyze": Activity,
+  "fetal-quality": Gauge,
+  "fetal-plane-detection": Crosshair,
+  "fetal-ai-selection": Star,
+  "fetal-biometry": Ruler,
+  "fetal-findings": ListChecks,
+  "fetal-anomaly": ShieldAlert,
+  "fetal-report": FileText,
+  "fetal-examination": Images,
+  "fetal-plans": LayoutGrid,
+  "fetal-fetus": Baby,
+  "fetal-measurements": Ruler,
+  "fetal-placenta": Layers,
+  "fetal-fluid": Droplets,
+  "fetal-cervix": MoveVertical,
+  "fetal-pregnancy": Heart,
+};
 
 type View = "main" | "history" | "commands" | "command-form";
 
@@ -380,6 +415,7 @@ export function AiSidebarLeft({
   variant?: "static" | "drawer";
 }) {
   const w = useWorkspace();
+  const m = useEditorModality();
   const [view, setView] = useState<View>("main");
   const [form, setForm] = useState<CommandFormState | null>(null);
 
@@ -513,57 +549,103 @@ export function AiSidebarLeft({
 
           <Divider className="mx-3 my-2" />
 
-          {/* Outils IA */}
-          <SectionTitle icon={Zap}>Outils IA</SectionTitle>
-          <div className="mx-3 grid grid-cols-2 gap-2">
-            <RadioToolButton
-              label="Grad-CAM"
-              icon={Map}
-              active={w.gradcamOn && Boolean(w.gradcamResult)}
-              dataAttr="ai-tool-gradcam"
-              onClick={toggleGradcam}
-            />
-            <RadioToolButton
-              label="Verrou"
-              icon={w.imageLocked ? Lock : LockOpen}
-              active={w.imageLocked}
-              dataAttr="ai-tool-lock"
-              onClick={() => w.setImageLocked(!w.imageLocked)}
-            />
-          </div>
+          {m.modality === "fetal_ultrasound" ? (
+            <>
+              {/* Outils IA fœtaux (registre) + Verrou, générique à l'éditeur.
+                  Grad-CAM est un modèle radiographique : masqué hors radio. */}
+              <SectionTitle icon={Zap}>Outils IA</SectionTitle>
+              <div className="mx-3 grid grid-cols-2 gap-2">
+                <RadioToolButton
+                  label="Verrou"
+                  icon={w.imageLocked ? Lock : LockOpen}
+                  active={w.imageLocked}
+                  dataAttr="ai-tool-lock"
+                  onClick={() => w.setImageLocked(!w.imageLocked)}
+                />
+                {m.module.aiTools.map((tool) => (
+                  <RadioToolButton
+                    key={tool.id}
+                    label={tool.label}
+                    icon={FETAL_TOOL_ICONS[tool.id] ?? Sparkles}
+                    active={m.activeToolId === tool.id}
+                    dataAttr={`fetal-tool-${tool.id}`}
+                    onClick={() => m.setActiveToolId(m.activeToolId === tool.id ? null : tool.id)}
+                  />
+                ))}
+              </div>
 
-          {/* Outils radio */}
-          <SectionTitle icon={Stethoscope}>Outils radio</SectionTitle>
-          <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
-            <RadioToolButton
-              label="Sonde"
-              icon={Crosshair}
-              active={w.tool === "probe"}
-              dataAttr="ai-tool-sonde"
-              onClick={() => w.setTool(w.tool === "probe" ? "move" : "probe")}
-            />
-            <RadioToolButton
-              label="Régler l'image"
-              icon={SlidersHorizontal}
-              active={w.imageCardOpen}
-              dataAttr="ai-tool-fenetrage"
-              onClick={() => w.setImageCardOpen(!w.imageCardOpen)}
-            />
-            <RadioToolButton
-              label="Segmentation"
-              icon={Scan}
-              active={w.anatomyCardOpen}
-              dataAttr="ai-tool-anatomie"
-              onClick={() => w.toggleAnatomyCard()}
-            />
-            <RadioToolButton
-              label="Mesures"
-              icon={Ruler}
-              active={w.landmarkCardOpen}
-              dataAttr="ai-tool-landmarks"
-              onClick={() => w.toggleLandmarksCard()}
-            />
-          </div>
+              <Divider className="mx-3 my-2" />
+
+              {/* Outils spécifiques à la modalité échographie */}
+              <SectionTitle icon={Stethoscope}>Outils échographie</SectionTitle>
+              <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
+                {m.module.modalityTools.map((tool) => (
+                  <RadioToolButton
+                    key={tool.id}
+                    label={tool.label}
+                    icon={FETAL_TOOL_ICONS[tool.id] ?? Sparkles}
+                    active={m.activeToolId === tool.id}
+                    dataAttr={`fetal-tool-${tool.id}`}
+                    onClick={() => m.setActiveToolId(m.activeToolId === tool.id ? null : tool.id)}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Outils IA — section historique (radiographie / référence) */}
+              <SectionTitle icon={Zap}>Outils IA</SectionTitle>
+              <div className="mx-3 grid grid-cols-2 gap-2">
+                <RadioToolButton
+                  label="Grad-CAM"
+                  icon={Map}
+                  active={w.gradcamOn && Boolean(w.gradcamResult)}
+                  dataAttr="ai-tool-gradcam"
+                  onClick={toggleGradcam}
+                />
+                <RadioToolButton
+                  label="Verrou"
+                  icon={w.imageLocked ? Lock : LockOpen}
+                  active={w.imageLocked}
+                  dataAttr="ai-tool-lock"
+                  onClick={() => w.setImageLocked(!w.imageLocked)}
+                />
+              </div>
+
+              {/* Outils radio */}
+              <SectionTitle icon={Stethoscope}>Outils radio</SectionTitle>
+              <div className="mx-3 mb-3 grid grid-cols-2 gap-2">
+                <RadioToolButton
+                  label="Sonde"
+                  icon={Crosshair}
+                  active={w.tool === "probe"}
+                  dataAttr="ai-tool-sonde"
+                  onClick={() => w.setTool(w.tool === "probe" ? "move" : "probe")}
+                />
+                <RadioToolButton
+                  label="Régler l'image"
+                  icon={SlidersHorizontal}
+                  active={w.imageCardOpen}
+                  dataAttr="ai-tool-fenetrage"
+                  onClick={() => w.setImageCardOpen(!w.imageCardOpen)}
+                />
+                <RadioToolButton
+                  label="Segmentation"
+                  icon={Scan}
+                  active={w.anatomyCardOpen}
+                  dataAttr="ai-tool-anatomie"
+                  onClick={() => w.toggleAnatomyCard()}
+                />
+                <RadioToolButton
+                  label="Mesures"
+                  icon={Ruler}
+                  active={w.landmarkCardOpen}
+                  dataAttr="ai-tool-landmarks"
+                  onClick={() => w.toggleLandmarksCard()}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
     </motion.aside>

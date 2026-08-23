@@ -22,6 +22,9 @@ import { RightPanel } from "./components/RightPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
 import { WorkspaceProvider } from "./state/WorkspaceProvider";
+import { EditorModalityProvider } from "./state/EditorModalityContext";
+import { FetalExamProvider } from "./components/fetal/FetalExamProvider";
+import { FetalFilmstripHost } from "./components/fetal/FetalFilmstrip";
 import {
   ACCENT_COLORS,
   DEFAULT_PREFS,
@@ -37,6 +40,7 @@ import { downloadDataUrl, downloadJson, exportImageDataUrl } from "./lib/exportI
 import {
   loadExaminations,
   isRadiographyCompatible,
+  isRadiographyExam,
   isImageRejectedByOpenCxr,
   readImportedImageFiles,
   saveExaminations,
@@ -57,7 +61,7 @@ import { SHORTCUTS } from "./lib/shortcuts";
 import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
 import { cn } from "./lib/cn";
-import { buildWorkspaceManifest, captureAnnotatedImage, type AiActionPlan } from "./lib/workspaceProtocol";
+import { buildWorkspaceManifest, captureAnnotatedImage, WORKSPACE_PROTOCOL_VERSION, type AiActionPlan } from "./lib/workspaceProtocol";
 import { captureMutableSnapshots, type MutableSnapshotMap } from "./lib/aiTransaction";
 import {
   analyzeWorkspaceImages,
@@ -333,6 +337,18 @@ function Shell({
       const snapshot = w.captureImageState();
       const current = exam.images[imageIndex];
       if (!current) throw new Error("Image active introuvable.");
+      /* Garde modalité : les endpoints et plans d'actions IA ci-dessous sont
+         radiographiques (ensemble, Grad-CAM, CXAS, HybridGNet, rapport radio).
+         Pour une autre modalité : aucune requête serveur, réponse explicite. */
+      if (!isRadiographyExam(exam)) {
+        return {
+          plan: { protocol_version: WORKSPACE_PROTOCOL_VERSION, summary: "", actions: [] },
+          assistantMessage:
+            "Les outils IA radiographiques ne s'appliquent pas à cet examen. Le module IA de cette modalité n'est pas encore connecté.",
+          warnings: [],
+          limitations: ["Analyse IA indisponible pour cette modalité (module non connecté)."],
+        };
+      }
       const synchronizedExam = {
         ...exam,
         images: exam.images.map((image, index) => index === imageIndex && snapshot ? { ...image, state: snapshot } : image),
@@ -741,6 +757,9 @@ function Shell({
      - nouvelle image ajoutée à l'examen → elle seule est analysée. */
   useEffect(() => {
     if (!exam || exam.images.length === 0) return;
+    /* Garde modalité : la classification (ensemble) est un modèle radiographie
+       thoracique — jamais lancée sur une autre modalité. */
+    if (!isRadiographyExam(exam)) return;
     const missing = exam.images.filter(isRadiographyCompatible).filter((image) => !image.prediction);
     if (missing.length === 0) {
       if (!exam.images.some(isRadiographyCompatible) && autoAnalysisStartedFor.current !== exam.id) {
@@ -773,6 +792,9 @@ function Shell({
     if (!exam || exam.images.length === 0) return;
     const current = exam.images[imageIndex];
     if (!current) return;
+    /* Garde modalité : CXAS et HybridGNet sont entraînés sur des radios
+       thoraciques — jamais lancés sur une autre modalité. */
+    if (!isRadiographyExam(exam)) return;
     if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
     /* Examen déjà évalué une fois → ouverture SANS analyse anatomique
        (la chaîne CXAS + HybridGNet était relancée à chaque entrée, d'où des
@@ -812,6 +834,8 @@ function Shell({
     if (!exam || exam.images.length === 0) return;
     const current = exam.images[imageIndex];
     if (!current) return;
+    /* Garde modalité : la Grad-CAM cible le classifieur radiographique. */
+    if (!isRadiographyExam(exam)) return;
     if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
     /* Attend la classification : sans prediction, on ne lance pas la
        Grad-CAM (l'effet re-tournera quand onSavePredictions mettra à jour
@@ -871,6 +895,10 @@ function Shell({
        jamais dans une image dans cet état. */
   const runOpenCxrPipeline = useCallback(async () => {
     if (!exam) return;
+    /* Garde modalité : le tri/standardisation opencxr n'a de sens que pour la
+       radiographie thoracique. Pour toute autre modalité : aucune session
+       serveur, aucun overlay bloquant — entrée directe dans l'éditeur. */
+    if (!isRadiographyExam(exam)) return;
     const compatible = exam.images.filter(isRadiographyCompatible);
     const activeImage = exam.images[imageIndex] ?? exam.images[0] ?? null;
     const pending = compatible.filter((image) => !image.cxrSort || !image.cxrStandardize);
@@ -1529,6 +1557,7 @@ const doExport = async () => {
           )}
         </AnimatePresence>
       </div>
+      <FetalFilmstripHost />
       {w.statusBarOpen && <StatusBar />}
 
       <AnimatePresence>
@@ -1982,33 +2011,38 @@ export default function App() {
           }}
         />
       )}
-      {page === "editor" &&
-        (isMobile ? (
-          <MobileShell
-            examCtx={examCtx}
-            exams={exams}
-            onBack={() => {
-              setExamCtx(null);
-              setPage("exams");
-            }}
-            onSaveImageState={saveImageState}
-          />
-        ) : (
-          <Shell
-            examCtx={examCtx}
-            exams={exams}
-            onBack={() => {
-              setExamCtx(null);
-              setPage("exams");
-            }}
-            onSaveImageState={saveImageState}
-            onClearImageState={clearImageState}
-            onSavePredictions={savePredictions}
-            onSaveGradcams={saveGradcams}
-            onSaveThreeD={saveThreeD}
-            onSaveOpenCxr={saveOpenCxr}
-          />
-        ))}
+      {page === "editor" && (
+        <EditorModalityProvider exam={examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null}>
+          <FetalExamProvider>
+          {isMobile ? (
+            <MobileShell
+              examCtx={examCtx}
+              exams={exams}
+              onBack={() => {
+                setExamCtx(null);
+                setPage("exams");
+              }}
+              onSaveImageState={saveImageState}
+            />
+          ) : (
+            <Shell
+              examCtx={examCtx}
+              exams={exams}
+              onBack={() => {
+                setExamCtx(null);
+                setPage("exams");
+              }}
+              onSaveImageState={saveImageState}
+              onClearImageState={clearImageState}
+              onSavePredictions={savePredictions}
+              onSaveGradcams={saveGradcams}
+              onSaveThreeD={saveThreeD}
+              onSaveOpenCxr={saveOpenCxr}
+            />
+          )}
+          </FetalExamProvider>
+        </EditorModalityProvider>
+      )}
     </WorkspaceProvider>
   );
 }

@@ -14,6 +14,8 @@ import {
 import { AnatomyMapCard } from "./ai/AnatomyMap";
 import { AnatomySegmentationCard } from "./ai/AnatomySegmentation";
 import { LandmarksMeasurementsCard } from "./ai/LandmarksMeasurements";
+import { FetalCardsBody } from "./fetal/FetalRightPanel";
+import { useEditorModality } from "../state/editorModality";
 import { Button, Divider, KV, ProgressBar, Section, Segmented, Slider, Toggle } from "./ui";
 
 /* ---------------------------------- Image --------------------------------- */
@@ -593,6 +595,7 @@ function CardsBody({
 
 export function RightPanel() {
   const w = useWorkspace();
+  const m = useEditorModality();
   const [dragId, setDragId] = useState<SectionId | null>(null);
 
   const onResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -629,7 +632,11 @@ export function RightPanel() {
         <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-transparent transition-colors duration-150 ease-out group-hover:bg-accent/60" />
       </div>
       <div className="h-full overflow-y-auto px-2.5 py-2.5">
-        <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
+        {m.modality === "fetal_ultrasound" ? (
+          <FetalCardsBody />
+        ) : (
+          <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
+        )}
       </div>
     </aside>
   );
@@ -637,6 +644,7 @@ export function RightPanel() {
 
 export function RightPanelDrawer() {
   const w = useWorkspace();
+  const m = useEditorModality();
   const [dragId, setDragId] = useState<SectionId | null>(null);
 
   const moveCard = (from: SectionId, to: SectionId) => {
@@ -652,7 +660,11 @@ export function RightPanelDrawer() {
   return (
     <div className="fixed inset-y-0 right-0 z-[130] flex max-w-[380px] flex-col border-l border-border bg-panel shadow-2xl shadow-black/60">
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
-        <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
+        {m.modality === "fetal_ultrasound" ? (
+          <FetalCardsBody />
+        ) : (
+          <CardsBody dragId={dragId} onDragStart={setDragId} onDrop={moveCard} onDragEnd={() => setDragId(null)} />
+        )}
       </div>
     </div>
   );

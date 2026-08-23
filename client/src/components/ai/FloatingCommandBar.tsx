@@ -2,7 +2,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, ChevronUp, Loader2, Mic, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
-import { commandSuggestions, completeCommand } from "../../lib/aiCommandSyntax";
+import { commandSuggestions, completeCommand, type CommandSuggestion } from "../../lib/aiCommandSyntax";
+import { useEditorModality } from "../../state/editorModality";
+import { useFetalExam } from "../../state/fetalExam";
 import { useWorkspace } from "../../state/workspace";
 
 /**
@@ -29,13 +31,75 @@ const THINK_DOTS = [0, 0.18, 0.36];
 
 export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
+  const m = useEditorModality();
+  const fetal = useFetalExam();
+  const usingFetal = m.modality === "fetal_ultrasound";
   const [value, setValue] = useState("");
   const [voice, setVoice] = useState(false);
   const [open, setOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const waveProfile = mobile ? WAVE_PROFILE.filter((_, i) => i % 3 === 0) : WAVE_PROFILE;
-  const suggestions = commandSuggestions(value);
+
+  /* §25 — commandes contextuelles : exécution LOCALE (panneaux/workflow),
+     jamais routées vers les endpoints radiographiques. */
+  const fetalCommands: CommandSuggestion[] = usingFetal
+    ? m.module.commands.map((command) => ({
+        name: command.name,
+        usage: command.usage,
+        description: command.usage,
+      }))
+    : [];
+  const typed = value.trim().toLowerCase();
+  const suggestions =
+    usingFetal && typed.length > 0
+      ? fetalCommands.filter((command) => command.usage.toLowerCase().includes(typed))
+      : commandSuggestions(value);
+
+  const runFetalCommand = (usage: string): boolean => {
+    if (!usingFetal) return false;
+    const normalized = usage.trim().toLowerCase();
+    const matched = m.module.commands.find(
+      (command) =>
+        command.usage.toLowerCase() === normalized ||
+        command.name.toLowerCase() === normalized.replace(/^@/, ""),
+    );
+    if (!matched) return false;
+    switch (matched.name) {
+      case "analyze_image":
+        if (fetal.exam.status === "draft") fetal.startAnalysis();
+        m.setActiveToolId("fetal-quality");
+        break;
+      case "detect_plane":
+        m.setActiveToolId("fetal-plane-detection");
+        break;
+      case "best_views":
+        m.setActiveToolId("fetal-selection");
+        break;
+      case "biometry":
+      case "measurements":
+        m.setActiveToolId(matched.name === "biometry" ? "fetal-biometry" : "fetal-measurements");
+        break;
+      case "show_f1":
+      case "show_f2":
+        m.setActiveToolId("fetal-fetus");
+        w.notify("Fœtus affiché", "info", matched.usage);
+        break;
+      case "heart_images":
+        m.setActiveToolId("fetal-plans");
+        w.notify("Plans cardiaques", "info", "Ouvrez le plan 4CH / 3VV dans la carte Plans.");
+        break;
+      case "generate_report": {
+        const started = fetal.generateReport();
+        m.setActiveToolId("fetal-report");
+        if (!started) w.notify("Rapport non lancé", "warning", "Analysez d'abord l'examen.");
+        break;
+      }
+      default:
+        return false;
+    }
+    return true;
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,6 +114,11 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const submit = (text = value) => {
     const t = text.trim();
     if (!t || w.aiBusy) return;
+    /* Commandes fœtales : exécution locale, sans passer par le resolver radio. */
+    if (runFetalCommand(t)) {
+      setValue("");
+      return;
+    }
     setValue("");
     w.runAiCommand(t);
   };
@@ -58,7 +127,13 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
     if (voice) {
       /* Stop listening — submit the (simulated) transcription */
       setVoice(false);
-      submit(w.reportEditOpen ? "Ajoute une conclusion au rapport." : "Analyse cette radiographie.");
+      submit(
+        usingFetal
+          ? "Génère le compte rendu"
+          : w.reportEditOpen
+            ? "Ajoute une conclusion au rapport."
+            : "Analyse cette radiographie.",
+      );
     } else {
       setVoice(true);
     }
@@ -105,7 +180,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
                   data-attr={`ai-command-suggestion-${suggestion.name}`}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    setValue(completeCommand(value, suggestion));
+                    setValue(usingFetal ? suggestion.usage : completeCommand(value, suggestion));
                     inputRef.current?.focus();
                   }}
                   className={cn(
@@ -193,7 +268,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
                     } else if (suggestions.length > 0 && e.key === "ArrowUp") {
                       e.preventDefault();
                       setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length);
-                    } else if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter") && !/\s/.test(value.trimStart().slice(1))) {
+                    } else if (!usingFetal && suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter") && !/\s/.test(value.trimStart().slice(1))) {
                       e.preventDefault();
                       setValue(completeCommand(value, suggestions[activeSuggestion]));
                     } else if (e.key === "Enter") {

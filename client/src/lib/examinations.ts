@@ -1,4 +1,5 @@
 import type { PixelSpacingMm, Shape, WlValue } from "../state/workspace";
+import { normalizeModalityId, type ModalityId } from "./modality";
 import type { OpenCxrRejection, OpenCxrSortResult, OpenCxrStandardizeResult, RadiographyPrediction } from "./workspaceApi";
 import type { LinearImageBuffer } from "./dicom";
 import { isDicomFile, parseDicomFile } from "./dicom";
@@ -98,6 +99,22 @@ export interface Examination {
 
 export const EXAM_KEY = "aimaging.examinations";
 export const MODALITIES = ["Radiography", "Ultrasound", "CT Scan", "MRI", "Other"];
+
+/** Modalité canonique d'un examen (voir lib/modality.ts). */
+export function examModality(exam: Pick<Examination, "modality">): ModalityId {
+  return normalizeModalityId(exam.modality);
+}
+
+/** Garde typée : l'examen appartient-il à la modalité radiographique ? */
+export function isRadiographyExam(exam: Pick<Examination, "modality">): boolean {
+  return examModality(exam) === "radiography";
+}
+
+/** Garde typée : l'examen appartient-il à la modalité échographie fœtale ? */
+export function isFetalUltrasoundExam(exam: Pick<Examination, "modality">): boolean {
+  return examModality(exam) === "fetal_ultrasound";
+}
+
 
 export const uid = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
