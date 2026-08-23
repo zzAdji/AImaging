@@ -57,6 +57,16 @@ import {
   storeLastFileHandle,
   type RecentFile,
 } from "./lib/recent";
+import {
+  bootstrapExaminations,
+  persistArchivedExam,
+  persistCreatedExam,
+  persistDeletedExam,
+  persistLastOpenedAt,
+  persistRenamedExam,
+  setExamSyncListener,
+  type ExamSyncStatus,
+} from "./lib/db/examinationStore";
 import { SHORTCUTS } from "./lib/shortcuts";
 import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
@@ -1885,6 +1895,21 @@ export default function App() {
   const [examCtx, setExamCtx] = useState<{ examId: string; index: number } | null>(null);
   const [exams, setExams] = useState<Examination[]>(loadExaminations);
   const isMobile = useIsMobile();
+  /* Phase Database 3 : Supabase devient la source persistante des examens ;
+     localStorage reste le cache/fallback. Statut affiché discrètement (§10). */
+  const [syncStatus, setSyncStatus] = useState<ExamSyncStatus>("syncing");
+
+  useEffect(() => {
+    setExamSyncListener(setSyncStatus);
+    let cancelled = false;
+    void bootstrapExaminations().then((result) => {
+      if (!cancelled) setExams(result.exams);
+    });
+    return () => {
+      cancelled = true;
+      setExamSyncListener(null);
+    };
+  }, []);
 
   const mutateExams = useCallback((fn: (list: Examination[]) => Examination[]) => {
     setExams((prev) => {
@@ -1900,6 +1925,7 @@ export default function App() {
       mutateExams((list) =>
         list.map((e) => (e.id === examId ? { ...e, lastOpenedAt: now } : e)),
       );
+      void persistLastOpenedAt(examId, now);
       setExamCtx({ examId, index: 0 });
       setPage("editor");
     },
@@ -1975,6 +2001,39 @@ export default function App() {
     }));
   }, [mutateExams]);
 
+  /**
+   * Handlers examens : mutation locale optimiste immédiate, puis persistance
+   * granulaire vers Supabase. En cas d'échec réseau la donnée locale reste
+   * intacte et l'échec est visible via le statut de synchronisation (§8/§10).
+   */
+  const handleCreateExam = useCallback(
+    (e: Examination) => {
+      mutateExams((list) => [...list, e]);
+      void persistCreatedExam(e);
+    },
+    [mutateExams],
+  );
+
+  const handleUpdateExam = useCallback(
+    (id: string, patch: Partial<Examination>) => {
+      mutateExams((list) => list.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      if (patch.archived !== undefined) {
+        void persistArchivedExam(id, patch.archived);
+      } else if (patch.name !== undefined) {
+        void persistRenamedExam(id, patch.name);
+      }
+    },
+    [mutateExams],
+  );
+
+  const handleDeleteExam = useCallback(
+    (id: string) => {
+      mutateExams((list) => list.filter((e) => e.id !== id));
+      void persistDeletedExam(id);
+    },
+    [mutateExams],
+  );
+
   const autoRestore = page === "editor" && examCtx === null;
 
   return (
@@ -1994,11 +2053,10 @@ export default function App() {
         <ExamsScreen
           exams={exams}
           userEmail={session?.email ?? ""}
-          onCreateExam={(e) => mutateExams((list) => [...list, e])}
-          onUpdateExam={(id, patch) =>
-            mutateExams((list) => list.map((e) => (e.id === id ? { ...e, ...patch } : e)))
-          }
-          onDeleteExam={(id) => mutateExams((list) => list.filter((e) => e.id !== id))}
+          syncStatus={syncStatus}
+          onCreateExam={handleCreateExam}
+          onUpdateExam={handleUpdateExam}
+          onDeleteExam={handleDeleteExam}
           onOpenExam={openExam}
           onOpenStandalone={() => {
             setExamCtx(null);

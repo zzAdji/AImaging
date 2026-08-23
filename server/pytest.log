@@ -1,0 +1,515 @@
+.................................F.FFFFF.s.............................. [ 62%]
+...sssssssss...............................                              [100%]
+================================== FAILURES ===================================
+___________ test_dicom_parse_never_exposes_raw_patient_identifiers ____________
+
+    def test_dicom_parse_never_exposes_raw_patient_identifiers():
+>       result = dicom_service.parse_dicom_bytes(_dicom_with_raw_identifiers())
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_dicom_privacy.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _dicom_with_raw_identifiers() -> bytes:
+        """Un DICOM contenant un PatientName/PatientID brut bien identifiable."""
+        from pydicom.uid import generate_uid as _uid
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = _uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = _uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = _uid()
+        ds.SeriesInstanceUID = _uid()
+        ds.FrameOfReferenceUID = _uid()
+        ds.PatientName = RAW_NAME
+        ds.PatientID = RAW_ID
+        ds.Modality = "DX"
+        ds.Rows = 8
+        ds.Columns = 8
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.BitsAllocated = 16
+        ds.BitsStored = 12
+        ds.HighBit = 11
+        ds.PixelRepresentation = 0
+        ds.RescaleSlope = 1.0
+        ds.RescaleIntercept = -1024.0
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        ds.PixelData = np.zeros((8, 8), dtype=np.uint16).tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\test_dicom_privacy.py:65: TypeError
+______________ test_parse_monochrome_metadata_and_linear_buffer _______________
+
+    def test_parse_monochrome_metadata_and_linear_buffer():
+>       data = make_dicom_bytes(rows=16, cols=16, modality="CT", intercept=-1024)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_dicom_service.py:22: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+rows = 16, cols = 16, modality = 'CT', photometric = 'MONOCHROME2'
+samples_per_pixel = 1, bits_allocated = 16, bits_stored = 12
+pixel_representation = 0, slope = 1.0, intercept = -1024
+pixel_array = array([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ..., 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], dtype=uint16)
+pixel_spacing = (0.5, 0.5)
+
+    def make_dicom_bytes(
+        *,
+        rows: int = 8,
+        cols: int = 8,
+        modality: str = "CT",
+        photometric: str = "MONOCHROME2",
+        samples_per_pixel: int = 1,
+        bits_allocated: int = 16,
+        bits_stored: int = 12,
+        pixel_representation: int = 0,
+        slope: float = 1.0,
+        intercept: float = -1024.0,
+        pixel_array: np.ndarray | None = None,
+        pixel_spacing: tuple[float, float] | None = (0.5, 0.5),
+    ) -> bytes:
+        """Construit un DICOM monocadre non compressé et le sérialise en mémoire."""
+        from pydicom import dcmwrite
+        from pydicom.dataset import Dataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    
+        if pixel_array is None:
+            pixel_array = np.zeros((rows, cols), dtype=np.uint16)
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.FrameOfReferenceUID = generate_uid()
+        ds.PatientID = "PSEUDO-001"
+        ds.Modality = modality
+        ds.Rows = int(pixel_array.shape[0])
+        ds.Columns = int(pixel_array.shape[1])
+        ds.SamplesPerPixel = samples_per_pixel
+        ds.PhotometricInterpretation = photometric
+        if samples_per_pixel > 1:
+            # Obligatoire dès que SamplesPerPixel > 1 : 0 = interleaved
+            # (RGB RGB RGB), conforme à l'organisation mémoire (rows, cols, 3).
+            ds.PlanarConfiguration = 0
+        ds.BitsAllocated = bits_allocated
+        ds.BitsStored = bits_stored
+        ds.HighBit = bits_stored - 1
+        ds.PixelRepresentation = pixel_representation
+        ds.RescaleSlope = slope
+        ds.RescaleIntercept = intercept
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        if pixel_spacing is not None:
+            ds.PixelSpacing = [str(v) for v in pixel_spacing]
+        arr = np.asarray(pixel_array)
+        if samples_per_pixel > 1:
+            ds.PixelData = arr.tobytes()
+        elif bits_allocated == 16:
+            ds.PixelData = arr.astype("<u2").tobytes()
+        else:
+            ds.PixelData = arr.astype("uint8").tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\conftest.py:108: TypeError
+___________ test_linear_buffer_applies_rescale_slope_and_intercept ____________
+
+    def test_linear_buffer_applies_rescale_slope_and_intercept():
+        arr = np.arange(256, dtype=np.uint16).reshape(16, 16)
+>       data = make_dicom_bytes(pixel_array=arr, slope=2.0, intercept=10.0)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_dicom_service.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+rows = 8, cols = 8, modality = 'CT', photometric = 'MONOCHROME2'
+samples_per_pixel = 1, bits_allocated = 16, bits_stored = 12
+pixel_representation = 0, slope = 2.0, intercept = 10.0
+pixel_array = array([[  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,
+         13,  14,  15],
+       [ 16,  17,  18..., 239],
+       [240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
+        253, 254, 255]], dtype=uint16)
+pixel_spacing = (0.5, 0.5)
+
+    def make_dicom_bytes(
+        *,
+        rows: int = 8,
+        cols: int = 8,
+        modality: str = "CT",
+        photometric: str = "MONOCHROME2",
+        samples_per_pixel: int = 1,
+        bits_allocated: int = 16,
+        bits_stored: int = 12,
+        pixel_representation: int = 0,
+        slope: float = 1.0,
+        intercept: float = -1024.0,
+        pixel_array: np.ndarray | None = None,
+        pixel_spacing: tuple[float, float] | None = (0.5, 0.5),
+    ) -> bytes:
+        """Construit un DICOM monocadre non compressé et le sérialise en mémoire."""
+        from pydicom import dcmwrite
+        from pydicom.dataset import Dataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    
+        if pixel_array is None:
+            pixel_array = np.zeros((rows, cols), dtype=np.uint16)
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.FrameOfReferenceUID = generate_uid()
+        ds.PatientID = "PSEUDO-001"
+        ds.Modality = modality
+        ds.Rows = int(pixel_array.shape[0])
+        ds.Columns = int(pixel_array.shape[1])
+        ds.SamplesPerPixel = samples_per_pixel
+        ds.PhotometricInterpretation = photometric
+        if samples_per_pixel > 1:
+            # Obligatoire dès que SamplesPerPixel > 1 : 0 = interleaved
+            # (RGB RGB RGB), conforme à l'organisation mémoire (rows, cols, 3).
+            ds.PlanarConfiguration = 0
+        ds.BitsAllocated = bits_allocated
+        ds.BitsStored = bits_stored
+        ds.HighBit = bits_stored - 1
+        ds.PixelRepresentation = pixel_representation
+        ds.RescaleSlope = slope
+        ds.RescaleIntercept = intercept
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        if pixel_spacing is not None:
+            ds.PixelSpacing = [str(v) for v in pixel_spacing]
+        arr = np.asarray(pixel_array)
+        if samples_per_pixel > 1:
+            ds.PixelData = arr.tobytes()
+        elif bits_allocated == 16:
+            ds.PixelData = arr.astype("<u2").tobytes()
+        else:
+            ds.PixelData = arr.astype("uint8").tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\conftest.py:108: TypeError
+________________ test_monochrome1_still_provides_linear_buffer ________________
+
+    def test_monochrome1_still_provides_linear_buffer():
+>       data = make_dicom_bytes(
+            photometric="MONOCHROME1",
+            intercept=0,
+            pixel_array=np.full((8, 8), 500, dtype=np.uint16),
+        )
+
+tests\test_dicom_service.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+rows = 8, cols = 8, modality = 'CT', photometric = 'MONOCHROME1'
+samples_per_pixel = 1, bits_allocated = 16, bits_stored = 12
+pixel_representation = 0, slope = 1.0, intercept = 0
+pixel_array = array([[500, 500, 500, 500, 500, 500, 500, 500],
+       [500, 500, 500, 500, 500, 500, 500, 500],
+       [500, 500, 50... 500],
+       [500, 500, 500, 500, 500, 500, 500, 500],
+       [500, 500, 500, 500, 500, 500, 500, 500]], dtype=uint16)
+pixel_spacing = (0.5, 0.5)
+
+    def make_dicom_bytes(
+        *,
+        rows: int = 8,
+        cols: int = 8,
+        modality: str = "CT",
+        photometric: str = "MONOCHROME2",
+        samples_per_pixel: int = 1,
+        bits_allocated: int = 16,
+        bits_stored: int = 12,
+        pixel_representation: int = 0,
+        slope: float = 1.0,
+        intercept: float = -1024.0,
+        pixel_array: np.ndarray | None = None,
+        pixel_spacing: tuple[float, float] | None = (0.5, 0.5),
+    ) -> bytes:
+        """Construit un DICOM monocadre non compressé et le sérialise en mémoire."""
+        from pydicom import dcmwrite
+        from pydicom.dataset import Dataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    
+        if pixel_array is None:
+            pixel_array = np.zeros((rows, cols), dtype=np.uint16)
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.FrameOfReferenceUID = generate_uid()
+        ds.PatientID = "PSEUDO-001"
+        ds.Modality = modality
+        ds.Rows = int(pixel_array.shape[0])
+        ds.Columns = int(pixel_array.shape[1])
+        ds.SamplesPerPixel = samples_per_pixel
+        ds.PhotometricInterpretation = photometric
+        if samples_per_pixel > 1:
+            # Obligatoire dès que SamplesPerPixel > 1 : 0 = interleaved
+            # (RGB RGB RGB), conforme à l'organisation mémoire (rows, cols, 3).
+            ds.PlanarConfiguration = 0
+        ds.BitsAllocated = bits_allocated
+        ds.BitsStored = bits_stored
+        ds.HighBit = bits_stored - 1
+        ds.PixelRepresentation = pixel_representation
+        ds.RescaleSlope = slope
+        ds.RescaleIntercept = intercept
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        if pixel_spacing is not None:
+            ds.PixelSpacing = [str(v) for v in pixel_spacing]
+        arr = np.asarray(pixel_array)
+        if samples_per_pixel > 1:
+            ds.PixelData = arr.tobytes()
+        elif bits_allocated == 16:
+            ds.PixelData = arr.astype("<u2").tobytes()
+        else:
+            ds.PixelData = arr.astype("uint8").tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\conftest.py:108: TypeError
+____________________ test_rgb_dicom_disables_linear_buffer ____________________
+
+    def test_rgb_dicom_disables_linear_buffer():
+>       data = make_rgb_dicom_bytes(rows=8, cols=8)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_dicom_service.py:69: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\conftest.py:118: in make_rgb_dicom_bytes
+    return make_dicom_bytes(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+rows = 8, cols = 8, modality = 'CT', photometric = 'RGB', samples_per_pixel = 3
+bits_allocated = 8, bits_stored = 8, pixel_representation = 0, slope = 1.0
+intercept = -1024.0
+pixel_array = array([[[200, 120,  40],
+        [200, 120,  40],
+        [200, 120,  40],
+        [200, 120,  40],
+        [200, 120,...40],
+        [200, 120,  40],
+        [200, 120,  40],
+        [200, 120,  40],
+        [200, 120,  40]]], dtype=uint8)
+pixel_spacing = (0.5, 0.5)
+
+    def make_dicom_bytes(
+        *,
+        rows: int = 8,
+        cols: int = 8,
+        modality: str = "CT",
+        photometric: str = "MONOCHROME2",
+        samples_per_pixel: int = 1,
+        bits_allocated: int = 16,
+        bits_stored: int = 12,
+        pixel_representation: int = 0,
+        slope: float = 1.0,
+        intercept: float = -1024.0,
+        pixel_array: np.ndarray | None = None,
+        pixel_spacing: tuple[float, float] | None = (0.5, 0.5),
+    ) -> bytes:
+        """Construit un DICOM monocadre non compressé et le sérialise en mémoire."""
+        from pydicom import dcmwrite
+        from pydicom.dataset import Dataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    
+        if pixel_array is None:
+            pixel_array = np.zeros((rows, cols), dtype=np.uint16)
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.FrameOfReferenceUID = generate_uid()
+        ds.PatientID = "PSEUDO-001"
+        ds.Modality = modality
+        ds.Rows = int(pixel_array.shape[0])
+        ds.Columns = int(pixel_array.shape[1])
+        ds.SamplesPerPixel = samples_per_pixel
+        ds.PhotometricInterpretation = photometric
+        if samples_per_pixel > 1:
+            # Obligatoire dès que SamplesPerPixel > 1 : 0 = interleaved
+            # (RGB RGB RGB), conforme à l'organisation mémoire (rows, cols, 3).
+            ds.PlanarConfiguration = 0
+        ds.BitsAllocated = bits_allocated
+        ds.BitsStored = bits_stored
+        ds.HighBit = bits_stored - 1
+        ds.PixelRepresentation = pixel_representation
+        ds.RescaleSlope = slope
+        ds.RescaleIntercept = intercept
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        if pixel_spacing is not None:
+            ds.PixelSpacing = [str(v) for v in pixel_spacing]
+        arr = np.asarray(pixel_array)
+        if samples_per_pixel > 1:
+            ds.PixelData = arr.tobytes()
+        elif bits_allocated == 16:
+            ds.PixelData = arr.astype("<u2").tobytes()
+        else:
+            ds.PixelData = arr.astype("uint8").tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\conftest.py:108: TypeError
+_________________ test_linear_buffer_fallback_when_too_large __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000199E79D0E90>
+
+    def test_linear_buffer_fallback_when_too_large(monkeypatch):
+        monkeypatch.setattr(dicom_service, "MAX_LINEAR_PIXELS", 1)
+>       data = make_dicom_bytes(rows=16, cols=16)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_dicom_service.py:81: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+rows = 16, cols = 16, modality = 'CT', photometric = 'MONOCHROME2'
+samples_per_pixel = 1, bits_allocated = 16, bits_stored = 12
+pixel_representation = 0, slope = 1.0, intercept = -1024.0
+pixel_array = array([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ..., 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], dtype=uint16)
+pixel_spacing = (0.5, 0.5)
+
+    def make_dicom_bytes(
+        *,
+        rows: int = 8,
+        cols: int = 8,
+        modality: str = "CT",
+        photometric: str = "MONOCHROME2",
+        samples_per_pixel: int = 1,
+        bits_allocated: int = 16,
+        bits_stored: int = 12,
+        pixel_representation: int = 0,
+        slope: float = 1.0,
+        intercept: float = -1024.0,
+        pixel_array: np.ndarray | None = None,
+        pixel_spacing: tuple[float, float] | None = (0.5, 0.5),
+    ) -> bytes:
+        """Construit un DICOM monocadre non compressé et le sérialise en mémoire."""
+        from pydicom import dcmwrite
+        from pydicom.dataset import Dataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    
+        if pixel_array is None:
+            pixel_array = np.zeros((rows, cols), dtype=np.uint16)
+    
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPClassUID = generate_uid()
+        ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.FrameOfReferenceUID = generate_uid()
+        ds.PatientID = "PSEUDO-001"
+        ds.Modality = modality
+        ds.Rows = int(pixel_array.shape[0])
+        ds.Columns = int(pixel_array.shape[1])
+        ds.SamplesPerPixel = samples_per_pixel
+        ds.PhotometricInterpretation = photometric
+        if samples_per_pixel > 1:
+            # Obligatoire dès que SamplesPerPixel > 1 : 0 = interleaved
+            # (RGB RGB RGB), conforme à l'organisation mémoire (rows, cols, 3).
+            ds.PlanarConfiguration = 0
+        ds.BitsAllocated = bits_allocated
+        ds.BitsStored = bits_stored
+        ds.HighBit = bits_stored - 1
+        ds.PixelRepresentation = pixel_representation
+        ds.RescaleSlope = slope
+        ds.RescaleIntercept = intercept
+        ds.WindowCenter = 40.0
+        ds.WindowWidth = 400.0
+        ds.NumberOfFrames = "1"
+        if pixel_spacing is not None:
+            ds.PixelSpacing = [str(v) for v in pixel_spacing]
+        arr = np.asarray(pixel_array)
+        if samples_per_pixel > 1:
+            ds.PixelData = arr.tobytes()
+        elif bits_allocated == 16:
+            ds.PixelData = arr.astype("<u2").tobytes()
+        else:
+            ds.PixelData = arr.astype("uint8").tobytes()
+    
+        buffer = BytesIO()
+>       dcmwrite(buffer, ds, enforce_file_format=True)
+E       TypeError: dcmwrite() got an unexpected keyword argument 'enforce_file_format'
+
+tests\conftest.py:108: TypeError
+============================== warnings summary ===============================
+..\.venv312\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\.venv312\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/test_dicom_privacy.py::test_dicom_parse_never_exposes_raw_patient_identifiers
+tests/test_dicom_service.py::test_parse_monochrome_metadata_and_linear_buffer
+tests/test_dicom_service.py::test_linear_buffer_applies_rescale_slope_and_intercept
+tests/test_dicom_service.py::test_monochrome1_still_provides_linear_buffer
+tests/test_dicom_service.py::test_rgb_dicom_disables_linear_buffer
+tests/test_dicom_service.py::test_linear_buffer_fallback_when_too_large
+tests/test_dicom_service.py::test_compressed_jpeg_dicom
+  C:\Users\HP\Desktop\Projets\Stage-2026\hgg-ai-intership-project\.venv312\Lib\site-packages\pydicom\dataset.py:2249: DeprecationWarning: Starting in pydicom 3.0, Dataset.file_meta must be a FileMetaDataset class instance
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_dicom_privacy.py::test_dicom_parse_never_exposes_raw_patient_identifiers
+FAILED tests/test_dicom_service.py::test_parse_monochrome_metadata_and_linear_buffer
+FAILED tests/test_dicom_service.py::test_linear_buffer_applies_rescale_slope_and_intercept
+FAILED tests/test_dicom_service.py::test_monochrome1_still_provides_linear_buffer
+FAILED tests/test_dicom_service.py::test_rgb_dicom_disables_linear_buffer - T...
+FAILED tests/test_dicom_service.py::test_linear_buffer_fallback_when_too_large
+6 failed, 99 passed, 10 skipped, 8 warnings in 26.57s

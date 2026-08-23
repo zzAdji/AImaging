@@ -27,7 +27,32 @@ import {
   type ExamImage,
 } from "../lib/examinations";
 import { downloadJson } from "../lib/exportImage";
+import type { ExamSyncStatus } from "../lib/db/examinationStore";
 import { Button, Modal } from "./ui";
+
+/* --------------------------- Indicateur discret de sync -------------------- */
+
+/** État interne minimal exigé par SUITE.md §10 — une pastille, rien de plus. */
+function SyncBadge({ status }: { status: ExamSyncStatus }) {
+  const label =
+    status === "synced" ? "Saved"
+    : status === "syncing" ? "Syncing…"
+    : status === "error" ? "Sync error"
+    : "Local only";
+  const cls =
+    status === "synced" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+    : status === "syncing" ? "border-sky-500/30 bg-sky-500/10 text-sky-300 animate-pulse"
+    : status === "error" ? "border-red-500/40 bg-red-500/10 text-red-300"
+    : "border-border bg-btn text-ink-3";
+  return (
+    <span
+      data-attr="exam-sync-status"
+      className={cn("rounded-full border px-2 py-px text-[10px] font-medium", cls)}
+    >
+      {label}
+    </span>
+  );
+}
 
 /* ------------------------------- Header items ------------------------------- */
 
@@ -305,6 +330,7 @@ export function ExamsScreen({
   onOpenStandalone,
   onSignOut,
   userEmail,
+  syncStatus,
 }: {
   exams: Examination[];
   onCreateExam: (e: Examination) => void;
@@ -314,6 +340,8 @@ export function ExamsScreen({
   onOpenStandalone: () => void;
   onSignOut: () => void;
   userEmail: string;
+  /** État de synchronisation Supabase ; undefined = indicateur masqué. */
+  syncStatus?: ExamSyncStatus;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -510,7 +538,10 @@ export function ExamsScreen({
 
       {/* Content */}
       <main className="min-h-0 flex-1 overflow-y-auto px-6 pb-16 pt-6">
-        <h1 className="text-[17px] font-semibold tracking-tight">Recent examinations</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-[17px] font-semibold tracking-tight">Recent examinations</h1>
+          {syncStatus !== undefined && <SyncBadge status={syncStatus} />}
+        </div>
 
         {total === 0 && (
           <p className="mt-2 text-[12.5px] text-ink-3">
