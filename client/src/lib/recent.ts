@@ -10,8 +10,23 @@ export interface RecentFile {
   name: string;
   ts: number;
   hasHandle: boolean;
+  /**
+   * Phase Database 4 (§13) : le data URL n'est plus la source principale
+   * d'un fichier — simple cache de compatibilité. Les références distantes
+   * prennent le relais dès qu'elles sont connues.
+   */
   dataUrl?: string;
   dims?: { w: number; h: number };
+  imageId?: string;
+  examinationId?: string;
+  storagePath?: string;
+}
+
+/** Références distantes facultatives attachées à un fichier récent. */
+export interface RecentFileRefs {
+  imageId?: string;
+  examinationId?: string;
+  storagePath?: string;
 }
 
 export function getRecentFiles(): RecentFile[] {
@@ -25,9 +40,15 @@ export function getRecentFiles(): RecentFile[] {
   }
 }
 
-export function recordRecent(name: string, dataUrl: string, dims?: { w: number; h: number }, hasHandle = false): void {
+export function recordRecent(
+  name: string,
+  dataUrl: string,
+  dims?: { w: number; h: number },
+  hasHandle = false,
+  refs?: RecentFileRefs,
+): void {
   const list = getRecentFiles().filter((f) => f.name !== name);
-  list.unshift({ name, ts: Date.now(), hasHandle, dataUrl, dims });
+  list.unshift({ name, ts: Date.now(), hasHandle, dataUrl, dims, ...refs });
   try {
     localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, MAX_RECENT)));
   } catch {

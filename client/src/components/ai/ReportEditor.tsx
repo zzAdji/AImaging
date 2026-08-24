@@ -72,6 +72,23 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
           >
             Annuler
           </button>
+          {w.validateRadioReport !== undefined && !w.radioReportValidated && (
+            <button
+              type="button"
+              data-attr="report-validate"
+              title="Valider le rapport (action explicite du professionnel)"
+              onClick={() => w.validateRadioReport?.()}
+              className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-1.5 text-[12px] font-medium text-emerald-300 transition-colors duration-150 ease-out hover:bg-emerald-500/20"
+            >
+              <Check size={13} strokeWidth={2.4} className="mr-1 inline" />
+              Valider
+            </button>
+          )}
+          {w.radioReportValidated === true && (
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-px text-[10px] font-medium text-emerald-300">
+              Validé
+            </span>
+          )}
           <button
             type="button"
             data-attr="report-save"

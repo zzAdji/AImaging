@@ -54,3 +54,21 @@ export function getSupabaseClient(): AimagingSupabaseClient {
   return cachedClient;
 }
 
+/**
+ * Retourne l'identifiant de l'utilisateur authentifié (auth.uid()), ou lève
+ * une erreur explicite si aucune session n'est active — Phase Database 8 :
+ * c'est désormais la SEULE source d'identité (devAuth retiré du chemin actif).
+ */
+export async function getCurrentUserId(): Promise<string> {
+  const { data, error } = await getSupabaseClient().auth.getSession();
+  if (error) {
+    throw new Error(`[db] Lecture de session impossible : ${error.message}`);
+  }
+  if (!data.session?.user) {
+    throw new Error(
+      "[db] Aucun utilisateur authentifié : connectez-vous via Supabase Auth.",
+    );
+  }
+  return data.session.user.id;
+}
+

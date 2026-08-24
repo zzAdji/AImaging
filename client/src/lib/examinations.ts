@@ -119,9 +119,18 @@ export function isFetalUltrasoundExam(exam: Pick<Examination, "modality">): bool
 export const uid = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-export function loadExaminations(): Examination[] {
+/**
+ * Phase Database 8 : clé par utilisateur `aimaging.<userId>.examinations`
+ * afin d'isoler les caches locaux entre utilisateurs. Sans userId, on retombe
+ * sur la clé legacy EXAM_KEY — non destructif (données récupérables, §19).
+ */
+export function examinationsStorageKey(userId?: string | null): string {
+  return userId ? `aimaging.${userId}.examinations` : EXAM_KEY;
+}
+
+export function loadExaminations(userId?: string | null): Examination[] {
   try {
-    const raw = localStorage.getItem(EXAM_KEY);
+    const raw = localStorage.getItem(examinationsStorageKey(userId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -138,9 +147,9 @@ export function loadExaminations(): Examination[] {
   }
 }
 
-export function saveExaminations(list: Examination[]) {
+export function saveExaminations(list: Examination[], userId?: string | null) {
   try {
-    localStorage.setItem(EXAM_KEY, JSON.stringify(list));
+    localStorage.setItem(examinationsStorageKey(userId), JSON.stringify(list));
   } catch {
     /* storage full or unavailable */
   }
@@ -179,6 +188,22 @@ export function lastOpenedLabel(iso: string, archived: boolean): string {
 export interface ImportedImageBatch {
   images: ExamImage[];
   warnings: string[];
+  /**
+   * Phase Database 4 : fichiers originaux capturés à l'import, par image id
+   * (un DICOM multi-frames référence le même File pour chacune de ses frames).
+   * Transitoire — jamais sérialisé dans le cache local.
+   */
+  originalFiles: Map<string, File>;
+}
+
+/**
+ * Contexte optionnel d'une création d'examen côté UI :
+ * - originalFiles : octets originaux à uploader vers Storage ;
+ * - duplicatedFrom : duplication copy-on-duplicate depuis cet examen legacy.
+ */
+export interface CreateExamContext {
+  originalFiles?: Map<string, File>;
+  duplicatedFrom?: string;
 }
 
 function imageStem(filename: string): string {
@@ -237,6 +262,7 @@ async function readBrowserImage(file: File): Promise<ExamImage | null> {
 export async function readImportedImageFiles(files: File[] | FileList): Promise<ImportedImageBatch> {
   const out: ExamImage[] = [];
   const warnings: string[] = [];
+  const originalFiles = new Map<string, File>();
   const list = Array.from(files);
   for (const file of list) {
     if (isDicomFile(file)) {
@@ -277,10 +303,14 @@ export async function readImportedImageFiles(files: File[] | FileList): Promise<
       continue;
     }
     const image = await readBrowserImage(file);
-    if (image) out.push(image);
-    else warnings.push(`${file.name} : format non pris en charge.`);
+    if (image) {
+      out.push(image);
+      originalFiles.set(image.id, file);
+    } else {
+      warnings.push(`${file.name} : format non pris en charge.`);
+    }
   }
-  return { images: out, warnings };
+  return { images: out, warnings, originalFiles };
 }
 
 /** Compatibility helper for existing callers that do not need import diagnostics. */

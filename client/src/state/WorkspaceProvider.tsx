@@ -46,6 +46,22 @@ import {
   type LandmarkContours,
   type LandmarkOrganKey,
 } from "../lib/landmarkMeasure";
+import { isSupabaseConfigured } from "../lib/db/supabaseClient";
+import {
+  mergeRemoteShapes,
+  restoreEditorObjects,
+  scheduleLandmarkPersist,
+  scheduleShapesPersist,
+  type EditorShape,
+  type LandmarkMeasureInput,
+} from "../lib/db/editorPersistence";
+import { persistAnatomyRun } from "../lib/db/analysisRunService";
+import {
+  loadLatestRadioReport,
+  persistGeneratedRadioReport,
+  persistReportEdit,
+  validateReportById,
+} from "../lib/db/reportService";
 
 const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   document: false,
@@ -134,11 +150,15 @@ function loadShapeStyle(): ShapeStyle {
 export function WorkspaceProvider({
   children,
   autoRestore = true,
+  /** Phase Database 6 : legacy id de l'examen ouvert — requis pour rattacher
+   *  les analysis_runs ; null en éditeur autonome (pas de run persisté). */
+  persistenceExamId = null,
 }: {
   children: ReactNode;
   /** When true, the standalone editor restores the auto-saved document on mount.
    *  Disable when opening the editor with an examination image. */
   autoRestore?: boolean;
+  persistenceExamId?: string | null;
 }) {
   const [tool, setTool] = useState<WorkspaceState["tool"]>("move");
   const [selection, setSelection] = useState<string | null>("image");
@@ -611,6 +631,63 @@ export function WorkspaceProvider({
     };
   }, [landmarkBase, landmarkLineGeometry, landmarkResult, pixelSpacingMm]);
 
+  /* ---------------- Phase Database 5 : persistance annotations/mesures ----------------
+     Workflow imposé (SUITE.md §4/§9/§10) : state local → UI instantanée →
+     snapshot undo → flush débounced vers Supabase. Undo/redo reste 100 % local. */
+  const editorRestoringRef = useRef(false);
+  /* Phase Database 6 : contexte examen pour l'analyse_runs + id du dernier run
+     HybridGNet réussi, rattaché aux mesures persistées (reliquat Phase 5 corrigé). */
+  const persistenceExamIdRef = useRef<string | null>(persistenceExamId);
+  useEffect(() => {
+    persistenceExamIdRef.current = persistenceExamId;
+  }, [persistenceExamId]);
+  const [landmarkRunId, setLandmarkRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!imageId || !isSupabaseConfigured) return;
+    let cancelled = false;
+    editorRestoringRef.current = true;
+    restoreEditorObjects(imageId)
+      .then((restored) => {
+        if (cancelled || restored === null || restored.shapes.length === 0) return;
+        /* LWW §21 : le distant remplace les ids communs ; les shapes
+           locale-only sont conservées (aucune perte automatique). */
+        commit(mergeRemoteShapes(shapesRef.current, restored.shapes as EditorShape[]) as unknown as Shape[]);
+      })
+      .catch((exc: unknown) => {
+        console.error("[db] Restauration des annotations impossible (cache local utilisé).", exc);
+      })
+      .finally(() => {
+        if (!cancelled) editorRestoringRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageId]);
+
+  useEffect(() => {
+    if (editorRestoringRef.current || !imageId) return;
+    scheduleShapesPersist(imageId, shapes as EditorShape[]);
+  }, [shapes, imageId]);
+
+  useEffect(() => {
+    if (!imageId || !landmarkLive) return;
+    const inputs: LandmarkMeasureInput[] = Object.entries(landmarkLive.measurements).map(
+      ([key, raw]) => {
+        const entry = raw as { value: number; std?: number; unit: string; label?: string };
+        return {
+          key,
+          label: entry.label ?? key,
+          value: entry.value,
+          std: entry.std,
+          unit: entry.unit,
+        };
+      },
+    );
+    if (inputs.length > 0) scheduleLandmarkPersist(imageId, inputs, { analysisRunId: landmarkRunId });
+  }, [landmarkLive, imageId, landmarkRunId]);
+
   /* L'étiquette CTR posée sur le canvas suit les droites en temps réel.
      Mise à jour directe via commit() : pas d'entrée dans l'historique
      d'annulation pendant le drag. */
@@ -904,6 +981,62 @@ export function WorkspaceProvider({
   }, []);
   const [aiFocus, setAiFocus] = useState<AiFocus | null>(null);
   const [aiThought, setAiThought] = useState<{ id: string; text: string } | null>(null);
+  /* ---------------- Phase Database 7 : reports persistés ----------------
+     Génération IA ⇒ NOUVEAU report needs_review (§10) ; édition ⇒ update
+     débounced du report courant ; validation = action explicite (§18). */
+  const [radioReport, setRadioReport] = useState<{ id: string; status: "draft" | "generated" | "needs_review" | "validated" } | null>(null);
+  const lastPersistedReportTextRef = useRef<string>("");
+  const reportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!persistenceExamId || !isSupabaseConfigured) return;
+    let cancelled = false;
+    loadLatestRadioReport(persistenceExamId)
+      .then((row) => {
+        if (cancelled || row === null || row.type !== "radiography_ai") return;
+        setRadioReport({ id: row.id, status: row.status as "draft" | "generated" | "needs_review" | "validated" });
+        setAiResults((r) => (r.report === null ? { ...r, report: row.content ?? "" } : r));
+        lastPersistedReportTextRef.current = row.content ?? "";
+      })
+      .catch((exc: unknown) => console.error("[db] Chargement du dernier rapport impossible.", exc));
+    return () => {
+      cancelled = true;
+    };
+  }, [persistenceExamId]);
+
+  /* Nouvelle génération IA (texte différent) ⇒ nouveau report needs_review (§10). */
+  useEffect(() => {
+    const examId = persistenceExamIdRef.current;
+    const text = aiResults.report;
+    if (!examId || !text || text === lastPersistedReportTextRef.current) return;
+    lastPersistedReportTextRef.current = text;
+    void persistGeneratedRadioReport(
+      examId,
+      imageIdRef.current ? [imageIdRef.current] : [],
+      {
+        fields: {},
+        coherencePassed: true,
+        coherenceIssues: [],
+        renderedText: text,
+        ensemblePrediction: aiResults.diagnostics[0]?.label ?? null,
+        numModels: aiResults.modelCount,
+      },
+    )
+      .then((row) => {
+        if (row !== null) setRadioReport({ id: row.id, status: "needs_review" });
+      })
+      .catch((exc: unknown) => console.error("[db] Rapport non persisté.", exc));
+  }, [aiResults.report]);
+
+  const validateRadioReport = useCallback(() => {
+    if (!radioReport) return;
+    setRadioReport({ ...radioReport, status: "validated" });
+    void validateReportById(radioReport.id).catch((exc: unknown) => {
+      console.error("[db] Validation du rapport non persistée.", exc);
+      if (radioReport) setRadioReport({ ...radioReport, status: "needs_review" });
+    });
+  }, [radioReport]);
+
   const [reportEditOpen, setReportEditOpen] = useState(false);
   const [reportDraft, setReportDraft] = useState("");
   const aiTimer = useRef<number | null>(null);
@@ -931,7 +1064,22 @@ export function WorkspaceProvider({
   const saveReportDraft = useCallback(() => {
     setAiResults((r) => ({ ...r, report: reportDraft }));
     setReportEditOpen(false);
-  }, [reportDraft]);
+    /* Phase Database 7 : édition ⇒ update débounced du report courant (§9/§10).
+       Une édition d'un rapport validé le repasse en needs_review (§5). */
+    if (!radioReport || !isSupabaseConfigured) return;
+    const wasValidated = radioReport.status === "validated";
+    if (wasValidated) setRadioReport({ ...radioReport, status: "needs_review" });
+    if (reportSaveTimerRef.current !== null) clearTimeout(reportSaveTimerRef.current);
+    const content = reportDraft;
+    const statusAtSave: "draft" | "generated" | "needs_review" | "validated" =
+      wasValidated ? "needs_review" : radioReport.status;
+    reportSaveTimerRef.current = setTimeout(() => {
+      reportSaveTimerRef.current = null;
+      void persistReportEdit(radioReport.id, content, statusAtSave).catch(
+        (exc: unknown) => console.error("[db] Édition du rapport non persistée.", exc),
+      );
+    }, 800);
+  }, [reportDraft, radioReport]);
 
   const focusAiRegion = useCallback((r: { x: number; y: number; w: number; h: number }) => {
     setAiFocus({ ...r, ts: Date.now() });
@@ -1324,6 +1472,32 @@ export function WorkspaceProvider({
       adoptModelContours(landmarks);
       placeLandmarkMeasurements();
 
+      /* Phase Database 6 : runs RÉELS cxas + hybridgnet tracés par source
+         (§11/§12). Aucun run quality/plane/FetalCLIP/anomaly : mockés ou absents. */
+      const examIdForRuns = persistenceExamIdRef.current;
+      if (examIdForRuns !== null) {
+        if (cx?.status === "ok") {
+          void persistAnatomyRun("cxas", examIdForRuns, imageIdValue, {
+            generated_at: response.generated_at,
+            inference_time_ms: cx.inference_time_ms ?? null,
+            warnings: cx.payload.warnings ?? [],
+            segmentation_labels: Object.keys(cx.payload.segmentation?.areas_px ?? {}),
+          }).catch((exc: unknown) => console.error("[db] Run CXAS non persisté.", exc));
+        }
+        if (landmarks.status === "ok") {
+          void persistAnatomyRun("hybridgnet", examIdForRuns, imageIdValue, {
+            generated_at: landmarks.generated_at,
+            inference_time_ms: landmarks.inference_time_ms ?? null,
+            ctr_method: landmarks.ctr_method,
+            warnings: landmarks.warnings,
+          })
+            .then((runId) => {
+              if (runId !== null) setLandmarkRunId(runId);
+            })
+            .catch((exc: unknown) => console.error("[db] Run HybridGNet non persisté.", exc));
+        }
+      }
+
       return true;
     } catch (exc) {
       const message = exc instanceof Error ? exc.message : "Analyse anatomique impossible.";
@@ -1385,6 +1559,22 @@ export function WorkspaceProvider({
       landmarkResultRef.current = response.result;
       setLandmarkResultState(response.result);
       adoptModelContours(response.result);
+
+      /* Phase Database 6 : run hybridgnet réel + rattachement aux mesures. */
+      const examIdForRuns = persistenceExamIdRef.current;
+      if (examIdForRuns !== null && response.result.status === "ok") {
+        void persistAnatomyRun("hybridgnet", examIdForRuns, imageIdValue, {
+          generated_at: response.result.generated_at,
+          inference_time_ms: response.result.inference_time_ms ?? null,
+          ctr_method: response.result.ctr_method,
+          warnings: response.result.warnings,
+        })
+          .then((runId) => {
+            if (runId !== null) setLandmarkRunId(runId);
+          })
+          .catch((exc: unknown) => console.error("[db] Run HybridGNet non persisté.", exc));
+      }
+
       if (options?.autoPlace !== false) {
         /* Placement automatique des mesures sur l'image uniquement en usage
            manuel ; la chaîne automatique au chargement garde le canvas propre
@@ -2017,7 +2207,10 @@ const closeDocument = useCallback(() => {
       reportEditOpen, setReportEditOpen,
       reportDraft, setReportDraft,
       openReportEditor,
-      saveReportDraft,      cursorPos,
+      saveReportDraft,
+      radioReportValidated: radioReport?.status === "validated",
+      validateRadioReport,
+      cursorPos,
       setCursorPos,
 imageSrc,
       setImageSrc,
@@ -2084,6 +2277,7 @@ imageSrc,
       setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,
+      radioReport, validateRadioReport,
       cursorPos, setCursorPos, imageSrc, renderSrc, dicomLinear, setDicomLinear, imageId, setImageId, imageIdRef, imageName, imageMetadata, setImageMetadata, openImageData,
       closeDocument, saveDocument, captureImageState, applyImageState, fitSignal, requestFit,
       layers, setLayerVisible, setLayerLocked, setLayerName, setLayerOpacity,

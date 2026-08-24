@@ -2,32 +2,54 @@ import { useState, type FormEvent } from "react";
 import { cn } from "../lib/cn";
 
 export function LoginScreen({
-  onLogin,
-  initialEmail,
+  onSubmit,
+  onForgotPassword,
 }: {
-  onLogin: (email: string, remember: boolean) => void;
-  initialEmail?: string;
+  /**
+   * Phase Database 8 : la soumission délègue à Supabase Auth
+   * (signInWithPassword). Toute erreur est déjà traduite en message clair
+   * par la couche service — jamais d'exception brute affichée.
+   */
+  onSubmit: (email: string, password: string, remember: boolean) => Promise<void>;
+  onForgotPassword?: (email: string) => Promise<void>;
 }) {
-  const [email, setEmail] = useState(initialEmail ?? "");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
+  const [pending, setPending] = useState(false);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password) {
       setError("Enter your email and password.");
       return;
     }
     setError(null);
-    onLogin(email.trim(), remember);
+    setPending(true);
+    try {
+      await onSubmit(email.trim(), password, remember);
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : "Connexion impossible.");
+    } finally {
+      setPending(false);
+    }
   };
 
-  const forgot = () => {
-    setResetSent(Boolean(email.trim()));
-    if (email.trim()) setError(null);
-    else setError("Enter your email first.");
+  const forgot = async () => {
+    if (!onForgotPassword) return;
+    if (!email.trim()) {
+      setError("Enter your email first.");
+      return;
+    }
+    setError(null);
+    try {
+      await onForgotPassword(email.trim());
+      setResetSent(true);
+    } catch (exc: unknown) {
+      setError(exc instanceof Error ? exc.message : "Envoi impossible.");
+    }
   };
 
   const inputCls = (extra = "") =>
@@ -126,10 +148,11 @@ export function LoginScreen({
         >
           <button
             type="submit"
+            disabled={pending}
             data-attr="login-submit"
-            className="w-full rounded-[14px] bg-[#3B82F6] py-2.5 text-[13.5px] font-medium text-white transition-all duration-150 ease-out hover:bg-[#4f8ef7] active:bg-[#2563eb] hover:shadow-lg hover:shadow-accent/20"
+            className="w-full rounded-[14px] bg-[#3B82F6] py-2.5 text-[13.5px] font-medium text-white transition-all duration-150 ease-out hover:bg-[#4f8ef7] active:bg-[#2563eb] hover:shadow-lg hover:shadow-accent/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Sign in
+            {pending ? "Signing in…" : "Sign in"}
           </button>
         </div>
       </form>

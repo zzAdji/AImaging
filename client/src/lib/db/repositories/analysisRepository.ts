@@ -15,6 +15,7 @@ import type {
   AnalysisRunUpdate,
   ClassificationResultInsert,
   ClassificationResultRow,
+  Json,
 } from "../types";
 import { queryExecuted, queryMany, queryMaybeOne, queryOne } from "../repositoryUtils";
 
@@ -71,6 +72,30 @@ export async function deleteAnalysisRun(id: string): Promise<boolean> {
   return queryExecuted("analysis_runs.delete", () =>
     getSupabaseClient().from(RUNS).delete().eq("id", id),
   );
+}
+
+/** Passe le run en `running` (début d'exécution effective). */
+export async function markRunning(id: string, startedAt?: string): Promise<AnalysisRunRow> {
+  return updateAnalysisRun(id, { status: "running", started_at: startedAt ?? new Date().toISOString() });
+}
+
+/** Termine un run en `done`, avec métadonnées de résultats/artefacts. */
+export async function markDone(id: string, metadata?: Json, completedAt?: string): Promise<AnalysisRunRow> {
+  return updateAnalysisRun(id, {
+    status: "done",
+    completed_at: completedAt ?? new Date().toISOString(),
+    ...(metadata !== undefined ? { metadata } : {}),
+  });
+}
+
+/** Termine un run en `error` avec message exploitable (§22). */
+export async function markError(id: string, errorMessage: string): Promise<AnalysisRunRow> {
+  return updateAnalysisRun(id, { status: "error", error_message: errorMessage, completed_at: new Date().toISOString() });
+}
+
+/** Marque un run `rejected` (fail-closed opencxr, §13) sans message d'erreur système. */
+export async function markRejected(id: string, reason: string): Promise<AnalysisRunRow> {
+  return updateAnalysisRun(id, { status: "rejected", error_message: reason, completed_at: new Date().toISOString() });
 }
 
 /* --------------------------- classification_results ------------------------- */

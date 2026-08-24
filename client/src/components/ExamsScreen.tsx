@@ -23,6 +23,7 @@ import {
   lastOpenedLabel,
   readImportedImageFiles,
   uid,
+  type CreateExamContext,
   type Examination,
   type ExamImage,
 } from "../lib/examinations";
@@ -333,7 +334,7 @@ export function ExamsScreen({
   syncStatus,
 }: {
   exams: Examination[];
-  onCreateExam: (e: Examination) => void;
+  onCreateExam: (e: Examination, context?: CreateExamContext) => void;
   onUpdateExam: (id: string, patch: Partial<Examination>) => void;
   onDeleteExam: (id: string) => void;
   onOpenExam: (id: string) => void;
@@ -381,15 +382,18 @@ export function ExamsScreen({
     setImportNotices([...imported.warnings, ...inspectExamConsistency(imgs).map((issue) => issue.message)]);
     if (imgs.length === 0) return;
     const now = new Date().toISOString();
-    onCreateExam({
-      id: uid(),
-      name: `Examination ${now.slice(0, 10).replace(/-/g, "_")}`,
-      modality: "Radiography",
-      images: imgs,
-      createdAt: now,
-      lastOpenedAt: now,
-      archived: false,
-    });
+    onCreateExam(
+      {
+        id: uid(),
+        name: `Examination ${now.slice(0, 10).replace(/-/g, "_")}`,
+        modality: "Radiography",
+        images: imgs,
+        createdAt: now,
+        lastOpenedAt: now,
+        archived: false,
+      },
+      { originalFiles: imported.originalFiles },
+    );
   };
 
   const ctxAction = (key: string, id: string) => {
@@ -401,15 +405,19 @@ export function ExamsScreen({
         setRenameId(id);
         break;
       case "duplicate":
-        onCreateExam({
-          ...exam,
-          id: uid(),
-          name: `${exam.name} (copy)`,
-          images: exam.images.map((i) => ({ ...i, id: uid(), state: undefined })),
-          createdAt: new Date().toISOString(),
-          lastOpenedAt: new Date().toISOString(),
-          archived: false,
-        });
+        /* Phase Database 4 : duplication copy-on-duplicate validée (§17 A). */
+        onCreateExam(
+          {
+            ...exam,
+            id: uid(),
+            name: `${exam.name} (copy)`,
+            images: exam.images.map((i) => ({ ...i, id: uid(), state: undefined })),
+            createdAt: new Date().toISOString(),
+            lastOpenedAt: new Date().toISOString(),
+            archived: false,
+          },
+          { duplicatedFrom: exam.id },
+        );
         break;
       case "export":
         downloadJson(

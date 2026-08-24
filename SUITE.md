@@ -1,672 +1,843 @@
-# AIMAGING — PHASE DATABASE 4
-# MIGRATION DES IMAGES VERS SUPABASE STORAGE
+# AIMAGING — PHASE DATABASE 9
+# FINALISATION DE LA PERSISTANCE ET DU WORKSPACE BACKEND
 #
 # OBJECTIF :
-# remplacer progressivement le stockage local des images par
-# Supabase Storage + examination_images, sans encore migrer
-# les annotations, mesures, résultats IA ou rapports.
+# finaliser l'architecture de persistance AImaging maintenant que :
+#
+# - Supabase PostgreSQL existe ;
+# - Supabase Storage existe ;
+# - les examens sont persistants ;
+# - les images sont dans Storage ;
+# - annotations/mesures sont persistantes ;
+# - analysis_runs sont persistants ;
+# - classification_results sont persistants ;
+# - rapports sont persistants ;
+# - Supabase Auth est actif ;
+# - RLS est en place.
+#
+# Cette phase doit maintenant :
+#
+# 1. exécuter les tests Supabase réels ;
+# 2. identifier exactement ce qui reste dans localStorage ;
+# 3. supprimer progressivement uniquement ce qui est devenu redondant ;
+# 4. décider et implémenter une vraie stratégie de persistance
+#    du WorkspaceStore backend ;
+# 5. conserver un cache local uniquement lorsqu'il a une vraie
+#    raison technique d'exister.
 #
 # IMPORTANT :
-# La Phase Database 3 est terminée.
+# NE PAS ajouter de nouvelle fonctionnalité IA.
+# NE PAS implémenter l'anomaly detection.
+# NE PAS poursuivre DeepFetal multimodal.
+# NE PAS implémenter PACS.
+# NE PAS implémenter RAG.
+# NE PAS déployer en production.
+# NE PAS réintroduire la 3D.
 #
-# Les examens sont maintenant persistés dans Supabase.
-#
-# Les images restent encore locales :
-# - data URLs ;
-# - rendered DICOM frames ;
-# - cache local.
-#
-# Cette phase a UN SEUL objectif :
-#
-# IMAGE FILE
-#     ↓
-# SUPABASE STORAGE
-#     ↓
-# examination_images
-#     ↓
-# application
-#
-# NE PAS migrer :
-# - annotations
-# - measurements
-# - analysis_runs
-# - classification_results
-# - Grad-CAM
-# - reports
-# - WorkspaceStore
-# - FetalExamProvider
-# - authentification complète
-# - IA
-# - CXAS
-# - HybridGNet
-# - DeepFetal
-# - 3D
-#
-# La 3D est définitivement hors périmètre.
+# La 3D est définitivement abandonnée.
 
 ==================================================
 1. ÉTAT ACTUEL
 ==================================================
 
-La Phase 2 a créé :
+Les phases précédentes ont mis en place :
 
-- Supabase PostgreSQL
-- RLS
-- Storage
-- repositories
-- types
+SUPABASE DATABASE
 
-La Phase 3 a migré :
+profiles
+workspaces
+examinations
+examination_images
+annotations
+measurements
+analysis_runs
+classification_results
+reports
 
-- workspaces
-- examinations
-
-vers Supabase.
-
-Le frontend continue à fonctionner avec un cache local
-pour les données non encore migrées.
-
-L'objectif de cette phase est maintenant de migrer
-les FICHIERS IMAGES.
-
-==================================================
-2. AUDIT AVANT MODIFICATION
-==================================================
-
-Inspecter :
-
-client/src/lib/examinations.ts
-client/src/App.tsx
-client/src/lib/recent.ts
-client/src/lib/dicom.ts
-client/src/lib/dicomRenderer.ts
-client/src/state/WorkspaceProvider.tsx
-client/src/components/ExamsScreen.tsx
-client/src/lib/db/repositories/imageRepository.*
-client/src/lib/db/repositories/examinationRepository.*
-
-Identifier précisément :
-
-- comment les images sont importées ;
-- où le File original existe ;
-- comment le data URL est créé ;
-- comment une image est restaurée ;
-- comment les dimensions sont stockées ;
-- comment le DICOM est traité ;
-- comment les frames sont gérées ;
-- comment une image est affichée après rechargement.
-
-NE MODIFIE RIEN avant cet audit.
-
-==================================================
-3. OBJECTIF DE STOCKAGE
-==================================================
-
-Les fichiers physiques doivent désormais aller dans :
-
-Supabase Storage
-
-Bucket :
+SUPABASE STORAGE
 
 medical-images
+analysis-artifacts
+reports
 
-Structure :
+SUPABASE AUTH
 
-medical-images/
-  {user_id}/
-    {workspace_id}/
-      {examination_id}/
-        images/
-          {image_id}/
-            {filename}
+auth.users
+profiles
+auth.uid()
 
-La table :
+FRONTEND
 
-examination_images
+- Editor
+- Radiography
+- Fetal Ultrasound UI
+- Annotations
+- Measurements
+- AI Workspace
+- Reports
 
-conserve les métadonnées.
+Le système possède encore certains mécanismes locaux :
 
-AUCUNE image ne doit être stockée comme :
-
-- base64 ;
-- data URL ;
-- bytea ;
-- JSON énorme.
-
-==================================================
-4. IMAGE RECORD
-==================================================
-
-Pour chaque fichier importé :
-
-1. obtenir ou créer examination_image.id ;
-2. construire son storage_path ;
-3. upload vers Storage ;
-4. enregistrer storage_path dans PostgreSQL ;
-5. enregistrer les métadonnées ;
-6. conserver temporairement le cache local nécessaire au rendu.
-
-Exemple de record :
-
-{
-  id,
-  examination_id,
-  filename,
-  storage_path,
-  mime_type,
-  width,
-  height,
-  sort_order,
-  source_kind,
-  metadata
-}
+- localStorage legacy ;
+- cache d'examens ;
+- document local ;
+- récents ;
+- préférences ;
+- quelques résultats runtime ;
+- WorkspaceStore mémoire côté backend.
 
 ==================================================
-5. IMPORTANT — NE PAS SUPPRIMER IMMÉDIATEMENT LE CACHE LOCAL
+2. PHASE 9A — TESTS LIVE OBLIGATOIRES
 ==================================================
 
-Pendant cette phase :
+AVANT toute suppression ou migration :
 
-Supabase Storage = source persistante du fichier
+vérifier que les credentials Supabase de développement
+sont réellement configurés.
 
-localStorage / mémoire = cache de compatibilité
+Créer/valider :
 
-Le but est d'éviter toute régression.
+USER A
+USER B
 
-Le système doit donc pouvoir :
+Puis exécuter réellement :
 
-READ
+AUTH
 
-Supabase Storage
-   ↓
-si disponible → image
-   ↓
-sinon → cache local fallback
+A login
+B login
+logout
+session restore
 
-WRITE
+DATABASE
 
-import
-   ↓
-upload Storage
-   ↓
-insert/update examination_images
-   ↓
-mettre à jour cache local
+workspace CRUD
+examination CRUD
+image metadata
+annotation CRUD
+measurement CRUD
+analysis run CRUD
+classification results
+report CRUD
 
-==================================================
-6. IMPORT D'IMAGE
-==================================================
+STORAGE
 
-Modifier progressivement le workflow :
+medical-images
+analysis-artifacts
+reports
 
-Import image
-↓
-validation fichier
-↓
-création record examination_images
-↓
-upload Storage
-↓
-metadata DB
-↓
-affichage canvas
+RLS
 
-L'interface ne doit pas changer.
+USER A
+→ voit uniquement A
 
-Les cartes, filmstrip, canvas et outils existants
-doivent rester identiques.
+USER B
+→ voit uniquement B
 
-==================================================
-7. UPLOAD SÉCURISÉ
-==================================================
+TESTER :
 
-Les buckets sont privés.
+SELECT
+INSERT
+UPDATE
+DELETE
 
-NE PAS rendre medical-images public.
+Ne jamais utiliser service_role pour valider le comportement RLS.
 
-Utiliser les mécanismes Supabase adaptés
-aux fichiers privés.
+Si les tests live échouent :
 
-Ne jamais exposer une clé service_role.
+ARRÊTER la migration.
 
-Les chemins Storage doivent être dérivés des IDs
-réellement autorisés.
-
-NE JAMAIS accepter un user_id arbitraire envoyé
-par le frontend pour contourner les policies.
+Corriger la sécurité avant de supprimer le stockage local.
 
 ==================================================
-8. TYPES DE FICHIERS
+3. PHASE 9B — AUDIT COMPLET DU LOCALSTORAGE
 ==================================================
 
-Préserver le support actuel pour :
+Inventorier toutes les clés restantes.
 
-- JPEG
-- PNG
-- DICOM
+Chercher :
 
-Ne change pas le comportement de lecture DICOM existant.
+localStorage
+sessionStorage
+IndexedDB
 
-IMPORTANT :
+Créer une matrice :
 
-Pour les DICOM :
+| Clé | Contenu | Source de vérité | Peut être supprimée ? | Justification |
+|---|---|---|---|---|
 
-ne pas supprimer la logique actuelle de pseudonymisation.
+Inclure notamment :
 
-Le stockage du fichier original et les métadonnées pseudonymisées
-doivent rester séparés.
+aimaging.examinations
+aimaging.document
+aimaging.prefs
+aimaging.shapeStyle
+aimaging.cardOrder
+aimaging.aiCommands
+aimaging.recentFiles
+IndexedDB aimaging-fs
+autres clés découvertes
 
-Ne jamais exposer inutilement :
-
-PatientName
-PatientID
-etc.
+NE SUPPRIME RIEN avant cette analyse.
 
 ==================================================
-9. DICOM
+4. CLASSIFICATION DU STOCKAGE LOCAL
 ==================================================
 
-Le système actuel peut produire des frames/renders.
+Pour chaque donnée locale, décider :
 
-Avant modification, déterminer exactement :
+A. PERSISTANCE MÉTIER
+→ doit être dans Supabase
 
-- ce qui doit être conservé comme source ;
-- ce qui doit être dérivé ;
-- ce qui doit rester en mémoire.
+B. CACHE
+→ peut rester localement
 
-Objectif cible :
+C. PRÉFÉRENCE UI
+→ peut rester localement
 
-Original DICOM
+D. DONNÉE TEMPORAIRE
+→ ne doit pas être persistée
+
+Exemples :
+
+Examens
+→ Supabase
+
+Images
 → Storage
 
-Métadonnées pseudonymisées
-→ PostgreSQL
+Annotations
+→ Supabase
 
-Rendered frame
-→ cache/dérivé si nécessaire
+Measurements
+→ Supabase
 
-LinearImageBuffer
-→ NE PAS persister
+AI results
+→ Supabase
 
-Ne pas transformer automatiquement tous les frames
-en fichiers indépendants en base si cela n'est pas nécessaire
-à l'architecture actuelle.
+Reports
+→ Supabase
 
-Présenter ton choix avant implémentation si ambigu.
+Undo/redo
+→ local
 
-==================================================
-10. UPLOAD ATOMIQUE
-==================================================
+Clipboard
+→ local
 
-Éviter les états incohérents.
+Theme
+→ local
 
-Le flux doit être :
+UI preferences
+→ local
 
-1. créer/valider l'identité du fichier ;
-2. upload Storage ;
-3. créer/mettre à jour le record DB ;
-4. retourner le record complet.
-
-Si l'upload réussit mais que l'insert DB échoue :
-
-gérer explicitement le nettoyage du fichier orphelin.
-
-Si l'insert DB réussit mais que l'upload échoue :
-
-ne jamais présenter l'image comme synchronisée.
-
-Aucune erreur silencieuse.
+Recent files
+→ local/cache
 
 ==================================================
-11. ÉTAT DE SYNCHRONISATION
+5. AIMAGING.EXAMINATIONS
 ==================================================
 
-Réutiliser le système existant :
+Après validation que Supabase contient bien les examens :
 
-synced
-syncing
-error
-local-only
+NE PLUS considérer :
+
+aimaging.examinations
+
+comme source de vérité.
+
+Il peut rester temporairement comme backup de migration.
+
+Créer une migration :
+
+legacy localStorage
+→ Supabase
+
+puis :
+
+Supabase
+→ application
+
+Le fallback ne doit être utilisé que :
+
+- hors ligne ;
+- erreur Supabase ;
+- migration legacy.
+
+Il ne doit pas masquer silencieusement une panne.
+
+==================================================
+6. CACHE EXAMENS
+==================================================
+
+Le cache local doit être séparé du stockage métier.
+
+Par exemple :
+
+Supabase
+= source
+
+local cache
+= performance/fallback
+
+Le cache doit être invalide lorsque :
+
+- changement utilisateur ;
+- modification d'un examen distant ;
+- logout ;
+- suppression d'un examen.
+
+Ne pas conserver des données sensibles
+d'un utilisateur dans le cache d'un autre.
+
+==================================================
+7. AIMAGING.DOCUMENT
+==================================================
+
+Analyser précisément :
+
+aimaging.document
+
+Ce document est aujourd'hui une deuxième représentation
+de l'état de l'éditeur.
+
+Identifier ce qui est désormais redondant avec :
+
+examination_images
+annotations
+measurements
+
+et ce qui doit rester runtime.
+
+Objectif :
+
+NE PAS supprimer brutalement.
+
+Migrer seulement les données qui ont une équivalence
+claire dans Supabase.
 
 Exemple :
 
-image uploading...
-image synced
-image sync error
-local cached
+shapes
+→ annotations
 
-Ne pas afficher "Saved" si le fichier n'existe
-que localement alors que Supabase est disponible.
+measurement
+→ measurements
 
-==================================================
-12. FILMSTRIP / ÉDITEUR
-==================================================
+display settings
+→ runtime/local preferences selon pertinence
 
-Le rendu actuel de l'éditeur doit rester identique.
-
-Le remplacement :
-
-dataUrl
-→
-Storage URL
-
-ne doit pas changer :
-
-- le zoom ;
-- le pan ;
-- les outils ;
-- les annotations ;
-- le fenêtrage ;
-- les mesures ;
-- la command bar.
-
-Si l'application a besoin d'un data URL pour CanvasViewport,
-créer une fonction de chargement temporaire :
-
-storage object
-→ Blob
-→ object URL / data URL
-→ renderer
-
-Mais ne pas réécrire le viewer.
+Les buffers de pixels et états de rendu
+restent temporaires.
 
 ==================================================
-13. RECENT FILES
+8. PRÉFÉRENCES
 ==================================================
 
-Examiner :
+Conserver localement si ce sont réellement des préférences :
 
-lib/recent.ts
+aimaging.prefs
+aimaging.shapeStyle
+aimaging.cardOrder
+aimaging.theme
+aimaging.aiCommands
 
-Ne plus considérer le data URL comme la source principale
-d'un fichier.
+Ne pas migrer inutilement ces données vers PostgreSQL.
 
-Conserver éventuellement :
+Si les préférences sont déjà prévues dans :
 
-- filename ;
-- examination_id ;
-- image_id ;
-- storage_path ;
-- timestamp.
+profiles.ui_preferences
 
-Les handles IndexedDB peuvent rester en compatibilité
-pendant cette phase.
-
-Ne pas casser Ctrl+O / récents.
+il est possible de les migrer plus tard,
+mais ce n'est PAS obligatoire dans cette phase.
 
 ==================================================
-14. MIGRATION DES IMAGES EXISTANTES
+9. RECENT FILES / INDEXEDDB
 ==================================================
 
-Créer un script ou une fonction de migration idempotente.
+Conserver les récents comme cache local.
 
-Entrée :
+Mais :
 
-anciens examens localStorage / cache local.
+ne jamais conserver un gros data URL
+comme source principale d'une image.
 
-Pour chaque image :
+Les récents doivent référencer :
 
-1. identifier examination.legacy_id ;
-2. retrouver examination UUID ;
-3. retrouver/créer examination_images ;
-4. convertir le contenu vers un Blob/File si nécessaire ;
-5. upload Storage ;
-6. enregistrer storage_path ;
-7. marquer comme synchronisé.
+examination_id
+image_id
+storage_path
+filename
 
-NE PAS supprimer immédiatement les données locales.
-
-La suppression du cache sera faite dans une phase ultérieure
-après validation.
+lorsque disponibles.
 
 ==================================================
-15. DÉDOUBLONNAGE / ID CHEMINS
+10. AUDIT WORKSPACE STORE
 ==================================================
 
-Le stockage doit être idempotent.
+Analyser maintenant :
 
-Une relance du processus ne doit pas créer des centaines
-de fichiers identiques.
+server/workspace_store.py
 
-Utiliser :
+et toutes les routes qui l'utilisent.
 
+Identifier exactement les données suivantes :
+
+manifest
+turns
+audit
+active_image
+images
+canvas state
+agent history
+temporary execution state
+
+Classer :
+
+A. doit être persistant
+B. doit rester runtime
+C. doit être dérivé de Supabase
+D. peut être supprimé
+
+NE REMPLACE PAS LE WORKSPACE STORE
+AVANT CETTE ANALYSE.
+
+==================================================
+11. OBJECTIF DU WORKSPACE STORE
+==================================================
+
+Le WorkspaceStore ne doit PAS devenir
+une deuxième base de données parallèle.
+
+Supabase doit être la source de vérité des données métier.
+
+WorkspaceStore doit idéalement devenir :
+
+SESSION RUNTIME
+
+et non :
+
+DATABASE
+
+Il peut conserver temporairement :
+
+- active image ;
+- active tool ;
+- AI transaction ;
+- conversation en cours ;
+- état d'exécution ;
+- progression ;
+- contexte agent ;
+- données temporaires nécessaires au calcul.
+
+Il ne doit pas dupliquer inutilement :
+
+- examinations ;
+- images ;
+- annotations ;
+- measurements ;
+- analysis runs ;
+- reports.
+
+==================================================
+12. NOUVELLE ABSTRACTION SI NÉCESSAIRE
+==================================================
+
+Si l'audit montre qu'un remplacement est nécessaire :
+
+créer une abstraction :
+
+WorkspaceRuntime
+
+ou équivalent.
+
+Elle doit séparer :
+
+PERSISTED STATE
+vs
+RUNTIME STATE
+
+Exemple :
+
+Persisted
+- examination
+- image metadata
+- annotations
+- measurements
+- analyses
+- reports
+
+Runtime
+- activeImage
+- tool
+- selection
+- AI thought
+- loading
+- undo/redo
+- transient transaction
+
+NE PAS transformer tous les deux en une seule structure.
+
+==================================================
+13. ROUTES BACKEND
+==================================================
+
+Auditer les routes workspace existantes.
+
+Certaines routes utilisent encore le WorkspaceStore
+uniquement comme contexte.
+
+Modifier les routes uniquement si nécessaire.
+
+Objectif :
+
+route reçoit :
+examination_id
 image_id
 
-comme élément stable du chemin.
+puis récupère les données persistantes depuis Supabase
+si nécessaire.
 
-Éventuellement utiliser une empreinte du fichier pour
-détecter les doublons, mais uniquement si cela s'intègre
-proprement au modèle existant.
-
-Ne pas inventer un système de déduplication complexe
-sans besoin.
+Ne pas faire de gros refactoring de main.py
+sans nécessité.
 
 ==================================================
-16. SUPPRESSION
+14. AGENT IA
 ==================================================
 
-Avant migration :
+Le contexte envoyé à l'agent doit être basé prioritairement
+sur les données persistées pertinentes :
 
-delete examination
-→ delete local object
+- image ;
+- analysis runs ;
+- measurements ;
+- annotations ;
+- report.
 
-Après migration :
+Le WorkspaceStore peut conserver le contexte temporaire
+de la conversation.
 
-delete examination
-→ delete DB records
-+
-delete Storage objects
-
-Mais attention :
-
-Cette phase doit seulement préparer le comportement.
-
-Si le repository actuel ne sait pas encore faire le cleanup
-Storage de manière sûre, implémente le minimum nécessaire
-et documente le reste.
-
-Ne crée pas de suppression destructive irréversible
-sans confirmation dans l'interface si l'UI actuelle ne l'exige pas.
+Il ne doit pas devenir la source de vérité des données médicales.
 
 ==================================================
-17. DUPLICATION
+15. MIGRATION SAFE
 ==================================================
 
-Après migration des images :
+Avant toute suppression de localStorage :
 
-la duplication doit être clairement définie.
+1. sauvegarde/export JSON ;
+2. vérifier présence Supabase ;
+3. vérifier nombre d'examens ;
+4. vérifier nombre d'images ;
+5. vérifier annotations ;
+6. vérifier mesures ;
+7. vérifier analyses ;
+8. vérifier rapports.
 
-Ne pas simplement partager le même fichier sans raison.
+Créer un rapport de comparaison :
 
-Pour l'instant :
+LOCAL COUNT
+vs
+SUPABASE COUNT
 
-duplicate examination
-→ nouvel examination UUID
-→ nouvelles examination_images
-→ nouveaux chemins Storage
-ou référence contrôlée selon la stratégie choisie.
+et vérifier les écarts.
 
-Présente le choix avant implémentation si le comportement
-du produit n'est pas encore clairement défini.
-
-==================================================
-18. TESTS
-==================================================
-
-Créer des tests pour :
-
-- upload image ;
-- création examination_image ;
-- lecture ;
-- synchronisation ;
-- erreur upload ;
-- erreur DB ;
-- fallback local ;
-- migration idempotente ;
-- delete ;
-- duplicate ;
-- DICOM ;
-- JPEG ;
-- PNG.
-
-Tester qu'une image non synchronisée ne soit jamais
-présentée comme synchronisée.
+NE SUPPRIME PAS une donnée locale
+si sa contrepartie Supabase n'est pas confirmée.
 
 ==================================================
-19. TESTS SUPABASE RÉELS
+16. PHASE DE NETTOYAGE
 ==================================================
 
-La Phase 3 n'a pas pu réaliser les tests live car la base
-n'était pas provisionnée dans l'environnement de développement.
+Une fois les vérifications terminées :
 
-Cette phase doit, si les credentials sont maintenant configurés,
-effectuer au moins :
+supprimer progressivement :
 
-1. upload réel ;
-2. lecture réelle ;
-3. création DB réelle ;
-4. génération d'une URL/lecture contrôlée ;
-5. suppression réelle.
+aimaging.examinations
+si devenu totalement redondant
 
-Si les credentials live ne sont toujours pas disponibles :
+anciens blobs document
+si migrés
 
-ne pas simuler un "PASS".
+anciens data URLs
+si non utilisés
 
-Marquer explicitement :
+Mais conserver :
 
-SKIPPED — Supabase credentials unavailable.
+prefs
+theme
+recent files
+undo/redo
+clipboard
+
+selon classification.
+
+Ne pas supprimer des clés juste parce qu'elles contiennent
+"aimaging".
 
 ==================================================
-20. STORAGE SECURITY TEST
+17. LOCAL-FIRST / OFFLINE
+==================================================
+
+AImaging n'a pas besoin d'être complètement offline-first
+dans cette phase.
+
+Priorité :
+
+ONLINE
+→ Supabase
+
+OFFLINE
+→ cache local si disponible
+
+Mais l'utilisateur doit voir l'état réel :
+
+Saved
+Syncing
+Offline
+Sync error
+
+Ne jamais afficher "Saved" si la donnée n'est pas persistée.
+
+==================================================
+18. WORKSPACE STORE — MIGRATION
+==================================================
+
+Si l'audit confirme que WorkspaceStore ne contient plus
+que des données runtime :
+
+simplifier le store.
+
+Il doit devenir :
+
+in-memory runtime state
+
+et non persistance métier.
+
+Si certaines données doivent rester persistantes côté backend :
+
+proposer précisément leur destination Supabase
+avant modification.
+
+NE PAS créer une deuxième base backend.
+
+==================================================
+19. TESTS
+==================================================
+
+Créer/mettre à jour des tests :
+
+AUTH
+DB
+STORAGE
+RLS
+
+mais aussi :
+
+1. reload application
+2. examination persists
+3. image persists
+4. annotations persist
+5. measurements persist
+6. AI results persist
+7. report persists
+8. user switching
+9. logout/login
+10. cache invalidation
+11. offline fallback
+12. Workspace runtime reset
+
+==================================================
+20. TEST CRITIQUE — RELOAD
 ==================================================
 
 Tester :
 
+USER A login
+↓
+open examination
+↓
+annotate
+↓
+measure
+↓
+analyze
+↓
+generate report
+↓
+logout
+↓
+login
+↓
+reopen examination
+
+Tout doit être retrouvé depuis Supabase.
+
+Le résultat attendu :
+
+images
+annotations
+measurements
+AI results
+report
+
+sont toujours présents.
+
+Le runtime :
+
+active tool
+undo/redo
+AI thought
+selection
+
+peut être perdu.
+
+C'est normal.
+
+==================================================
+21. TEST CRITIQUE — USER SWITCH
+==================================================
+
 USER A
-→ peut lire son fichier
+↓
+logout
 
 USER B
-→ ne peut pas lire le fichier A
+↓
+login
 
-USER B
-→ ne peut pas supprimer le fichier A
+USER B ne doit voir :
 
-Ne pas utiliser service_role pour vérifier ce comportement.
+- examens A ;
+- images A ;
+- annotations A ;
+- analyses A ;
+- reports A.
 
-==================================================
-21. PERFORMANCE
-==================================================
-
-Mesurer sur quelques images :
-
-- temps upload ;
-- temps download ;
-- taille ;
-- conversion éventuelle ;
-- mémoire utilisée.
-
-Ne pas benchmarker des milliers d'images.
+Aucune donnée locale ne doit fuiter.
 
 ==================================================
-22. NON-RÉGRESSION
+22. PERFORMANCE
 ==================================================
 
-Après migration :
+Ne pas charger toute la base au démarrage.
 
-- npm run build ;
-- tests frontend ;
-- tests Supabase foundation ;
-- tests Phase 3 ;
-- backend existant.
+Charger :
 
-Ne pas introduire de régression dans :
+workspace
+↓
+liste examens
 
-- ExamsScreen ;
-- CanvasViewport ;
-- DICOM ;
-- radio ;
-- échographie UI ;
-- command bar.
+Puis :
+
+examen sélectionné
+↓
+images
+
+Puis :
+
+image sélectionnée
+↓
+annotations
+measurements
+analyses
+reports
+
+Éviter les requêtes inutiles.
 
 ==================================================
-23. CE QUI RESTE LOCAL APRÈS CETTE PHASE
+23. NON-RÉGRESSION
 ==================================================
 
 À la fin :
 
-Local uniquement :
+- npm run build ;
+- tous les tests frontend ;
+- backend pytest ;
+- tests Supabase live ;
+- tests RLS ;
+- tests Storage.
 
-- annotations ;
-- mesures ;
-- résultats IA ;
-- Grad-CAM ;
-- reports ;
-- FetalExamProvider ;
-- WorkspaceStore ;
-- undo/redo ;
-- préférences ;
-- session.
+Vérifier :
 
-Supabase :
-
-- workspaces ;
-- examinations ;
-- examination_images ;
-- fichiers images.
+Radiography
+Fetal ultrasound UI
+DICOM
+Annotations
+Measurements
+AI Workspace
+Reports
 
 ==================================================
-24. RAPPORT FINAL
+24. NETTOYAGE 3D
+==================================================
+
+La 3D étant définitivement abandonnée :
+
+NE PAS conserver de nouvelle référence
+dans la nouvelle architecture.
+
+Cette phase peut identifier et supprimer
+les références mortes si et seulement si
+cela ne touche aucun workflow actuel.
+
+Ne pas passer du temps à reconstruire ou réparer la 3D.
+
+==================================================
+25. RAPPORT FINAL
 ==================================================
 
 Produire :
 
-1. architecture avant/après ;
-2. fichiers modifiés ;
-3. stratégie Storage ;
-4. stratégie DICOM ;
-5. migration des images ;
-6. fallback ;
-7. suppression ;
-8. duplication ;
-9. tests ;
-10. tests live Supabase ;
-11. problèmes ;
-12. recommandation Phase 5.
+1. état Supabase live ;
+2. inventaire localStorage avant/après ;
+3. données conservées localement ;
+4. données migrées ;
+5. données supprimées ;
+6. WorkspaceStore final ;
+7. architecture persisted/runtime ;
+8. tests ;
+9. performances ;
+10. régressions éventuelles ;
+11. dette restante ;
+12. recommandation prochaine phase.
 
 Matrice :
 
-| Fonction | Avant | Après | Testé | Statut |
-|---|---|---|---|---|
-| Import JPEG | local | Storage | ✓ | DONE |
-| Import PNG | local | Storage | ✓ | DONE |
-| Import DICOM | local | Storage | ✓ | DONE |
-| Load image | local | Storage + cache | ✓ | DONE |
-| Delete | local | DB + Storage | ✓ | DONE |
-| Duplicate | local | DB + Storage | ✓ | DONE |
-| Fallback | local | local | ✓ | DONE |
+| Donnée | Avant | Après | Source de vérité |
+|---|---|---|---|
+| Examinations | local + DB | DB | Supabase |
+| Images | local + Storage | Storage | Supabase |
+| Annotations | local + DB | DB | Supabase |
+| Measurements | local + DB | DB | Supabase |
+| AI Runs | local + DB | DB | Supabase |
+| Reports | local + DB | DB | Supabase |
+| Undo/Redo | mémoire | mémoire | Local |
+| Clipboard | mémoire | mémoire | Local |
+| Theme | local | local | Local |
+| Recent files | local | local/cache | Local |
+| AI runtime | mémoire | mémoire | Local |
+| Workspace runtime | mémoire + duplications | mémoire | Backend |
 
 ==================================================
 RÈGLE FINALE
 ==================================================
 
-Cette phase concerne UNIQUEMENT :
+Cette phase doit être considérée comme une PHASE DE CONSOLIDATION.
 
-EXAMINATION IMAGES
-+
-SUPABASE STORAGE
+NE PAS ajouter une nouvelle modalité.
 
-Ne migre pas :
+NE PAS ajouter une nouvelle IA.
 
-- annotations ;
-- measurements ;
-- AI results ;
-- reports ;
-- WorkspaceStore ;
-- FetalExamProvider ;
-- Auth complète.
+NE PAS commencer DeepFetal anomaly.
 
-Lorsque cette phase est terminée :
+NE PAS commencer RAG.
+
+NE PAS commencer PACS.
+
+NE PAS commencer production deployment.
+
+Lorsque la persistance est consolidée :
 
 ARRÊTE-TOI.
 
-Ne commence pas automatiquement une autre phase.
+Présente le rapport final Phase Database 9.

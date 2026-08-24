@@ -15,6 +15,7 @@ import type { ExaminationRow } from "../src/lib/db/types";
 const h = vi.hoisted(() => {
   const state = {
     configured: true,
+    authUserId: "user-1" as string | null,
     localExams: [] as unknown[],
     savedLocally: [] as unknown[],
     rows: [] as ExaminationRow[],
@@ -51,14 +52,13 @@ vi.mock("../src/lib/db/supabaseClient", () => ({
   get isSupabaseConfigured() {
     return h.state.configured;
   },
+  getCurrentUserId: async () => {
+    if (h.state.authUserId === null) throw new Error("Aucun utilisateur authentifié.");
+    return h.state.authUserId;
+  },
   getSupabaseClient: () => {
     throw new Error("getSupabaseClient ne doit pas être appelé directement par les tests.");
   },
-}));
-
-vi.mock("../src/lib/db/devAuth", () => ({
-  DEFAULT_WORKSPACE_NAME: "Default workspace",
-  ensureDevSession: () => Promise.resolve("user-1"),
 }));
 
 vi.mock("../src/lib/db/repositories/workspaceRepository", () => ({
@@ -134,6 +134,7 @@ async function freshStore(): Promise<StoreModule> {
 
 beforeEach(() => {
   h.state.configured = true;
+  h.state.authUserId = "user-1";
   h.state.localExams = [];
   h.state.savedLocally = [];
   h.state.rows = [];

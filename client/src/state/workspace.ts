@@ -703,6 +703,9 @@ export interface WorkspaceState {
   openReportEditor: () => void;
   /** Commits the draft as the report and closes the editor */
   saveReportDraft: () => void;
+  /** Phase Database 7 : statut DB du rapport courant + validation explicite. */
+  radioReportValidated?: boolean;
+  validateRadioReport?: () => void;
 
   cursorPos: { x: number; y: number } | null;
   setCursorPos: (p: { x: number; y: number } | null) => void;

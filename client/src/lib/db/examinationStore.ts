@@ -15,8 +15,7 @@
  * - WorkspaceStore backend (sessions runtime) n'est PAS concerné (SUITE.md §4).
  */
 
-import { isSupabaseConfigured } from "./supabaseClient";
-import { DEFAULT_WORKSPACE_NAME, ensureDevSession } from "./devAuth";
+import { isSupabaseConfigured, getCurrentUserId } from "./supabaseClient";
 import {
   createWorkspace,
   listWorkspacesByOwner,
@@ -30,7 +29,15 @@ import {
 } from "./repositories/examinationRepository";
 import { loadExaminations, saveExaminations, type Examination } from "../examinations";
 import { normalizeModalityId } from "../modality";
+import { listImagesByExamination } from "./repositories/imageRepository";
+import { removeImageObjects } from "./storage";
+import { migrateExistingImages } from "./imageStore";
 import type { ExaminationInsert, ExaminationRow } from "./types";
+
+/** Nom du workspace initial créé pour un utilisateur authentifié sans espace (§16). */
+export const INITIAL_WORKSPACE_NAME = "My Workspace";
+/** Nom historique de l'ère devAuth — réutilisé s'il existe (non destructif, §19). */
+const LEGACY_DEV_WORKSPACE_NAME = "Default workspace";
 
 /* ------------------------------ Statut de sync ----------------------------- */
 
@@ -61,13 +68,36 @@ export function isExamSyncActive(): boolean {
   return isSupabaseConfigured;
 }
 
+/**
+ * Canal de statut partagé : permet à la couche images (imageStore) d'émettre
+ * sur le même indicateur UI sans posséder l'écouteur (SUITE.md Phase 4 §11).
+ */
+export function emitSyncStatus(status: ExamSyncStatus): void {
+  setStatus(status);
+}
+
+/** Contexte resolved pour une examen legacy : indispensable aux chemins Storage. */
+export async function resolveExamContext(
+  legacyId: string,
+): Promise<{ userId: string; workspaceUuid: string; examinationUuid: string }> {
+  await requireReady();
+  const examinationUuid = await resolveUuid(legacyId);
+  const userId = await getCurrentUserId();
+  return { userId, workspaceUuid: workspaceUuid as string, examinationUuid };
+}
+
 function requireReady(): Promise<void> {
   if (readyPromise === null) {
     readyPromise = (async () => {
-      const userId = await ensureDevSession();
+      /* Phase Database 8 : identité = auth.uid() réel (plus aucun devAuth). */
+      const userId = await getCurrentUserId();
       const owned = await listWorkspacesByOwner(userId);
-      const existing = owned.find((w) => w.name === DEFAULT_WORKSPACE_NAME);
-      workspaceUuid = existing?.id ?? (await createWorkspace({ owner_id: userId, name: DEFAULT_WORKSPACE_NAME })).id;
+      const existing =
+        owned.find((w) => w.name === INITIAL_WORKSPACE_NAME) ??
+        owned.find((w) => w.name === LEGACY_DEV_WORKSPACE_NAME);
+      workspaceUuid =
+        existing?.id ??
+        (await createWorkspace({ owner_id: userId, name: INITIAL_WORKSPACE_NAME })).id;
     })().catch((exc: unknown) => {
       readyPromise = null;
       throw exc;
@@ -134,14 +164,16 @@ export interface BootstrapResult {
 /**
  * Charge les examens au démarrage de l'écran des examens :
  * 1. sans configuration Supabase → comportement localStorage inchangé ;
- * 2. sinon : session dev → workspace par défaut → migration idempotente des
- *    métadonnées locales → lecture Supabase → fusion avec le contenu local
- *    (images/résultats) → mise à jour du cache → statut synced.
+ * 2. sinon : session réelle (auth.uid()) → workspace de l'utilisateur →
+ *    migration idempotente des métadonnées locales → lecture Supabase →
+ *    fusion avec le contenu local (images/résultats) → cache → synced.
  * En cas d'échec réseau/Supabase : les données locales sont retournées telles
  * quelles et le statut passe à « error » (l'erreur est journalisée, jamais avalée).
  */
-export async function bootstrapExaminations(): Promise<BootstrapResult> {
-  const local = loadExaminations();
+export async function bootstrapExaminations(
+  userId?: string | null,
+): Promise<BootstrapResult> {
+  const local = loadExaminations(userId);
   if (!isSupabaseConfigured) {
     setStatus("local-only");
     return { exams: local, status: "local-only" };
@@ -168,8 +200,13 @@ export async function bootstrapExaminations(): Promise<BootstrapResult> {
     }
 
     merged.sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
-    saveExaminations(merged);
+    saveExaminations(merged, userId);
     setStatus("synced");
+    /* Migration des images existantes en tâche de fond (Phase 4 §14) :
+       idempotente, jamais bloquante pour l'UI, cache local conservé. */
+    void migrateExistingImages(userId).catch((exc: unknown) => {
+      console.error("[db] Migration des images existantes échouée (reprise au prochain démarrage).", exc);
+    });
     return { exams: merged, status: "synced" };
   } catch (exc: unknown) {
     console.error("[db] Synchronisation des examens impossible, bascule sur le cache local.", exc);
@@ -243,16 +280,35 @@ export function persistLastOpenedAt(legacyId: string, isoDate: string): Promise<
 }
 
 /**
- * Suppression effective côté base. Les FK CASCADE (Phase 2) purgent les
- * dépendances ; lorsque Storage sera utilisé, cette logique devra d'abord
- * purger les artefacts distants (documenté pour Phase 4+).
+ * Suppression effective côté base + cleanup Storage minimum viable
+ * (SUITE.md Phase 4 §16) :
+ * 1. listing des lignes examination_images AVANT le delete DB ;
+ * 2. suppression DB (FK CASCADE purgent annotations/analyses/…) ;
+ * 3. suppression des objets Storage référencés.
+ * Un échec Storage est journalisé mais ne remet pas en cause l'état DB déjà
+ * consolidé ; les orphelins éventuels seront traités par la phase de
+ * maintenance ultérieure (documenté).
  */
 export function persistDeletedExam(legacyId: string): Promise<void> {
   if (!isSupabaseConfigured) return Promise.resolve();
   return withSync(async () => {
     const uuid = await resolveUuid(legacyId);
+    let storagePaths: string[] = [];
+    try {
+      const rows = await listImagesByExamination(uuid);
+      storagePaths = rows.map((row) => row.storage_path).filter((p): p is string => typeof p === "string");
+    } catch (exc: unknown) {
+      console.error("[db] Listing des images avant suppression échoué (cleanup Storage limité).", exc);
+    }
     await deleteExamination(uuid);
     legacyToUuid.delete(legacyId);
+    if (storagePaths.length > 0) {
+      try {
+        await removeImageObjects(storagePaths);
+      } catch (exc: unknown) {
+        console.error("[db] Cleanup Storage incomplet après suppression d'examen.", exc);
+      }
+    }
   });
 }
 

@@ -35,7 +35,22 @@ class WorkspaceSession:
 
 
 class WorkspaceStore:
-    """Stockage éphémère en mémoire, sans donnée persistée sur disque."""
+    """SESSION RUNTIME éphémère — Phase Database 9 (SUITE.md §10-§12).
+
+    Frontière persisté/runtime (décision de consolidation) :
+    - SUPABASE est la source de vérité métier (examinations, images,
+      annotations, measurements, analysis_runs, reports) ;
+    - ce store NE DOIT PAS dupliquer ces données comme base parallèle ;
+    - il conserve uniquement l'état d'exécution temporaire :
+        * manifest projeté par le client (contexte de validation des plans IA),
+          considéré comme dérivé (C) — jamais modifié côté serveur ;
+        * turns (mémoire conversationnelle agent, bornée à MAX_TURNS_KEPT) ;
+        * audit (journal borné à MAX_AUDIT_KEPT) ;
+    - toute donnée disparue au redémarrage est acceptable : c'est du runtime ;
+    - les routes utilisent ce store uniquement comme CONTEXTE
+      (workspace_id/image_id → manifeste) ; les données médicales persistées
+      restent servies par PostgreSQL/Storage.
+    """
 
     def __init__(self) -> None:
         self._sessions: dict[str, WorkspaceSession] = {}

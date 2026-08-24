@@ -22,6 +22,7 @@ import { RightPanel } from "./components/RightPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
 import { WorkspaceProvider } from "./state/WorkspaceProvider";
+import { AuthProvider, useAuth } from "./state/AuthProvider";
 import { EditorModalityProvider } from "./state/EditorModalityContext";
 import { FetalExamProvider } from "./components/fetal/FetalExamProvider";
 import { FetalFilmstripHost } from "./components/fetal/FetalFilmstrip";
@@ -38,12 +39,12 @@ import {
 } from "./state/workspace";
 import { downloadDataUrl, downloadJson, exportImageDataUrl } from "./lib/exportImage";
 import {
-  loadExaminations,
   isRadiographyCompatible,
   isRadiographyExam,
   isImageRejectedByOpenCxr,
   readImportedImageFiles,
   saveExaminations,
+  type CreateExamContext,
   type ExamImage,
   type ExamImageState,
   type Examination,
@@ -67,6 +68,13 @@ import {
   setExamSyncListener,
   type ExamSyncStatus,
 } from "./lib/db/examinationStore";
+import { syncExamImages } from "./lib/db/imageStore";
+import {
+  persistClassificationRun,
+  persistGradcamRun,
+  persistOpencxrSortRun,
+  persistOpencxrStandardizeRun,
+} from "./lib/db/analysisRunService";
 import { SHORTCUTS } from "./lib/shortcuts";
 import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
@@ -1846,54 +1854,20 @@ type Page = "login" | "exams" | "editor";
 /** Editor state snapshot captured against an examination image (see captureImageState) */
 type EditorSnapshot = ExamImageState;
 
-function loadSession(): { email: string } | null {
-  try {
-    const raw =
-      localStorage.getItem("aimaging.session") ??
-      sessionStorage.getItem("aimaging.session");
-    if (!raw) return null;
-    const s = JSON.parse(raw) as { email?: unknown };
-    return s && typeof s.email === "string" ? { email: s.email } : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeSession(email: string, remember: boolean) {
-  const payload = JSON.stringify({ email });
-  try {
-    if (remember) {
-      localStorage.setItem("aimaging.session", payload);
-      sessionStorage.removeItem("aimaging.session");
-    } else {
-      sessionStorage.setItem("aimaging.session", payload);
-      localStorage.removeItem("aimaging.session");
-    }
-  } catch {
-    /* storage unavailable */
-  }
-}
-
-function clearSession() {
-  try {
-    localStorage.removeItem("aimaging.session");
-    sessionStorage.removeItem("aimaging.session");
-  } catch {
-    /* storage unavailable */
-  }
-}
-
-function initialPage(): Page {
-  const s = new URLSearchParams(window.location.search).get("screen");
-  if (s === "login" || s === "exams" || s === "editor") return s;
-  return loadSession() ? "exams" : "login";
-}
-
 export default function App() {
-  const [page, setPage] = useState<Page>(initialPage);
-  const [session, setSession] = useState(loadSession);
+  /* Phase Database 8 : l'identité vient exclusivement de Supabase Auth. */
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}
+
+function AppShell() {
+  const { userId, email, loading: authLoading, isAuthenticated, signIn, signOut, sendPasswordReset } = useAuth();
+  const [page, setPage] = useState<Page>("exams");
   const [examCtx, setExamCtx] = useState<{ examId: string; index: number } | null>(null);
-  const [exams, setExams] = useState<Examination[]>(loadExaminations);
+  const [exams, setExams] = useState<Examination[]>([]);
   const isMobile = useIsMobile();
   /* Phase Database 3 : Supabase devient la source persistante des examens ;
      localStorage reste le cache/fallback. Statut affiché discrètement (§10). */
@@ -1902,22 +1876,30 @@ export default function App() {
   useEffect(() => {
     setExamSyncListener(setSyncStatus);
     let cancelled = false;
-    void bootstrapExaminations().then((result) => {
+    /* Phase Database 8 : bootstrap uniquement authentifié ; cache par user (§19). */
+    if (!isAuthenticated) {
+      setExams([]);
+      return () => {
+        cancelled = true;
+        setExamSyncListener(null);
+      };
+    }
+    void bootstrapExaminations(userId).then((result) => {
       if (!cancelled) setExams(result.exams);
     });
     return () => {
       cancelled = true;
       setExamSyncListener(null);
     };
-  }, []);
+  }, [isAuthenticated, userId]);
 
   const mutateExams = useCallback((fn: (list: Examination[]) => Examination[]) => {
     setExams((prev) => {
       const next = fn(prev);
-      saveExaminations(next);
+      saveExaminations(next, userId);
       return next;
     });
-  }, []);
+  }, [userId]);
 
   const openExam = useCallback(
     (examId: string) => {
@@ -1973,6 +1955,12 @@ export default function App() {
       ...exam,
       images: exam.images.map((image) => predictions[image.id] ? { ...image, prediction: predictions[image.id] } : image),
     }));
+    /* Phase Database 6 : un run classification par image analysée (§7/§8). */
+    for (const [imageId, prediction] of Object.entries(predictions)) {
+      void persistClassificationRun(examId, imageId, prediction).catch(
+        (exc: unknown) => console.error("[db] Run classification non persisté.", exc),
+      );
+    }
   }, [mutateExams]);
 
   const saveGradcams = useCallback((examId: string, gradcams: Record<string, GradCamResult>) => {
@@ -1980,6 +1968,11 @@ export default function App() {
       ...exam,
       images: exam.images.map((image) => gradcams[image.id] ? { ...image, gradcam: gradcams[image.id] } : image),
     }));
+    for (const [imageId, gradcam] of Object.entries(gradcams)) {
+      void persistGradcamRun(examId, imageId, gradcam).catch(
+        (exc: unknown) => console.error("[db] Run Grad-CAM non persisté.", exc),
+      );
+    }
   }, [mutateExams]);
 
   const saveThreeD = useCallback((examId: string, results: Record<string, ThreeDResult>) => {
@@ -1999,17 +1992,47 @@ export default function App() {
         cxrRejected: records[image.id].rejected,
       } : image),
     }));
+    /* Phase Database 6 : tri fail-closed (rejected ⇒ AUCUN run en aval, §13)
+       + standardisation avec artefact PNG (Option B). */
+    for (const [imageId, record] of Object.entries(records)) {
+      const now = new Date().toISOString();
+      void persistOpencxrSortRun(examId, imageId, {
+        rejected: record.rejected ? { reason: record.rejected.reason } : undefined,
+        result: record.sort as unknown as Record<string, unknown>,
+        generatedAt: now,
+      }).catch((exc: unknown) => console.error("[db] Run opencxr_sort non persisté.", exc));
+      const standardized = record.standardize ?? null;
+      if (standardized !== null && !record.rejected) {
+        void persistOpencxrStandardizeRun(examId, imageId, {
+          width: standardized.width,
+          height: standardized.height,
+          sizeChanges: standardized.size_changes,
+          imageDataUrl: standardized.image_data_url,
+          generatedAt: now,
+        }).catch((exc: unknown) => console.error("[db] Run opencxr_standardize non persisté.", exc));
+      }
+    }
   }, [mutateExams]);
 
   /**
    * Handlers examens : mutation locale optimiste immédiate, puis persistance
    * granulaire vers Supabase. En cas d'échec réseau la donnée locale reste
    * intacte et l'échec est visible via le statut de synchronisation (§8/§10).
+   * Phase Database 4 : les images suivent vers Storage + examination_images
+   * (upload atomique §10, duplication copy-on-duplicate §17 A).
    */
   const handleCreateExam = useCallback(
-    (e: Examination) => {
+    (e: Examination, context?: CreateExamContext) => {
       mutateExams((list) => [...list, e]);
       void persistCreatedExam(e);
+      void syncExamImages(e, {
+        originalFiles: context?.originalFiles,
+        duplicatedFrom: context?.duplicatedFrom,
+      }).catch((exc: unknown) => {
+        /* État image = error + statut global émis par la couche ; le cache
+           local reste la source de rendu (coexistence §5). */
+        console.error("[db] Synchronisation des images échouée.", exc);
+      });
     },
     [mutateExams],
   );
@@ -2037,22 +2060,26 @@ export default function App() {
   const autoRestore = page === "editor" && examCtx === null;
 
   return (
-    <WorkspaceProvider autoRestore={autoRestore}>
+    <WorkspaceProvider key={userId ?? "anon"} autoRestore={autoRestore} persistenceExamId={examCtx?.examId ?? null}>
       <ToastHost />
-      {page === "login" && (
+      {authLoading && (
+        <div className="flex h-screen w-screen items-center justify-center bg-bg" data-attr="auth-loading">
+          <p className="animate-pulse text-[13px] text-ink-3">Chargement de la session…</p>
+        </div>
+      )}
+      {!authLoading && (!isAuthenticated || page === "login") && (
         <LoginScreen
-          initialEmail={session?.email}
-          onLogin={(email, remember) => {
-            storeSession(email, remember);
-            setSession({ email });
+          onSubmit={async (loginEmail, loginPassword) => {
+            await signIn(loginEmail, loginPassword);
             setPage("exams");
           }}
+          onForgotPassword={(resetEmail) => sendPasswordReset(resetEmail)}
         />
       )}
-      {page === "exams" && (
+      {!authLoading && isAuthenticated && page === "exams" && (
         <ExamsScreen
           exams={exams}
-          userEmail={session?.email ?? ""}
+          userEmail={email ?? ""}
           syncStatus={syncStatus}
           onCreateExam={handleCreateExam}
           onUpdateExam={handleUpdateExam}
@@ -2062,14 +2089,16 @@ export default function App() {
             setExamCtx(null);
             setPage("editor");
           }}
-          onSignOut={() => {
-            clearSession();
-            setSession(null);
-            setPage("login");
+          onSignOut={async () => {
+            /* Phase Database 8 : signOut Supabase réel + reset runtime local.
+               Les données Supabase et les caches localStorage sont conservés. */
+            await signOut();
+            setExams([]);
+            setExamCtx(null);
           }}
         />
       )}
-      {page === "editor" && (
+      {!authLoading && isAuthenticated && page === "editor" && (
         <EditorModalityProvider exam={examCtx ? exams.find((e) => e.id === examCtx.examId) ?? null : null}>
           <FetalExamProvider>
           {isMobile ? (
