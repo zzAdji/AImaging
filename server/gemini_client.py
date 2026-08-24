@@ -108,3 +108,53 @@ class GeminiReportClient:
         raise RuntimeError(
             f"Echec de l'appel Gemini après {max_retries} tentatives : {last_error}"
         ) from last_error
+
+    def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        mime_type: str = "audio/webm",
+        language: str | None = None,
+        max_retries: int = 3,
+    ) -> str:
+        """Transcrit un enregistrement audio (dictée) via Gemini.
+
+        Gemini est multimodale : on envoie l'audio brut avec une instruction de
+        retranscription ; le texte renvoyé est nettoyé et renvoyé à l'appelant.
+        """
+        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        lang_hint = (
+            f"\nLa parole est en {language} — retranscris dans cette langue."
+            if language
+            else "\nLa parole est en français."
+        )
+        instruction = (
+            "Tu es un système de dictée médicale. Retranscris fidèlement le contenu "
+            "de l'enregistrement audio, mot pour mot, sans rien inventer, sans "
+            "intro ni commentaire. Garde la ponctuation naturelle."
+            f"{lang_hint}"
+        )
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[types.Part.from_text(text=instruction), part],
+                )
+                text = (response.text or "").strip()
+                if not text:
+                    raise ValueError("Gemini a renvoyé une transcription vide.")
+                return text
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt == max_retries - 1:
+                    break
+                wait_seconds = 2**attempt
+                logger.warning(
+                    "Transcription Gemini échouée (tentative %d/%d) : %s — nouvel essai dans %ds",
+                    attempt + 1, max_retries, exc, wait_seconds,
+                )
+                time.sleep(wait_seconds)
+
+        raise RuntimeError(
+            f"Échec de la transcription Gemini après {max_retries} tentatives : {last_error}"
+        ) from last_error

@@ -125,33 +125,33 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
     w.runAiCommand(t);
   };
 
-  /* Saisie vocale réelle via Web Speech API (reportSpeechService).
-     Le micro est utilisé depuis la command bar (§ demandée) ; la transcription
-     est proposée dans la barre puis envoyée comme une commande normale. */
+  /* Saisie vocale réelle (Gemini, repli Web Speech API) via reportSpeechService.
+     Le micro est utilisé depuis la command bar ; la transcription est proposée
+     dans la barre puis envoyée comme une commande normale. */
   const toggleVoice = () => {
     if (voice) {
       reportSpeechService.stop();
-      setVoice(false);
+      setSpeechError(null);
       return;
     }
     setSpeechError(null);
-    if (!reportSpeechService.isSupported()) {
-      setSpeechError("Saisie vocale non supportée par ce navigateur — activez le micro dans les paramètres du navigateur, puis réessayez.");
-      return;
-    }
+    /* Optimiste : l'UI d'écoute apparaît pendant la demande d'autorisation
+       micro et l'enregistrement ; le service ramène à idle en cas d'erreur. */
+    setVoice(true);
     reportSpeechService.start({
       onStateChange: (state) => {
-        if (state === "unsupported") {
-          setSpeechError("Micro indisponible — vérifiez la permission micro du navigateur (🔒 à gauche de l'URL).");
-        }
+        if (state === "listening" || state === "processing") setVoice(true);
+        else setVoice(false);
       },
-      onError: (message) => setSpeechError(message),
+      onError: (message) => {
+        setSpeechError(message);
+        setVoice(false);
+      },
       onTranscript: (text) => {
         setValue(text);
         inputRef.current?.focus();
       },
     });
-    setVoice(true);
   };
 
   /* Cesse l'écoute et renvoie la transcription complète dans la barre,

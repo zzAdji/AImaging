@@ -1547,6 +1547,9 @@ const doExport = async () => {
           <AnimatePresence>
             <FloatingCommandBar key="ai-command-bar" />
           </AnimatePresence>
+          <AnimatePresence>
+            {w.reportEditOpen && <ReportEditorModal key="report-editor" insideWorkspace />}
+          </AnimatePresence>
         </div>
         <AnimatePresence initial={false} mode="popLayout">
           {w.rightPanelOpen && (
@@ -1589,8 +1592,6 @@ const doExport = async () => {
           />
         )}
       </AnimatePresence>
-
-      <AnimatePresence>{w.reportEditOpen && <ReportEditorModal key="report-editor" />}</AnimatePresence>
 
       {saveAsOpen && (
         <Modal title="Save As" onClose={() => setSaveAsOpen(false)} width="w-80">

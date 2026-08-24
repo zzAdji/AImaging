@@ -9,6 +9,7 @@ import {
   defaultTemplateData,
   renderDocument,
   visibleSections,
+  type ReportTemplateData,
 } from "../src/lib/reports/engine";
 
 const RADIO_INPUT = {
@@ -152,5 +153,18 @@ describe("briques libres et variables (modèle type Word, §38)", () => {
     template.customBlocks = [{ id: "hidden", kind: "paragraph", text: "secret", visible: false }];
     const doc = renderDocument("radiography", {}, template);
     expect(doc.blocks).toHaveLength(0);
+  });
+
+  it("un template legacy sans variables/blocks ne plante pas (écran noir §regression)", () => {
+    /* Ancien template persisté avant l'ajout de variables/customBlocks : */
+    const legacy = {
+      ...defaultTemplateData("radiography"),
+      variables: undefined,
+      customBlocks: undefined,
+    } as unknown as ReportTemplateData;
+    expect(() => renderDocument("radiography", {}, legacy)).not.toThrow();
+    const doc = renderDocument("radiography", {}, legacy);
+    expect(doc.blocks).toEqual([]);
+    expect(doc.tokenValues.patientName).toBeDefined();
   });
 });

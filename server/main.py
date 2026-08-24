@@ -1581,3 +1581,42 @@ async def health() -> dict:
         "opencxr_ready": opencxr_available(),
         "startup_errors": startup_errors,
     }
+
+
+class VoiceTranscribeResponse(BaseModel):
+    text: str
+    language: str | None = None
+    model: str
+
+
+@app.post("/voice/transcribe", response_model=VoiceTranscribeResponse)
+async def transcribe_voice(
+    file: UploadFile = File(...),
+    language: str | None = Form(default=None),
+) -> VoiceTranscribeResponse:
+    """Transcrit une dictée vocale (webm/ogg/wav) via Gemini.
+
+    Le client enregistre le micro puis poste l'audio ici ; Gemini fait la
+    retranscription (repli Web Speech API côté navigateur si serveur absent).
+    """
+    if registry.gemini_client is None:
+        raise HTTPException(status_code=503, detail="Client Gemini non initialisé (clé API manquante).")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Fichier audio vide.")
+    mime_type = file.content_type or "audio/webm"
+    if mime_type.startswith("audio/"):
+        mime_type = mime_type[: mime_type.find(";")]
+    try:
+        text = registry.gemini_client.transcribe_audio(
+            data,
+            mime_type=mime_type or "audio/webm",
+            language=language or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Transcription Gemini impossible.")
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini n'a pas pu transcrire l'audio. Réessayez dans quelques secondes.",
+        ) from exc
+    return VoiceTranscribeResponse(text=text, language=language, model=registry.gemini_client.model_name)

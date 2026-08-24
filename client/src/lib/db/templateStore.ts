@@ -14,6 +14,7 @@
 import { isSupabaseConfigured } from "./supabaseClient";
 import {
   defaultTemplateData,
+  normalizeTemplateData,
   type ReportLanguage,
   type ReportModality,
   type ReportTemplateData,
@@ -41,7 +42,15 @@ function readAll(userId?: string | null): StoredReportTemplate[] {
     const raw = localStorage.getItem(storageKey(userId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as StoredReportTemplate[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    /* Répare d'éventuels anciens templates persistés (champs manquants). */
+    return parsed.map((t) => {
+      const stored = t as Partial<StoredReportTemplate>;
+      return {
+        ...stored,
+        data: normalizeTemplateData((stored.data ?? defaultTemplateData(stored.modality ?? "generic")) as ReportTemplateData),
+      } as StoredReportTemplate;
+    });
   } catch {
     return [];
   }
@@ -74,7 +83,8 @@ export function getLocalDefault(
   userId?: string | null,
 ): StoredReportTemplate | null {
   const list = readAll(userId);
-  return list.find((t) => t.modality === modality && t.isDefault) ?? null;
+  const found = list.find((t) => t.modality === modality && t.isDefault);
+  return found === undefined ? null : { ...found, data: normalizeTemplateData(found.data) };
 }
 
 /**

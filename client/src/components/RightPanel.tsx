@@ -542,7 +542,7 @@ function ReportSection() {
               {exportOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
-                  <div className="absolute left-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl shadow-black/50">
+                  <div className="absolute left-0 bottom-full z-50 mb-1 min-w-[140px] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl shadow-black/50">
                     <button
                       type="button"
                       onClick={() => handleExport("pdf")}

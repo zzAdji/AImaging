@@ -15,6 +15,25 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * Transcrit un enregistrement vocal via Gemini (endpoint serveur).
+ * Privilégie le multipart/form-data : pas d'en-tête JSON qui casserait le FormData.
+ */
+export async function transcribeAudio(blob: Blob, language = "fr"): Promise<string> {
+  const form = new FormData();
+  form.append("file", blob, "voice.webm");
+  form.append("language", language);
+  const response = await fetch(`${API_BASE_URL}/voice/transcribe`, { method: "POST", body: form });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body || response.statusText}`);
+  }
+  const data = (await response.json()) as { text?: string };
+  const text = (data.text ?? "").trim();
+  if (!text) throw new Error("Transcription vide.");
+  return text;
+}
+
 export function createWorkspaceExam(manifest: WorkspaceManifest): Promise<WorkspaceSession> {
   return request<WorkspaceSession>("/workspace/exams", { method: "POST", body: JSON.stringify(manifest) });
 }

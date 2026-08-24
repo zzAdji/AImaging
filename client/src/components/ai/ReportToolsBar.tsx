@@ -11,6 +11,7 @@
  */
 
 import { useMemo, useRef, useState } from "react";
+import { cn } from "../../lib/cn";
 import {
   Braces,
   Download,
@@ -115,7 +116,12 @@ export function ReportActionsBar({
         {exportOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
-            <div className="absolute right-0 top-full z-50 mt-1.5 min-w-[150px] overflow-hidden rounded-xl border border-border bg-panel shadow-2xl shadow-black/50">
+            <div
+              className={cn(
+                "absolute right-0 z-50 min-w-[150px] overflow-hidden rounded-xl border border-border bg-panel shadow-2xl shadow-black/50",
+                "bottom-full mb-1.5",
+              )}
+            >
               <button type="button"
                         onClick={() => handleExport("pdf")}
                         className="block w-full px-2.5 py-1.5 text-left text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"

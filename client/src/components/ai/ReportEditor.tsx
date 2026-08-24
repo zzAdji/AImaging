@@ -5,7 +5,13 @@ import { cn } from "../../lib/cn";
 import { useWorkspace } from "../../state/workspace";
 import { ReportActionsBar } from "./ReportToolsBar";
 
-export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
+export function ReportEditorModal({
+  mobile = false,
+  insideWorkspace = false,
+}: {
+  mobile?: boolean;
+  insideWorkspace?: boolean;
+}) {
   const w = useWorkspace();
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -27,8 +33,10 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={cn(
-        "fixed inset-0 z-30 flex bg-black/45 backdrop-blur-md",
-        mobile ? "items-stretch px-0 pt-0" : "items-end justify-center pb-[7.5rem]",
+        insideWorkspace
+          ? "absolute inset-0 z-30 flex bg-black/45 backdrop-blur-md"
+          : "fixed inset-0 z-30 flex bg-black/45 backdrop-blur-md",
+        mobile ? "items-stretch px-0 pt-0" : "items-end justify-center pb-[7rem] px-6",
       )}
     >
       <motion.div
@@ -40,8 +48,8 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
         className={cn(
           "flex flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl shadow-black/60",
           mobile
-            ? "h-[80vh] w-screen rounded-none border-0 pb-[120px]"
-            : "h-[68vh] w-full max-w-[700px]",
+            ? "h-[80vh] w-screen rounded-none border-0 pb-[100px]"
+            : "h-[70vh] w-full max-w-3xl",
         )}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">

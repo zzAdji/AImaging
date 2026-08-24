@@ -146,6 +146,39 @@ export function defaultVariables(): TemplateVariable[] {
   ];
 }
 
+/**
+ * Répare un objet template chargé depuis la persistance (localStorage/DB) :
+ * les anciennes valeurs éditées avant l'ajout des blocs/variables/composites
+ * ne contiennent ni `variables` ni `customBlocks`. Ce normaliseur garantit
+ * qu'un rendu (aperçu/export) ne plante jamais sur des champs absents.
+ */
+export function normalizeTemplateData(template: ReportTemplateData): ReportTemplateData {
+  const defaults = defaultTemplateData("radiography");
+  return {
+    ...template,
+    page: template.page ?? defaults.page,
+    typography: template.typography ?? defaults.typography,
+    accentColor: template.accentColor ?? defaults.accentColor,
+    header: { ...defaults.header, ...(template.header ?? {}) },
+    footer: { ...defaults.footer, ...(template.footer ?? {}) },
+    signature: { ...defaults.signature, ...(template.signature ?? {}) },
+    sections: Array.isArray(template.sections) && template.sections.length > 0
+      ? template.sections
+      : defaults.sections,
+    variables: Array.isArray(template.variables)
+      ? template.variables
+          .filter((v): v is TemplateVariable => Boolean(v) && typeof v.key === "string")
+          .map((v) => ({
+            ...v,
+            visible: v.visible !== false,
+            label: v.label ?? v.key,
+            value: v.value ?? "",
+          }))
+      : defaultVariables(),
+    customBlocks: Array.isArray(template.customBlocks) ? template.customBlocks : [],
+  };
+}
+
 /** Template par défaut intégré pour une modalité (§7 : un défaut par modalité). */
 export function defaultTemplateData(
   modality: Exclude<ReportModality, "generic"> | ReportModality,
@@ -424,7 +457,7 @@ export function renderDocument(
   structuredData: StringMap,
   templateData: ReportTemplateData | null,
 ): RenderedDocument {
-  const template = templateData ?? defaultTemplateData(modality);
+  const template = normalizeTemplateData(templateData ?? defaultTemplateData(modality));
   const headerFields: Array<{ label: string; value: string }> = [];
   if (template.header.organizationName.length > 0) {
     headerFields.push({ label: "Établissement", value: template.header.organizationName });
