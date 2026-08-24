@@ -1,7 +1,22 @@
 import { useMemo, useRef, useState } from "react";
 import { Download, Pencil } from "lucide-react";
 import { cn } from "../lib/cn";
-import { downloadDataUrl, downloadJson, exportImageDataUrl } from "../lib/exportImage";
+import { downloadDataUrl, exportImageDataUrl } from "../lib/exportImage";
+import {
+  defaultTemplateData,
+  renderDocument,
+  type ReportModality,
+  type ReportTemplateData,
+} from "../lib/reports/engine";
+import {
+  buildReportFilename,
+  buildReportJsonExport,
+  buildWordDocument,
+  documentHtml,
+  downloadTextFile,
+  printDocument,
+} from "../lib/reports/pdfExport";
+import { getLocalDefault } from "../lib/db/templateStore";
 import {
   BC_PRESETS,
   WL_PRESETS,
@@ -449,6 +464,39 @@ function DiagnosticsSection() {
 
 function ReportSection() {
   const w = useWorkspace();
+  const m = useEditorModality();
+  const [exportOpen, setExportOpen] = useState(false);
+  const modality: ReportModality = m.modality === "fetal_ultrasound" ? "fetal_ultrasound" : "radiography";
+
+  const handleExport = (kind: "pdf" | "word" | "json") => {
+    const template =
+      getLocalDefault(modality, null)?.data ??
+      (defaultTemplateData(modality) as ReportTemplateData);
+    const structured = {
+      findings: { draft: (w.aiResults.report ?? "").slice(0, 4000) },
+      note: "Contenu édité par le praticien.",
+    };
+    const rendered = renderDocument(modality, structured, template);
+    const date = new Date();
+    if (kind === "pdf") {
+      printDocument(documentHtml(rendered));
+    } else if (kind === "word") {
+      downloadTextFile(
+        buildReportFilename(modality, date, "doc"),
+        buildWordDocument(rendered),
+        "application/msword",
+      );
+    } else {
+      downloadTextFile(
+        buildReportFilename(modality, date, "json"),
+        JSON.stringify(buildReportJsonExport(rendered, w.aiResults.report ?? ""), null, 2),
+        "application/json",
+      );
+    }
+    setExportOpen(false);
+  };
+
+  const validated = w.radioReportValidated === true;
   return (
     <Section id="report" title="Rapport">
       {!w.aiResults.report ? (
@@ -457,33 +505,69 @@ function ReportSection() {
         </p>
       ) : (
         <>
+          <div className="flex items-center gap-1.5 px-1 pb-1">
+            <span
+              className={
+                validated
+                  ? "rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-px text-[10px] font-medium text-emerald-300"
+                  : "rounded-full bg-accent/15 px-2 py-px text-[10px] font-medium text-accent"
+              }
+            >
+              {validated ? "Validé" : "Édition"}
+            </span>
+          </div>
           <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink-2">
             {w.aiResults.report}
           </p>
-          <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <div className="mt-2 flex items-center gap-1.5">
             <button
               type="button"
               data-attr="ai-report-edit"
+              title="Éditer le rapport"
               onClick={() => w.openReportEditor()}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-btn px-2 py-1.5 text-[11.5px] text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-btn text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
             >
               <Pencil size={12} />
-              Éditer
             </button>
-            <button
-              type="button"
-              data-attr="ai-report-export"
-              onClick={() =>
-                downloadJson(
-                  { app: "AImaging", kind: "ai-report", text: w.aiResults.report, exportedAt: new Date().toISOString() },
-                  `rapport-ia-${new Date().toISOString().slice(0, 10)}.json`,
-                )
-              }
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-btn px-2 py-1.5 text-[11.5px] text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
-            >
-              <Download size={12} />
-              Exporter
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                data-attr="ai-report-export"
+                title="Exporter (PDF / Word / JSON)"
+                onClick={() => setExportOpen((v) => !v)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-btn text-ink-2 transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
+              >
+                <Download size={12} />
+              </button>
+              {exportOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
+                  <div className="absolute left-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl shadow-black/50">
+                    <button
+                      type="button"
+                      onClick={() => handleExport("pdf")}
+                      className="block w-full px-2.5 py-1.5 text-left text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                    >
+                      PDF · Enregistrer en PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExport("word")}
+                      className="block w-full px-2.5 py-1.5 text-left text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                    >
+                      Word · .doc
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExport("json")}
+                      className="block w-full px-2.5 py-1.5 text-left text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                    >
+                      JSON · structuré
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </>
       )}

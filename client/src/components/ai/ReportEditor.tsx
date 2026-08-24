@@ -3,6 +3,7 @@ import { Check, FileText, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { useWorkspace } from "../../state/workspace";
+import { ReportActionsBar } from "./ReportToolsBar";
 
 export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
   const w = useWorkspace();
@@ -12,6 +13,13 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
     taRef.current?.focus();
   }, []);
 
+  /* Statut du rapport : « Édition » tant que non validé, « Validé » ensuite. */
+  const status = w.radioReportValidated === true ? "Validé" : "Édition";
+  const statusClass =
+    w.radioReportValidated === true
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+      : "bg-accent/15 text-accent";
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -20,27 +28,27 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={cn(
         "fixed inset-0 z-30 flex bg-black/45 backdrop-blur-md",
-        mobile ? "items-stretch px-0 pt-0" : "items-start justify-center px-6 pt-14",
+        mobile ? "items-stretch px-0 pt-0" : "items-end justify-center pb-[7.5rem]",
       )}
     >
       <motion.div
-        initial={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.98 }}
+        initial={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.995 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.98 }}
+        exit={{ opacity: 0, y: 24, scale: mobile ? 1 : 0.995 }}
         transition={{ duration: 0.28, ease: "easeOut" }}
         data-attr="report-modal"
         className={cn(
           "flex flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl shadow-black/60",
           mobile
-            ? "h-screen w-screen rounded-none border-0 pb-[54px]"
-            : "h-[70vh] w-full max-w-3xl",
+            ? "h-[80vh] w-screen rounded-none border-0 pb-[120px]"
+            : "h-[68vh] w-full max-w-[700px]",
         )}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <FileText size={15} className="text-accent" strokeWidth={2.2} />
           <span className="text-[13px] font-semibold text-ink">Rapport d'interprétation</span>
-          <span className="rounded-full bg-accent/15 px-2 py-px text-[10px] font-medium text-accent">
-            Édition
+          <span className={cn("rounded-full px-2 py-px text-[10px] font-medium", statusClass)}>
+            {status}
           </span>
           <button
             type="button"
@@ -59,12 +67,10 @@ export function ReportEditorModal({ mobile = false }: { mobile?: boolean }) {
           onChange={(e) => w.setReportDraft(e.target.value)}
           spellCheck={false}
           className="h-full w-full flex-1 resize-none bg-canvas/40 p-4 font-mono text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-3/70"
-          placeholder="Éditez le rapport, ou demandez à l'IA de le modifier avec la barre de commandes ci-dessous…"
+          placeholder="Éditez le rapport, ou dictéez-le avec la barre de commandes…"
         />
         <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
-          <span className="mr-auto text-[10.5px] text-ink-3">
-            Astuce : demandez à l'IA « ajoute une conclusion » — par écrit ou à la voix (micro).
-          </span>
+          <ReportActionsBar draft={w.reportDraft} />
           <button
             type="button"
             onClick={() => w.setReportEditOpen(false)}

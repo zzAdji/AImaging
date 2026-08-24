@@ -350,8 +350,100 @@ export type ReportUpdate = {
   storage_path?: string | null;
 };
 
+/* --------------------- Report Engine (Phase INSTRUCTIONS) -------------------- */
+
+export type OrganizationRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  department: string | null;
+  logo_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OrganizationInsert = {
+  id?: string;
+  owner_id: string;
+  name: string;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  department?: string | null;
+  logo_path?: string | null;
+};
+
+export type OrganizationUpdate = {
+  name?: string;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  department?: string | null;
+  logo_path?: string | null;
+};
+
+export type ReportTemplateModality = "radiography" | "fetal_ultrasound" | "generic";
+
+export type ReportTemplateRow = {
+  id: string;
+  owner_id: string;
+  organization_id: string | null;
+  name: string;
+  modality: string;
+  version: number;
+  is_default: boolean;
+  language: string;
+  template_data: Json;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReportTemplateInsert = {
+  id?: string;
+  owner_id: string;
+  organization_id?: string | null;
+  name: string;
+  modality: string;
+  version?: number;
+  is_default?: boolean;
+  language?: string;
+  template_data?: Json;
+};
+
+export type ReportTemplateUpdate = {
+  name?: string;
+  organization_id?: string | null;
+  version?: number;
+  is_default?: boolean;
+  language?: string;
+  template_data?: Json;
+};
+
+/* ----------------------------------------------------------------------------
+ * Reports : colonnes ajoutées par 0007 (toutes optionnelles pour rester
+ * compatible avec les constructions existantes et les rapports legacy).
+ * --------------------------------------------------------------------------- */
+export type ReportEngineExtras = {
+  template_id?: string | null;
+  template_version?: number | null;
+  language?: string;
+  organization_id?: string | null;
+  validated_at?: string | null;
+  validated_by?: string | null;
+  signature_name?: string | null;
+  signature_role?: string | null;
+  signature_path?: string | null;
+};
+
 /* ----------------------------------------------------------------------------
  * Interface `Database` au format des types générés par supabase-js :
+
  * permet de brancher createClient<Database>() sans changement le jour où les
  * types sont régénérés depuis la base réelle.
  * ------------------------------------------------------------------------- */
@@ -410,6 +502,18 @@ export interface Database {
         Row: ReportRow;
         Insert: ReportInsert;
         Update: ReportUpdate;
+        Relationships: [];
+      };
+      organizations: {
+        Row: OrganizationRow;
+        Insert: OrganizationInsert;
+        Update: OrganizationUpdate;
+        Relationships: [];
+      };
+      report_templates: {
+        Row: ReportTemplateRow;
+        Insert: ReportTemplateInsert;
+        Update: ReportTemplateUpdate;
         Relationships: [];
       };
     };

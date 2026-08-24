@@ -1,0 +1,97 @@
+ RUN  v4.1.11 C:/Users/HP/Desktop/Projets/Stage-2026/hgg-ai-intership-project/client
+
+ ❯ tests/live/supabaseLive.test.ts (8 tests | 5 failed) 29486ms
+   ❯ Supabase LIVE — images (§19) (1)
+     × upload réel → lecture réelle → record DB réel → URL contrôlée → suppression réelle 2384ms
+   ✓ Supabase LIVE — annotations CRUD (§26) (1)
+     ✓ insert → select → update → delete réel d'une annotation  3981ms
+   ❯ Supabase LIVE — mesures + RLS multi-user (§25) (1)
+     × USER B ne voit ni ne modifie les annotations/mesures de USER A 2834ms
+   ✓ Supabase LIVE — analysis_runs CRUD (§28) (1)
+     ✓ crée un run réel, y rattache un classification_result, puis purge  4235ms
+   ❯ Supabase LIVE — RLS analysis_runs (§29) (1)
+     × USER B ne voit ni ne termine le run de USER A 5005ms
+   ✓ Supabase LIVE — authentification (9A) (1)
+     ✓ login USER A → session A ; logout ; login USER B → identité B ; restore OK  1920ms
+   ❯ Storage security — isolation utilisateurs (§20) (1)
+     × USER B ne peut ni lire ni supprimer un fichier de USER A 4104ms
+   ❯ Supabase LIVE — reports CRUD + RLS (§23) (1)
+     × create → read → update → RLS A/B → export Storage → delete réels 5016ms
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/live/supabaseLive.test.ts > Supabase LIVE — images (§19) > upload réel → lecture réelle → record DB réel → URL contrôlée → suppression réelle
+AssertionError: expected StorageApiError: invalid input syntax for… { …(5) } to be null
+
+- Expected:
+null
+
++ Received:
+StorageApiError {
+  "message": "invalid input syntax for type uuid: \"live-test\"",
+  "__isStorageError": true,
+  "namespace": "storage",
+  "name": "StorageApiError",
+  "status": 400,
+  "statusCode": "400",
+  "code": "InvalidParameter",
+}
+
+ ❯ tests/live/supabaseLive.test.ts:46:22
+     44|       upsert: true,
+     45|     });
+     46|     expect(up.error).toBeNull();
+       |                      ^
+     47|     const uploadMs = Date.now() - tUploadStart;
+     48|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+ FAIL  tests/live/supabaseLive.test.ts > Supabase LIVE — mesures + RLS multi-user (§25) > USER B ne voit ni ne modifie les annotations/mesures de USER A
+TypeError: Cannot read properties of null (reading 'id')
+ ❯ tests/live/supabaseLive.test.ts:190:68
+    188|     const mea = await userA
+    189|       .from("measurements")
+    190|       .insert({ image_id: image.data!.id, annotation_id: ann.data!.id, type: "DISTANCE", value: 7.07, unit: "px…       |                                                                    ^
+    191|       .select("id")
+    192|       .single();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+ FAIL  tests/live/supabaseLive.test.ts > Supabase LIVE — RLS analysis_runs (§29) > USER B ne voit ni ne termine le run de USER A
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/live/supabaseLive.test.ts:297:3
+    295|
+    296| describe.skipIf(!liveEnabled)("Supabase LIVE — RLS analysis_runs (§29)", () => {
+    297|   it("USER B ne voit ni ne termine le run de USER A", async () => {
+       |   ^
+    298|     const secondEmail = process.env.VITE_DEV_AUTH_SECOND_EMAIL ?? "";
+    299|     const secondPassword = process.env.VITE_DEV_AUTH_SECOND_PASSWORD ?? "";
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+ FAIL  tests/live/supabaseLive.test.ts > Storage security — isolation utilisateurs (§20) > USER B ne peut ni lire ni supprimer un fichier de USER A
+AssertionError: expected null not to be null
+ ❯ tests/live/supabaseLive.test.ts:411:33
+    409|
+    410|     const deleteByB = await userB.storage.from("medical-images").remove([pathA]);
+    411|     expect(deleteByB.error).not.toBeNull(); // suppression interdite
+       |                                 ^
+    412|
+    413|     await userA.storage.from("medical-images").remove([pathA]); // cleanup propriétaire
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+ FAIL  tests/live/supabaseLive.test.ts > Supabase LIVE — reports CRUD + RLS (§23) > create → read → update → RLS A/B → export Storage → delete réels
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/live/supabaseLive.test.ts:422:3
+    420|
+    421| describe.skipIf(!liveEnabled)("Supabase LIVE — reports CRUD + RLS (§23)", () => {
+    422|   it("create → read → update → RLS A/B → export Storage → delete réels", async () => {
+       |   ^
+    423|     const { createClient } = await import("@supabase/supabase-js");
+    424|     const userA = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 3 passed (8)
+   Start at  04:20:12
+   Duration  29.94s (transform 110ms, setup 0ms, import 133ms, tests 29.49s, environment 0ms)

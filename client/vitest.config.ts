@@ -12,5 +12,10 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     restoreMocks: true,
+    /* Les suites LIVE enchaînent plusieurs allers-retours réseau Supabase
+       (auth A/B + CRUD multi-tables + Storage) : 5 s par défaut suffisent
+       à peine et provoquent des timeouts artificiels (bd.log §29/§23). */
+    testTimeout: 30_000,
+    hookTimeout: 15_000,
   },
 });

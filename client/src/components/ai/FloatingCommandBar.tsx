@@ -6,6 +6,7 @@ import { commandSuggestions, completeCommand, type CommandSuggestion } from "../
 import { useEditorModality } from "../../state/editorModality";
 import { useFetalExam } from "../../state/fetalExam";
 import { useWorkspace } from "../../state/workspace";
+import { reportSpeechService } from "../../lib/reports/speechService";
 
 /**
  * Waveform profile covering the whole bar (GPT-mobile style):
@@ -38,6 +39,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
   const [voice, setVoice] = useState(false);
   const [open, setOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const [speechError, setSpeechError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const waveProfile = mobile ? WAVE_PROFILE.filter((_, i) => i % 3 === 0) : WAVE_PROFILE;
 
@@ -123,20 +125,41 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
     w.runAiCommand(t);
   };
 
+  /* Saisie vocale réelle via Web Speech API (reportSpeechService).
+     Le micro est utilisé depuis la command bar (§ demandée) ; la transcription
+     est proposée dans la barre puis envoyée comme une commande normale. */
   const toggleVoice = () => {
     if (voice) {
-      /* Stop listening — submit the (simulated) transcription */
+      reportSpeechService.stop();
       setVoice(false);
-      submit(
-        usingFetal
-          ? "Génère le compte rendu"
-          : w.reportEditOpen
-            ? "Ajoute une conclusion au rapport."
-            : "Analyse cette radiographie.",
-      );
-    } else {
-      setVoice(true);
+      return;
     }
+    setSpeechError(null);
+    if (!reportSpeechService.isSupported()) {
+      setSpeechError("Saisie vocale non supportée par ce navigateur — activez le micro dans les paramètres du navigateur, puis réessayez.");
+      return;
+    }
+    reportSpeechService.start({
+      onStateChange: (state) => {
+        if (state === "unsupported") {
+          setSpeechError("Micro indisponible — vérifiez la permission micro du navigateur (🔒 à gauche de l'URL).");
+        }
+      },
+      onError: (message) => setSpeechError(message),
+      onTranscript: (text) => {
+        setValue(text);
+        inputRef.current?.focus();
+      },
+    });
+    setVoice(true);
+  };
+
+  /* Cesse l'écoute et renvoie la transcription complète dans la barre,
+     prête à être envoyée (prévisualisation → confirmation explicite). */
+  const finishVoice = () => {
+    reportSpeechService.stop();
+    setVoice(false);
+    inputRef.current?.focus();
   };
 
   const fade = { duration: 0.22, ease: "easeOut" } as const;
@@ -283,8 +306,8 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
               <button
                 type="button"
                 data-attr="ai-command-mic"
-                onClick={() => setVoice(true)}
-                title="Entrée vocale"
+                onClick={toggleVoice}
+                title="Entrée vocale (micro)"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-icon transition-colors duration-150 ease-out hover:bg-hover hover:text-ink"
               >
                 <Mic size={16} strokeWidth={2} />
@@ -346,7 +369,7 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
                   type="button"
                   data-attr="ai-command-mic"
                   title="Arrêter l'écoute"
-                  onClick={toggleVoice}
+                  onClick={finishVoice}
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-black/30 transition-all duration-150 ease-out hover:bg-[#4f8ef7] active:scale-90"
                 >
                   <Square size={13} fill="currentColor" strokeWidth={0} />
@@ -358,6 +381,18 @@ export function FloatingCommandBar({ mobile = false }: { mobile?: boolean }) {
             </motion.div>
           )}
         </AnimatePresence>
+        {speechError !== null && (
+          <motion.p
+            key="ai-speech-error"
+            data-attr="ai-speech-error"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-auto w-full rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-center text-[11px] leading-tight text-red-400"
+          >
+            {speechError}
+          </motion.p>
+        )}
         {!open && (
           <motion.button
             key="ai-command-reopen"

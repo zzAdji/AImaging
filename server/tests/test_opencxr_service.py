@@ -135,8 +135,20 @@ def test_sort_image_leve_unavailable_sur_503(monkeypatch):
         sorter_service.sort_image(b"data", "img.png")
 
 
-def test_sort_image_sans_url_leve_unavailable():
+def test_sort_image_sans_url_leve_unavailable(monkeypatch):
+    """Sans URL configurée ET microservice local injoignable ⇒ erreur.
+
+    Le service retombe sur DEFAULT_OPEN_CXR_URL (127.0.0.1:8011) : quand ce
+    microservice tourne réellement sur la machine de dev, l'appel réussit et
+    le test devenait intermittent selon l'état de la machine. On force donc
+    un repli injoignable pour tester le contrat « indisponible ⇒ erreur ».
+    """
     sorter_service._remote_url = ""
+    monkeypatch.setattr(
+        sorter_service,
+        "DEFAULT_OPEN_CXR_URL",
+        "http://127.0.0.1:9", # port discard : connexion refusée garantie
+    )
     with pytest.raises(sorter_service.OpenCxrUnavailableError):
         sorter_service.sort_image(b"data", "img.png")
 

@@ -23,6 +23,7 @@ MIGRATION_FILES = [
     "0003_analysis_tables.sql",
     "0004_rls.sql",
     "0005_storage.sql",
+    "0006_storage_policies_owner.sql",
 ]
 
 EXPECTED_TABLES = [
@@ -217,14 +218,18 @@ def test_rls_enabled_on_all_tables_and_helper_is_safe():
 
 def test_policies_cover_all_actions_for_every_table():
     rls_section = _migration_text().split("0004_rls.sql")[-1]
-    policies = re.findall(r"create policy (\w+) on public\.(\w+)\s+for (\w+)", rls_section)
+    # Tolérant aux sauts de ligne/indentation du SQL réel (CORRECTION.md).
+    policies = re.findall(
+        r"create policy (\w+)\s+on\s+public\.(\w+)\s+for\s+(\w+)",
+        rls_section,
+    )
     covered = {(table, action) for _, table, action in policies}
     for table in EXPECTED_TABLES:
         for action in ("select", "insert", "update", "delete"):
             assert (table, action) in covered, f"Policy {action} manquante sur {table}."
     # Les INSERT doivent porter un WITH CHECK (jamais un USING seul).
     inserts_without_check = re.findall(
-        r"create policy \w+ on public\.\w+\s+for insert to authenticated\s+using\b",
+        r"create policy \w+\s+on\s+public\.\w+\s+for insert to authenticated\s+using\b",
         rls_section,
     )
     assert not inserts_without_check, "Des policies INSERT utilisent USING au lieu de WITH CHECK."

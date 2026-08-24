@@ -34,29 +34,12 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — images (§19)", () => {
     expect(authError).toBeNull();
     const userId = authData!.user!.id;
 
-    const path = `${userId}/live-test/exam-live/images/img-live/live-${Date.now()}.png`;
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // signature PNG
 
-    // 1. upload réel
-    const tUploadStart = Date.now();
-    const up = await supabase.storage.from("medical-images").upload(path, bytes, {
-      contentType: "image/png",
-      upsert: true,
-    });
-    expect(up.error).toBeNull();
-    const uploadMs = Date.now() - tUploadStart;
-
-    // 2. lecture réelle (+ §21 mesure download)
-    const tDownloadStart = Date.now();
-    const down = await supabase.storage.from("medical-images").download(path);
-    expect(down.error).toBeNull();
-    const downloadMs = Date.now() - tDownloadStart;
-    expect((await down.data!.arrayBuffer()).byteLength).toBe(bytes.byteLength);
-    console.info(
-      `[live] perf §21 : upload ${uploadMs} ms / download ${downloadMs} ms / taille ${bytes.byteLength} o`,
-    );
-
-    // 3. création DB réelle (examen jetable dans le workspace par défaut)
+    // 1. création DB réelle AVANT l'upload : storage_insert_own (0006) caste
+    //    les segments [2] et [3] du chemin en ::uuid et vérifie leur
+    //    appartenance via workspaces/examinations, donc le chemin doit
+    //    utiliser de VRAIS UUID de lignes existantes, pas des slugs libres.
     const ws = await supabase
       .from("workspaces")
       .insert({ owner_id: userId, name: "LIVE - Espace jetable Phase 4" })
@@ -75,10 +58,35 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — images (§19)", () => {
       .single();
     expect(exam.error).toBeNull();
 
+    // Chemin conforme à la structure attendue par les policies storage :
+    // {user_id}/{workspace_id}/{examination_id}/images/{image_id}/{filename}
+    const imageId = crypto.randomUUID();
+    const path = `${userId}/${ws.data!.id}/${exam.data!.id}/images/${imageId}/live-${Date.now()}.png`;
+
+    // 2. upload réel
+    const tUploadStart = Date.now();
+    const up = await supabase.storage.from("medical-images").upload(path, bytes, {
+      contentType: "image/png",
+      upsert: true,
+    });
+    expect(up.error).toBeNull();
+    const uploadMs = Date.now() - tUploadStart;
+
+    // 3. lecture réelle (+ §21 mesure download)
+    const tDownloadStart = Date.now();
+    const down = await supabase.storage.from("medical-images").download(path);
+    expect(down.error).toBeNull();
+    const downloadMs = Date.now() - tDownloadStart;
+    expect((await down.data!.arrayBuffer()).byteLength).toBe(bytes.byteLength);
+    console.info(
+      `[live] perf §21 : upload ${uploadMs} ms / download ${downloadMs} ms / taille ${bytes.byteLength} o`,
+    );
+
     // 4. lecture contrôlée via la table (RLS active)
     const readBack = await supabase
       .from("examination_images")
       .insert({
+        id: imageId,
         examination_id: exam.data!.id,
         filename: path.split("/").at(-1),
         storage_path: path,
@@ -109,8 +117,8 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — annotations CRUD (§26)", () =>
   it("insert → select → update → delete réel d'une annotation", async () => {
     const { createClient } = await import("@supabase/supabase-js");
     const supabase = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
-    const { data: auth } = await supabase.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
-    expect(auth.error).toBeNull();
+    const resp1 = await supabase.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD }); const auth = resp1.data as { user: { id: string } | null } | null;
+    expect(resp1.error).toBeNull();
     const userId = auth!.user!.id;
 
     const ws = await supabase.from("workspaces").insert({ owner_id: userId, name: "LIVE - Ann P5" }).select("id").single();
@@ -132,7 +140,7 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — annotations CRUD (§26)", () =>
       .from("annotations")
       .insert({
         image_id: image.data!.id,
-        legacy_shape_id: "live-shape-1",
+        legacy_shape_id: `live-shape-${Date.now()}`,
         type: "rectangle",
         geometry: { x: 1, y: 2, w: 3, h: 4, points: [] },
         created_by: "user",
@@ -171,20 +179,27 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — mesures + RLS multi-user (§25)
     await userA.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
     await userB.auth.signInWithPassword({ email: secondEmail, password: secondPassword });
 
-    /* A crée son arbre complet et une annotation + mesure. */
+    /* A crée son arbre complet et une annotation + mesure.
+       Chaque étape est vérifiée : sans ces expect(), un échec silencieux en
+       amont (ex: ws.data === null) ne se manifeste que bien plus loin sous
+       forme de TypeError confus sur .data!.id, en masquant la vraie cause. */
     const uidA = (await userA.auth.getUser()).data.user!.id;
     const ws = await userA.from("workspaces").insert({ owner_id: uidA, name: "LIVE - RLS P5" }).select("id").single();
+    expect(ws.error).toBeNull();
     const exam = await userA
       .from("examinations")
       .insert({ workspace_id: ws.data!.id, legacy_id: `live-rls-${Date.now()}`, name: "RLS", modality: "unknown" })
       .select("id")
       .single();
+    expect(exam.error).toBeNull();
     const image = await userA.from("examination_images").insert({ examination_id: exam.data!.id, filename: "r.png" }).select("id").single();
+    expect(image.error).toBeNull();
     const ann = await userA
       .from("annotations")
-      .insert({ image_id: image.data!.id, legacy_shape_id: "rls-shape", type: "line", geometry: { x: 0, y: 0, w: 5, h: 5, points: [] }, created_by: "user" })
+      .insert({ image_id: image.data!.id, legacy_shape_id: `rls-shape-${Date.now()}`, type: "line", geometry: { x: 0, y: 0, w: 5, h: 5, points: [] }, created_by: "user" })
       .select("id")
       .single();
+    expect(ann.error).toBeNull();
     const mea = await userA
       .from("measurements")
       .insert({ image_id: image.data!.id, annotation_id: ann.data!.id, type: "DISTANCE", value: 7.07, unit: "px", source: "user", metadata: {} })
@@ -198,13 +213,25 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — mesures + RLS multi-user (§25)
     const meaByB = await userB.from("measurements").select("id").eq("id", mea.data!.id);
     expect(meaByB.data).toHaveLength(0);
 
-    /* …ne peut pas modifier… */
+    /* …ne peut pas modifier : RLS filtre silencieusement (error=null,
+       rows=0) — la preuve est la relecture par USER A (CORRECTION.md §1). */
     const forbiddenUpdate = await userB.from("annotations").update({ visible: false }).eq("id", ann.data!.id);
-    expect(forbiddenUpdate.error).not.toBeNull();
+    expect(forbiddenUpdate.error ?? null).toBeNull();
+    const recheckAnn = await userA
+      .from("annotations")
+      .select("visible")
+      .eq("id", ann.data!.id)
+      .single();
+    expect(recheckAnn.data!.visible).toBe(true); // valeur originale intacte
 
     /* …ni supprimer. */
-    const forbiddenDelete = await userB.from("measurements").delete().eq("id", mea.data!.id);
-    expect(forbiddenDelete.error).not.toBeNull();
+    await userB.from("measurements").delete().eq("id", mea.data!.id);
+    const recheckMea = await userA
+      .from("measurements")
+      .select("id")
+      .eq("id", mea.data!.id)
+      .maybeSingle();
+    expect(recheckMea.data).not.toBeNull(); // mesure toujours présente
 
     /* Cleanup propriétaire. */
     await userA.from("examinations").delete().eq("id", exam.data!.id);
@@ -220,8 +247,8 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — analysis_runs CRUD (§28)", () 
   it("crée un run réel, y rattache un classification_result, puis purge", async () => {
     const { createClient } = await import("@supabase/supabase-js");
     const supabase = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
-    const { data: auth } = await supabase.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
-    expect(auth.error).toBeNull();
+    const resp1 = await supabase.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD }); const auth = resp1.data as { user: { id: string } | null } | null;
+    expect(resp1.error).toBeNull();
     const userId = auth!.user!.id;
 
     const ws = await supabase.from("workspaces").insert({ owner_id: userId, name: "LIVE - Runs P6" }).select("id").single();
@@ -289,6 +316,8 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — RLS analysis_runs (§29)", () =
       console.warn("[live] §29 partiellement exécutable : second compte non configuré.");
       return;
     }
+    // 2x signIn + plusieurs inserts séquentiels sur deux clients réels :
+    // dépasse régulièrement les 5000ms par défaut de vitest sur un réseau réel.
     const { createClient } = await import("@supabase/supabase-js");
     const userA = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
     const userB = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
@@ -311,8 +340,20 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — RLS analysis_runs (§29)", () =
 
     const seenByB = await userB.from("analysis_runs").select("id").eq("id", run.data!.id);
     expect(seenByB.data).toHaveLength(0);
-    const forbiddenUpdate = await userB.from("analysis_runs").update({ status: "done" }).eq("id", run.data!.id);
-    expect(forbiddenUpdate.error).not.toBeNull();
+
+    /* USER B tente de terminer le run de USER A : filtrage silencieux,
+       statut intact à la relecture par A (CORRECTION.md §1/§13). */
+    const forbiddenStatus = await userB
+      .from("analysis_runs")
+      .update({ status: "done" })
+      .eq("id", run.data!.id);
+    expect(forbiddenStatus.error ?? null).toBeNull();
+    const recheckRun = await userA
+      .from("analysis_runs")
+      .select("status")
+      .eq("id", run.data!.id)
+      .single();
+    expect(recheckRun.data!.status).toBe("running");
 
     await userA.from("examinations").delete().eq("id", exam.data!.id);
     await userA.from("workspaces").delete().eq("id", ws.data!.id);
@@ -377,16 +418,42 @@ describe.skipIf(!liveEnabled)("Storage security — isolation utilisateurs (§20
     await userA.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
     await userB.auth.signInWithPassword({ email: secondEmail, password: secondPassword });
 
-    const pathA = `${(await userA.auth.getUser()).data.user!.id}/live-sec/exam/images/img/secret.png`;
-    await userA.storage.from("medical-images").upload(pathA, new Uint8Array([1, 2, 3]), { upsert: true });
+    const uidA = (await userA.auth.getUser()).data.user!.id;
+
+    // Chemin conforme : storage_insert_own caste (storage.foldername(name))[2]
+    // et [3] en ::uuid et vérifie leur appartenance réelle via workspaces/
+    // examinations. Des slugs libres ("live-sec", "exam") échouent à
+    // l'upload lui-même (invalid input syntax for type uuid), ce qui fait
+    // planter le test bien avant d'avoir pu vérifier l'isolation A/B.
+    const wsA = await userA.from("workspaces").insert({ owner_id: uidA, name: "LIVE - Storage isolation" }).select("id").single();
+    expect(wsA.error).toBeNull();
+    const examA = await userA
+      .from("examinations")
+      .insert({ workspace_id: wsA.data!.id, legacy_id: `live-sec-${Date.now()}`, name: "LIVE", modality: "unknown" })
+      .select("id")
+      .single();
+    expect(examA.error).toBeNull();
+
+    const pathA = `${uidA}/${wsA.data!.id}/${examA.data!.id}/images/${crypto.randomUUID()}/secret.png`;
+    const uploaded = await userA.storage.from("medical-images").upload(pathA, new Uint8Array([1, 2, 3]), { upsert: true });
+    expect(uploaded.error).toBeNull();
 
     const readByB = await userB.storage.from("medical-images").download(pathA);
     expect(readByB.error).not.toBeNull(); // lecture interdite
 
+    // Storage.remove() ne renvoie PAS d'erreur quand RLS filtre silencieusement
+    // l'objet (comportement identique à .delete() sur les tables) : la preuve
+    // de l'interdiction est la relecture par le propriétaire, pas deleteByB.error.
     const deleteByB = await userB.storage.from("medical-images").remove([pathA]);
-    expect(deleteByB.error).not.toBeNull(); // suppression interdite
+    expect(deleteByB.error ?? null).toBeNull();
+    expect(deleteByB.data ?? []).toHaveLength(0); // rien réellement supprimé côté B
+
+    const stillThere = await userA.storage.from("medical-images").download(pathA);
+    expect(stillThere.error).toBeNull(); // le fichier de A existe toujours
 
     await userA.storage.from("medical-images").remove([pathA]); // cleanup propriétaire
+    await userA.from("examinations").delete().eq("id", examA.data!.id);
+    await userA.from("workspaces").delete().eq("id", wsA.data!.id);
   });
 });
 
@@ -399,8 +466,8 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — reports CRUD + RLS (§23)", () 
     const { createClient } = await import("@supabase/supabase-js");
     const userA = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
     const userB = createClient(SUPABASE_URL, PUBLISHABLE_KEY);
-    const { data: authA } = await userA.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
-    expect(authA.error).toBeNull();
+    const resp1 = await userA.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD }); const authA = resp1.data as { user: { id: string } | null } | null;
+    expect(resp1.error).toBeNull();
     const userId = authA!.user!.id;
 
     const ws = await userA.from("workspaces").insert({ owner_id: userId, name: "LIVE - Reports P7" }).select("id").single();
@@ -457,7 +524,8 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — reports CRUD + RLS (§23)", () 
     expect(downloaded.error).toBeNull();
     expect((await userA.storage.from("reports").remove([exportPath])).error).toBeNull();
 
-    /* RLS A/B : USER B ne voit ni ne modifie le rapport de USER A. */
+    /* RLS A/B : USER B ne voit ni ne modifie le rapport de USER A
+       (filtrage silencieux + relecture par A — CORRECTION.md §13). */
     const secondEmail = process.env.VITE_DEV_AUTH_SECOND_EMAIL ?? "";
     const secondPassword = process.env.VITE_DEV_AUTH_SECOND_PASSWORD ?? "";
     if (secondEmail && secondPassword) {
@@ -465,7 +533,13 @@ describe.skipIf(!liveEnabled)("Supabase LIVE — reports CRUD + RLS (§23)", () 
       const seenByB = await userB.from("reports").select("id").eq("id", created.data!.id);
       expect(seenByB.data).toHaveLength(0);
       const forbidden = await userB.from("reports").update({ status: "draft" }).eq("id", created.data!.id);
-      expect(forbidden.error).not.toBeNull();
+      expect(forbidden.error ?? null).toBeNull();
+      const recheckReport = await userA
+        .from("reports")
+        .select("status")
+        .eq("id", created.data!.id)
+        .single();
+      expect(recheckReport.data!.status).toBe("validated"); // inchangé
     } else {
       console.warn("[live] §23 partiellement exécutable : second compte non configuré.");
     }
