@@ -61,6 +61,14 @@ from three_d_service import (  # noqa: E402
     start_reconstruction,
 )
 from dicom_service import DicomImportError, parse_dicom_bytes  # noqa: E402
+from pathology_service import (  # noqa: E402
+    PathologyUnavailableError,
+    active_url as get_pathology_active_url,
+    detect_pathologies as detect_pathologies_remote,
+    get_remote_url as get_pathology_remote_url,
+    probe_remote_backend as probe_pathology_backend,
+    set_remote_url as set_pathology_remote_url,
+)
 from sorter_service import (  # noqa: E402
     OpenCxrUnavailableError,
     active_url as get_opencxr_active_url,
@@ -170,13 +178,36 @@ de 0. Ne produis aucun texte hors du JSON."""
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     startup_errors.clear()
-    logger.info("Démarrage : chargement des services...")
+    logger.info("Démarrage : chargement des modèles...")
 
     try:
         registry.load_radiography(RadiographyServerConfig())
     except Exception as exc:  # noqa: BLE001
         logger.exception("Chargement des modèles radiographiques impossible.")
         startup_errors.append(f"radiography: {exc}")
+
+    # CXAS (segmentation anatomique) : préchargé ici plutôt qu'à la première
+    # requête pour supprimer le coût froid (imports, UNet, poids) en analyse.
+    try:
+        t0 = time.perf_counter()
+        from anatomy_service import preload as preload_anatomy  # noqa: PLC0415
+
+        preload_anatomy()
+        logger.info("CXAS préchargé en %.1f s.", time.perf_counter() - t0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Préchargement CXAS impossible : %s", exc)
+        startup_errors.append(f"anatomy: {exc}")
+
+    # HybridGNet (landmarks poumons + cœur) : mêmes motif et gestion d'erreur.
+    try:
+        t0 = time.perf_counter()
+        from chexmask_service import preload as preload_hybridgnet  # noqa: PLC0415
+
+        preload_hybridgnet()
+        logger.info("HybridGNet préchargé en %.1f s.", time.perf_counter() - t0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Préchargement HybridGNet impossible : %s", exc)
+        startup_errors.append(f"hybridgnet: {exc}")
 
     try:
         registry.load_gemini(GeminiConfig())
@@ -265,6 +296,8 @@ class WorkspaceAnatomyRegionsResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
     region_texts: dict[str, str] = Field(default_factory=dict)
+    """Statut anomalie par région : True = écart visible/mesuré signalé."""
+    region_anomalies: dict[str, bool] = Field(default_factory=dict)
 
 
 class WorkspaceThreeDJobResponse(BaseModel):
@@ -365,6 +398,25 @@ class WorkspaceOpenCxrStandardizeResponse(BaseModel):
     height: int
     # opencxr renvoie la liste des opérations appliquées (crop/resize/pad).
     size_changes: list = []
+    inference_time_ms: float | None = None
+    generated_at: str
+
+
+class PathologyBackendInfo(BaseModel):
+    mode: str = "remote"  # toujours remote : Space public par défaut ou surcharge
+    remote_url: str | None = None
+    reachable: bool | None = None
+    backend: dict | None = None
+
+
+class PathologyBackendUpdate(BaseModel):
+    remote_url: str = ""
+
+
+class WorkspacePathologyDetectResponse(BaseModel):
+    workspace_id: str
+    image_id: str
+    result: dict
     inference_time_ms: float | None = None
     generated_at: str
 
@@ -1038,6 +1090,80 @@ async def opencxr_backend_update(payload: OpenCxrBackendUpdate) -> OpenCxrBacken
     return info
 
 
+# --------------------------- Pathologies (backend Neuro) ---------------------------
+
+@app.post(
+    "/workspace/exams/{workspace_id}/pathology/detect",
+    response_model=WorkspacePathologyDetectResponse,
+)
+async def pathology_detect_workspace_image(
+    workspace_id: str,
+    image_id: str = Form(...),
+    image: UploadFile = File(...),
+) -> WorkspacePathologyDetectResponse:
+    """Détection de pathologies + heatmaps via le backend Neuro distant.
+
+    Délègue l'image au pipeline DenseNet-121 (classification + Grad-CAM) et
+    YOLOv8s (bounding boxes) exposé par le Space HF communiqué.
+    """
+    session = workspace_store.get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Espace de travail temporaire introuvable ou expiré.")
+    workspace_image = next((item for item in session.manifest.images if item.image_id == image_id), None)
+    if workspace_image is None:
+        raise HTTPException(status_code=422, detail=f"Image inconnue dans cet espace : '{image_id}'.")
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Image vide.")
+    started = time.perf_counter()
+    try:
+        result = detect_pathologies_remote(data, image.filename or "image.png")
+    except PathologyUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    inference_ms = round((time.perf_counter() - started) * 1000, 1)
+    workspace_store.record_audit(workspace_id, {
+        "at": datetime.now(UTC).isoformat(),
+        "endpoint": "/pathology/detect",
+        "image_id": image_id,
+        "inference_time_ms": inference_ms,
+        "positive_conditions": result.get("positive_conditions", [])[:8],
+    })
+    return WorkspacePathologyDetectResponse(
+        workspace_id=workspace_id,
+        image_id=image_id,
+        result=result,
+        inference_time_ms=inference_ms,
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@app.get("/workspace/pathology/backend", response_model=PathologyBackendInfo)
+async def pathology_backend() -> PathologyBackendInfo:
+    """État du backend Neuro (URL effective + sonde de santé)."""
+    override = get_pathology_remote_url()
+    active = get_pathology_active_url()
+    info = PathologyBackendInfo(mode="remote", remote_url=active)
+    info.backend = probe_pathology_backend()
+    info.reachable = info.backend is not None
+    info.mode = "remote-default" if not override else "remote-custom"
+    return info
+
+
+@app.put("/workspace/pathology/backend", response_model=PathologyBackendInfo)
+async def pathology_backend_update(payload: PathologyBackendUpdate) -> PathologyBackendInfo:
+    """Change l'URL du backend Neuro à chaud (vide = défaut public)."""
+    try:
+        set_pathology_remote_url(payload.remote_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    active = get_pathology_active_url()
+    info = PathologyBackendInfo(mode="remote", remote_url=active)
+    info.backend = probe_pathology_backend()
+    info.reachable = info.backend is not None
+    info.mode = "remote-default" if not get_pathology_remote_url() else "remote-custom"
+    return info
+
+
 @app.get("/workspace/exams/{workspace_id}/3d/jobs/{job_id}", response_model=WorkspaceThreeDStatusResponse)
 async def workspace_three_d_job_status(
     workspace_id: str,
@@ -1433,7 +1559,6 @@ async def generate_workspace_anatomy_regions(
         return WorkspaceAnatomyRegionsResponse(
             region_texts={region.id: fallback_offline for region in request.regions}
         )
-
     media_parts: list[genai_types.Part] = []
     image_attached = False
     if request.canvas_data_url:
@@ -1458,7 +1583,10 @@ async def generate_workspace_anatomy_regions(
     system_instruction = (
         "Tu es un assistant radiologique expert. Tu décris, région par région, l'état d'une radiographie thoracique "
         "à partir de l'image fournie et de la segmentation anatomique CXAS avec ses mesures. "
-        "Réponds impérativement au format JSON strict avec la clé 'region_texts' contenant le dictionnaire region_id -> texte."
+        "Tu signales explicitement toute déviation visuelle ou mesurée au lieu de conclure à la normale. "
+        "Réponds impérativement au format JSON strict avec deux clés : 'region_texts' "
+        "(dictionnaire region_id -> texte) et 'region_anomalies' (dictionnaire region_id -> booléen, "
+        "true si la région présente une anomalie)."
     )
 
     try:
@@ -1469,9 +1597,14 @@ async def generate_workspace_anatomy_regions(
             media_parts=media_parts if media_parts else None,
         )
         texts = dict(response_data.region_texts)
+        anomalies = {k: bool(v) for k, v in dict(response_data.region_anomalies).items()}
         for region in request.regions:
             if region.id not in texts or not texts[region.id]:
-                texts[region.id] = f"{region.label} : aspects normaux d'après les données CXAS."
+                # Fallback neutre : ne jamais affirmer une normale non vérifiée.
+                texts[region.id] = f"{region.label} : interprétation IA indisponible pour cette région."
+                anomalies.pop(region.id, None)
+            elif region.id not in anomalies:
+                anomalies[region.id] = False
 
         workspace_store.record_audit(workspace_id, {
             "at": datetime.now(UTC).isoformat(),
@@ -1479,8 +1612,9 @@ async def generate_workspace_anatomy_regions(
             "image_id": request.image_id,
             "regions_count": len(request.regions),
             "image_attached": image_attached,
+            "anomalies_count": sum(1 for v in anomalies.values() if v),
         })
-        return WorkspaceAnatomyRegionsResponse(region_texts=texts)
+        return WorkspaceAnatomyRegionsResponse(region_texts=texts, region_anomalies=anomalies)
     except Exception:
         logger.exception("Échec de la génération des descriptions anatomiques par région pour l'image %s.", request.image_id)
         return WorkspaceAnatomyRegionsResponse(
@@ -1568,17 +1702,28 @@ async def generate_radiography_report(request: ReportRequest) -> ReportResponse:
 @app.get("/health")
 async def health() -> dict:
     try:
-        from anatomy_service import is_available as anatomy_available  # noqa: PLC0415
+        from anatomy_service import is_available as anatomy_available, is_loaded as anatomy_is_loaded  # noqa: PLC0415
 
         anatomy_ready = anatomy_available()
+        anatomy_loaded = anatomy_is_loaded()
     except Exception:  # noqa: BLE001
         anatomy_ready = False
+        anatomy_loaded = False
+    try:
+        from chexmask_service import is_loaded as hybridgnet_is_loaded  # noqa: PLC0415
+
+        hybridgnet_loaded = hybridgnet_is_loaded()
+    except Exception:  # noqa: BLE001
+        hybridgnet_loaded = False
     return {
         "status": "ok" if not startup_errors else "degraded",
         "radiography_models_loaded": len(registry.radiography_models),
         "gemini_ready": registry.gemini_client is not None,
         "anatomy_ready": anatomy_ready,
+        "anatomy_loaded": anatomy_loaded,
+        "hybridgnet_loaded": hybridgnet_loaded,
         "opencxr_ready": opencxr_available(),
+        "pathology_ready": probe_pathology_backend() is not None,
         "startup_errors": startup_errors,
     }
 

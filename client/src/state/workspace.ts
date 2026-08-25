@@ -1,7 +1,7 @@
 import { createContext, useContext, type RefObject } from "react";
 import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/examinations";
 import type { LinearImageBuffer } from "../lib/dicom";
-import type { OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult } from "../lib/workspaceApi";
+import type { OpenCxrImageResult, PathologyResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult } from "../lib/workspaceApi";
 import type { LandmarkContours, LiveLandmarkAnalysis } from "../lib/landmarkMeasure";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
@@ -35,6 +35,7 @@ export type SectionId =
   | "anatomy"
   | "landmarks"
   | "anatomymap"
+  | "pathology"
   | "diagnostics"
   | "report";
 
@@ -557,6 +558,30 @@ export interface WorkspaceState {
   anatomyRegionTextsError: string | null;
   /** Charge / regénère les interprétations IA par région pour l'image et l'analyse CXAS actives. */
   loadAnatomyRegionTexts: () => Promise<void>;
+  /** Régions signalées avec une anomalie par l'IA (id de région -> true). */
+  anatomyRegionAnomalies: Record<string, boolean>;
+  /** Observations éditées manuellement (id de région -> texte) ; prioritaires sur l'IA. */
+  anatomyRegionOverrides: Record<string, string>;
+  /** Enregistre l'édition manuelle de l'observation d'une région ("" pour réinitialiser). */
+  saveAnatomyRegionObservation: (regionId: string, text: string) => void;
+
+  /* --------------------- Pathologies (backend « Neuro ») --------------------- */
+  /** Résultat détection pathologies + heatmaps Grad-CAM (pipeline Neuro distant). */
+  pathologyResult: PathologyResult | null;
+  pathologyLoading: boolean;
+  pathologyError: string | null;
+  /** Visibilité de la carte « Détection & Heatmaps » dans la sidebar droite. */
+  pathologyCardOpen: boolean;
+  /** Ouvre/ferme la carte ; lance l'analyse à l'ouverture si aucune n'existe encore. */
+  togglePathologyCard: () => void;
+  /** Lance (ou relance) la détection de pathologies sur l'image active. */
+  runPathologyAnalysis: () => Promise<boolean>;
+  /** Vue active sur le canvas : boxes de détection ou heatmap Grad-CAM. */
+  pathologyView: "detection" | "heatmap";
+  setPathologyView: (view: "detection" | "heatmap") => void;
+  /** Heatmap affichée : null = composite globale, sinon clé dans individual_heatmaps. */
+  pathologyHeatmapKey: string | null;
+  setPathologyHeatmapKey: (key: string | null) => void;
 
   /* ----------------------------- Landmarks (HybridGNet) ----------------------------- */
   /** Résultat landmarks (contours poumons+cœur + CTR/diamètres/surfaces + incertitude). */

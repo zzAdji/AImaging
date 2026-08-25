@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Check, Pencil, RefreshCw, TriangleAlert, X } from "lucide-react";
 import { useWorkspace } from "../../state/workspace";
 import {
   ANATOMY_MAP_HEIGHT,
@@ -45,6 +45,9 @@ export function AnatomyMapCard() {
   const w = useWorkspace();
   const [selected, setSelected] = useState<{ kind: "region" | "point"; id: string } | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  /* Édition manuelle de l'observation d'une région. */
+  const [editingRegionId, setEditingRegionId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const points = useMemo<ActionPoint[]>(() => {
@@ -111,10 +114,12 @@ export function AnatomyMapCard() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
+    const anomalies = w.anatomyRegionAnomalies;
     for (const region of ANATOMY_REGIONS) {
       const isSel = effectiveRegion?.id === region.id;
       const isHov = hovered === region.id;
-      if (!isSel && !isHov) continue;
+      const isAnom = Boolean(anomalies[region.id]);
+      if (!isSel && !isHov && !isAnom) continue;
       ctx.beginPath();
       region.polygon.forEach((p, i) => {
         const px = (p.x / ANATOMY_MAP_WIDTH) * cssW;
@@ -123,11 +128,41 @@ export function AnatomyMapCard() {
         else ctx.lineTo(px, py);
       });
       ctx.closePath();
-      ctx.fillStyle = hexToRgba(region.color, isSel ? 0.28 : 0.18);
-      ctx.fill();
-      ctx.strokeStyle = hexToRgba(region.color, isSel ? 0.85 : 0.5);
-      ctx.lineWidth = isSel ? 2.5 : 1.5;
-      ctx.stroke();
+      if (isAnom) {
+        /* Région avec anomalie signalée : halo rouge persistant, visible
+           sans survol ni sélection pour attirer l'œil sur la carte. */
+        ctx.fillStyle = hexToRgba("#ef4444", isSel ? 0.3 : 0.2);
+        ctx.fill();
+        ctx.strokeStyle = hexToRgba("#ef4444", isSel ? 0.95 : 0.75);
+        ctx.lineWidth = isSel ? 2.5 : 1.6;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = hexToRgba(region.color, isSel ? 0.28 : 0.18);
+        ctx.fill();
+        ctx.strokeStyle = hexToRgba(region.color, isSel ? 0.85 : 0.5);
+        ctx.lineWidth = isSel ? 2.5 : 1.5;
+        ctx.stroke();
+      }
+      if (isAnom) {
+        /* Pastille d'alerte au centroïde du polygone. */
+        let cx = 0;
+        let cy = 0;
+        for (const p of region.polygon) {
+          cx += (p.x / ANATOMY_MAP_WIDTH) * cssW;
+          cy += (p.y / ANATOMY_MAP_HEIGHT) * cssH;
+        }
+        cx /= region.polygon.length;
+        cy /= region.polygon.length;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4.2, 0, Math.PI * 2);
+        ctx.fillStyle = "#ef4444";
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${7}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("!", cx, cy + 0.5);
+      }
     }
 
     for (const pt of points) {
@@ -150,7 +185,7 @@ export function AnatomyMapCard() {
         ctx.stroke();
       }
     }
-  }, [hovered, selected, effectiveRegion, points]);
+  }, [hovered, selected, effectiveRegion, points, w.anatomyRegionAnomalies]);
 
   function pointerAt(e: { clientX: number; clientY: number }, el: HTMLElement): { xF: number; yF: number } {
     const rect = el.getBoundingClientRect();
@@ -176,7 +211,14 @@ export function AnatomyMapCard() {
   };
 
   const regionTexts = w.anatomyRegionTexts;
+  const regionOverrides = w.anatomyRegionOverrides;
+  const regionOverride = effectiveRegion ? regionOverrides[effectiveRegion.id] : undefined;
   const regionText = effectiveRegion ? regionTexts[effectiveRegion.id] : null;
+  /* L'édition manuelle est prioritaire sur l'interprétation IA. */
+  const displayedText = regionOverride ?? regionText;
+  const isOverridden = effectiveRegion ? effectiveRegion.id in regionOverrides : false;
+  const isAnomalous = effectiveRegion ? Boolean(w.anatomyRegionAnomalies[effectiveRegion.id]) : false;
+  const isEditing = effectiveRegion !== null && editingRegionId === effectiveRegion.id;
   const findings = effectiveRegion
     ? w.aiResults.diagnostics.filter((d) => {
         if (!d.region) return false;
@@ -239,15 +281,88 @@ export function AnatomyMapCard() {
           </p>
 
           <div className="border-t border-border/70 pt-1.5">
-            <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-              Observation
-            </p>
+            <div className="flex items-center justify-between gap-1.5">
+              <p className="text-[9.5px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+                Observation
+              </p>
+              {effectiveRegion && !isEditing && (
+                <button
+                  type="button"
+                  data-attr="ai-anatomy-edit"
+                  onClick={() => {
+                    setEditDraft(displayedText ?? "");
+                    setEditingRegionId(effectiveRegion.id);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border/70 bg-surface/60 px-1.5 py-0.5 text-[9px] font-medium text-ink-2 transition-colors duration-150 ease-out hover:bg-accent/10 hover:text-accent"
+                >
+                  <Pencil size={9} />
+                  Éditer
+                </button>
+              )}
+            </div>
 
-            {/* Interprétation IA (ex-« Votre image (IA) ») — générée à l'ouverture */}
+            {/* Région signalée avec une anomalie par l'IA */}
+            {effectiveRegion && isAnomalous && !isEditing && (
+              <p className="mt-1 inline-flex items-center gap-1 rounded-md border border-[#ef4444]/40 bg-[#ef4444]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#ef4444]">
+                <TriangleAlert size={9} />
+                Anomalie signalée
+              </p>
+            )}
+
+            {/* Interprétation IA (générée à l'ouverture), remplaçable par une édition manuelle */}
             {effectiveRegion ? (
-              regionText ? (
+              isEditing ? (
+                /* Mode édition manuelle de l'observation */
+                <div className="mt-1 space-y-1">
+                  <textarea
+                    data-attr="ai-anatomy-edit-input"
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    rows={4}
+                    className="w-full resize-none rounded-lg border border-border/80 bg-surface/80 p-1.5 text-[10px] leading-relaxed text-ink outline-none focus:border-accent/60"
+                    placeholder="Saisissez votre observation pour cette région…"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      data-attr="ai-anatomy-edit-save"
+                      onClick={() => {
+                        if (effectiveRegion) w.saveAnatomyRegionObservation(effectiveRegion.id, editDraft);
+                        setEditingRegionId(null);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-accent/40 bg-accent/15 px-2 py-0.5 text-[9.5px] font-medium text-accent transition-colors duration-150 ease-out hover:bg-accent/25"
+                    >
+                      <Check size={10} />
+                      Enregistrer
+                    </button>
+                    <button
+                      type="button"
+                      data-attr="ai-anatomy-edit-cancel"
+                      onClick={() => setEditingRegionId(null)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-border/70 bg-surface/60 px-2 py-0.5 text-[9.5px] font-medium text-ink-3 transition-colors duration-150 ease-out hover:text-ink"
+                    >
+                      <X size={10} />
+                      Annuler
+                    </button>
+                    {isOverridden && (
+                      <button
+                        type="button"
+                        data-attr="ai-anatomy-edit-reset"
+                        onClick={() => {
+                          if (effectiveRegion) w.saveAnatomyRegionObservation(effectiveRegion.id, "");
+                          setEditingRegionId(null);
+                        }}
+                        className="ml-auto text-[9px] italic text-ink-3 underline-offset-2 hover:underline"
+                      >
+                        Revenir au texte IA
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : displayedText ? (
                 <p className="mt-0.5 whitespace-pre-wrap text-[10px] leading-relaxed text-ink">
-                  {regionText}
+                  {displayedText}
+                  {isOverridden && <span className="ml-1 italic text-ink-3">(observation modifiée)</span>}
                 </p>
               ) : w.anatomyRegionTextsLoading ? (
                 <p className="mt-0.5 text-[10px] italic text-ink-3">Génération de l'interprétation IA…</p>

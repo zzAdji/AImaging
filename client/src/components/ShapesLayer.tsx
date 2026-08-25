@@ -175,21 +175,49 @@ function ShapeElement({
   const aiStroke = ai ? ({ pathLength: 1, className: "ai-stroke-draw" } as const) : {};
   const aiText = ai ? ({ className: "ai-text-reveal" } as const) : {};
   switch (shape.type) {
-    case "rectangle":
+    case "rectangle": {
+      /* Boxes de détection pathologies (créées avec un label) : chip de
+         libellé au coin haut-gauche, renommable au double-clic. */
+      const rectLabel = shape.label;
       return (
-        <rect
-          {...attrs}
-          x={shape.x}
-          y={shape.y}
-          width={shape.w}
-          height={shape.h}
-          fill={shape.fillColor ?? "none"}
-          stroke={stroke}
-          strokeWidth={sw}
-          strokeDasharray={dash}
-          {...aiStroke}
-        />
+        <g {...attrs}>
+          <rect
+            x={shape.x}
+            y={shape.y}
+            width={shape.w}
+            height={shape.h}
+            fill={shape.fillColor ?? "none"}
+            stroke={stroke}
+            strokeWidth={sw}
+            strokeDasharray={dash}
+            {...aiStroke}
+          />
+          {rectLabel && (
+            <>
+              <rect
+                x={shape.x}
+                y={Math.max(0, shape.y - 18)}
+                width={Math.max(24, rectLabel.length * 6.6 + 10)}
+                height={17}
+                rx={3}
+                fill={stroke === ACCENT ? "#3b82f6" : stroke}
+                opacity={0.94}
+              />
+              <text
+                x={shape.x + 5}
+                y={Math.max(12, shape.y - 5.5)}
+                fontSize={11}
+                fontWeight={600}
+                fill="#111111"
+                style={{ userSelect: "none" }}
+              >
+                {rectLabel}
+              </text>
+            </>
+          )}
+        </g>
       );
+    }
     case "ellipse":
       return (
         <ellipse

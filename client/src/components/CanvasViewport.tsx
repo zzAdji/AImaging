@@ -287,6 +287,30 @@ function jetValue(r: number, g: number, b: number): number {
   return JET_INVERSE.get((r << 16) | (g << 8) | b) ?? 0.875;
 }
 
+/** Heatmap « Neuro » : image composite DÉJÀ RENDUE côté backend (originale +
+    colormap JET + contours). Affichée telle quelle, alignée sur l'image :
+    tout retraitement pixel (GradCamOverlay) fausserait les couleurs. */
+function NeuroHeatmapOverlay({
+  dims,
+  src,
+  transform,
+}: {
+  dims: { w: number; h: number };
+  src: string;
+  transform?: string;
+}) {
+  return (
+    <img
+      data-attr="canvas-neuro-heatmap"
+      src={src}
+      alt="Heatmap pathologies (Neuro)"
+      draggable={false}
+      className="pointer-events-none absolute left-0 top-0 z-10 select-none"
+      style={{ width: dims.w, height: dims.h, transform }}
+    />
+  );
+}
+
 function GradCamOverlay({
   dims,
   src,
@@ -1421,7 +1445,7 @@ export function CanvasViewport({
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const hit = hitTest(px, py);
-    if (hit && (hit.type === "annotation" || hit.type === "text")) {
+    if (hit && (hit.type === "annotation" || hit.type === "text" || (hit.type === "rectangle" && hit.label))) {
       setEditing({ id: hit.id, original: hit.label ?? "" });
       setEditText(hit.label ?? "");
       return;
@@ -1492,6 +1516,17 @@ export function CanvasViewport({
   const imageVisible = layerVisible("image", w.layers);
   const imageOpacity = layerOpacity("image", w.layers) / 100;
   const gradcamOpacity = layerOpacity("gradcam", w.layers) / 100;
+
+  /* Heatmap Neuro sélectionnée : individuelle si une classe est choisie dans
+     la carte, sinon le composite global fourni par le backend. */
+  const neuroHeatmaps = w.pathologyResult?.images.individual_heatmaps ?? {};
+  const neuroHeatmapB64 =
+    (w.pathologyHeatmapKey ? neuroHeatmaps[w.pathologyHeatmapKey] : null) ??
+    w.pathologyResult?.images.heatmap_b64 ??
+    null;
+  const neuroHeatmapSrc = neuroHeatmapB64
+    ? `data:image/jpeg;base64,${neuroHeatmapB64}`
+    : null;
 
   return (
     <div
@@ -1734,6 +1769,16 @@ export function CanvasViewport({
 
           {w.landmarksSelected && w.landmarkContours && (
             <LandmarksContourOverlay dims={dims} transform={imgTransform} />
+          )}
+
+          {/* Heatmap Grad-CAM Neuro (vue « Heatmap » de la carte Détection).
+              L'image du backend est un composite DÉJÀ RENDU (originale +
+              colormap JET + contours) : on l'affiche telle quelle, sans le
+              retraitement pixel de GradCamOverlay (réservé aux heatmaps
+              brutes) qui faussait les couleurs. Les boxes YOLO, elles, sont
+              de vraies formes rectangles posées sur le canvas (éditables). */}
+          {w.pathologyView === "heatmap" && neuroHeatmapSrc && (
+            <NeuroHeatmapOverlay dims={dims} src={neuroHeatmapSrc} transform={imgTransform} />
           )}
 
           {/* Sonde anatomique — vague qui se pose au point pointé, puis marqueur au repos */}

@@ -1,12 +1,16 @@
-"""Service landmarks HybridGNet : point d'entrée paresseux pour l'API.
+"""Service landmarks HybridGNet : point d'entrée pour l'API.
 
-Le paquet ``chexmask`` (torch, torch_geometric) n'est importé qu'à la
-première analyse réelle ; le serveur démarre sans.
+Le paquet ``chexmask`` (torch, torch_geometric) n'est importé qu'au
+premier besoin ; ``preload()`` permet au serveur de charger le modèle
+dès le démarrage. Le moteur est instancié **une seule fois** et partagé
+entre les requêtes : le coût ``build_model`` + ``torch.load`` n'est plus
+payé à chaque analyse.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,6 +18,9 @@ from typing import Any
 import numpy as np
 
 logger = logging.getLogger("server.chexmask_service")
+
+_engine_lock = threading.Lock()
+_engine: Any | None = None
 
 
 def is_available() -> bool:
@@ -23,6 +30,40 @@ def is_available() -> bool:
     except Exception:  # torch / torch_geometric / torchvision absents
         return False
     return Path(DEFAULT_WEIGHTS).exists()
+
+
+def get_engine():
+    """Retourne l'instance unique du moteur (instanciation thread-safe).
+
+    Les poids eux-mêmes restent chargés au premier accès au modèle, sauf si
+    ``preload()`` a déjà été appelé (cas du démarrage du serveur).
+    """
+    global _engine
+    if _engine is None:
+        with _engine_lock:
+            if _engine is None:
+                from chexmask.inference import DEFAULT_WEIGHTS, LandmarkInference  # noqa: PLC0415
+
+                _engine = LandmarkInference(weights_path=DEFAULT_WEIGHTS)
+                logger.info("Moteur HybridGNet instancié (device=%s).", _engine.device)
+    return _engine
+
+
+def preload() -> None:
+    """Charge le moteur ET ses poids immédiatement (appelé au démarrage).
+
+    Lève l'exception sous-jacente en cas d'échec (poids absents, torch
+    manquant...) ; l'appelant décide — le serveur l'enregistre dans les
+    erreurs de démarrage sans bloquer.
+    """
+    engine = get_engine()
+    engine.model  # force build_model + torch.load maintenant
+    logger.info("HybridGNet préchargé (device=%s, poids=%s).", engine.device, engine.weights_path)
+
+
+def is_loaded() -> bool:
+    """Les poids HybridGNet sont-ils déjà en mémoire ?"""
+    return _engine is not None and bool(getattr(_engine, "is_loaded", False))
 
 
 def analyze_landmarks(
@@ -36,7 +77,6 @@ def analyze_landmarks(
     Retourne un dict prêt à sérialiser ; lève ``CheXmaskUnavailableError``
     si le moteur est absent (le serveur traduit en 503).
     """
-    from chexmask.inference import LandmarkInference  # noqa: PLC0415
     from chexmask.measurements import (  # noqa: PLC0415
         compute_measurements,
         landmark_sets,
@@ -49,8 +89,10 @@ def analyze_landmarks(
     if image is None:
         raise FileNotFoundError(f"Image illisible : {image_path}")
 
-    engine = LandmarkInference(n_samples=n_samples)
-    result = engine.predict_landmarks(image)
+    # Moteur partagé entre requêtes : les poids ne sont chargés qu'une fois
+    # (idéalement au démarrage via preload()), jamais à chaque appel.
+    engine = get_engine()
+    result = engine.predict_landmarks(image, n_samples=n_samples)
 
     computed = compute_measurements(result, pixel_spacing_mm=pixel_spacing_mm, custom_measures=custom_measures)
     sets = landmark_sets(result)

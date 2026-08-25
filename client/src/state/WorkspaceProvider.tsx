@@ -37,8 +37,8 @@ import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 import { buildWorkspaceManifest, captureAnnotatedImage } from "../lib/workspaceProtocol";
-import type { AnatomyRegionPayload, OpenCxrImageResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
-import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyAnalysis, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, toAnatomyContext } from "../lib/workspaceApi";
+import type { AnatomyRegionPayload, OpenCxrImageResult, PathologyResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
+import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyAnalysis, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, generateWorkspacePathology, pathologyColorFor, toAnatomyContext } from "../lib/workspaceApi";
 import { ANATOMY_REGIONS } from "../lib/anatomyMap";
 import {
   computeLandmarkMeasurements,
@@ -70,6 +70,7 @@ const DEFAULT_COLLAPSED: Record<SectionId, boolean> = {
   anatomy: false,
   landmarks: false,
   anatomymap: false,
+  pathology: false,
   diagnostics: false,
   report: false,
 };
@@ -83,6 +84,7 @@ const DEFAULT_CARD_ORDER: SectionId[] = [
   "anatomy",
   "landmarks",
   "anatomymap",
+  "pathology",
   "diagnostics",
   "report",
 ];
@@ -91,6 +93,9 @@ const DEFAULT_CARD_ORDER: SectionId[] = [
 
 /** Préfixe d'actionId des formes de mesure landmarks posées sur le canvas. */
 const LANDMARK_SHAPE_PREFIX = "landmarks:";
+
+/** Préfixe d'actionId des boxes de détection pathologies (formes rectangles). */
+const PATHOLOGY_SHAPE_PREFIX = "pathology:";
 
 const cloneShape = (s: Shape): Shape => ({
   ...s,
@@ -144,6 +149,29 @@ function loadShapeStyle(): ShapeStyle {
       : DEFAULT_SHAPE_STYLE;
   } catch {
     return DEFAULT_SHAPE_STYLE;
+  }
+}
+
+/* Observations anatomiques éditées manuellement : persistées par image
+   (clé locale `aimaging.anatomyObs.<imageId>`), prioritaires sur l'IA. */
+function anatomyOverridesStorageKey(imageId: string): string {
+  return `aimaging.anatomyObs.${imageId}`;
+}
+
+function loadAnatomyOverrides(imageId: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(anatomyOverridesStorageKey(imageId));
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistAnatomyOverrides(imageId: string, overrides: Record<string, string>): void {
+  try {
+    localStorage.setItem(anatomyOverridesStorageKey(imageId), JSON.stringify(overrides));
+  } catch {
+    /* localStorage indisponible — l'édition reste en mémoire pour la session */
   }
 }
 
@@ -421,6 +449,24 @@ export function WorkspaceProvider({
   const [anatomyRegionTextsLoading, setAnatomyRegionTextsLoading] = useState(false);
   const anatomyRegionTextsLoadingRef = useRef(false);
   const [anatomyRegionTextsError, setAnatomyRegionTextsError] = useState<string | null>(null);
+  /* Régions signalées avec anomalie par l'IA (id de région -> true). */
+  const [anatomyRegionAnomalies, setAnatomyRegionAnomaliesState] = useState<Record<string, boolean>>({});
+  const anatomyRegionAnomaliesRef = useRef<Record<string, boolean>>({});
+  /* Observations éditées manuellement par région (prioritaires sur le texte IA). */
+  const [anatomyRegionOverrides, setAnatomyRegionOverridesState] = useState<Record<string, string>>({});
+
+  /* --------------------- Pathologies (backend « Neuro ») --------------------- */
+  const [pathologyResult, setPathologyResultState] = useState<PathologyResult | null>(null);
+  const pathologyResultRef = useRef<PathologyResult | null>(null);
+  const [pathologyLoading, setPathologyLoading] = useState(false);
+  const pathologyLoadingRef = useRef(false);
+  const [pathologyError, setPathologyError] = useState<string | null>(null);
+  const [pathologyCardOpen, setPathologyCardOpenState] = useState(false);
+  const pathologyCardOpenRef = useRef(false);
+  /** Vue canvas : boxes de détection (formes posées) ou heatmap Grad-CAM. */
+  const [pathologyView, setPathologyView] = useState<"detection" | "heatmap">("detection");
+  /** Heatmap choisie : null = composite globale, sinon individual_heatmaps[key]. */
+  const [pathologyHeatmapKey, setPathologyHeatmapKey] = useState<string | null>(null);
 
   /* --------------------------- Landmarks (HybridGNet) --------------------------- */
   const [landmarkResult, setLandmarkResultState] = useState<WorkspaceLandmarksResult | null>(null);
@@ -569,6 +615,12 @@ export function WorkspaceProvider({
     anatomyRegionTextsRef.current = {};
     setAnatomyRegionTextsState({});
     setAnatomyRegionTextsError(null);
+    anatomyRegionAnomaliesRef.current = {};
+    setAnatomyRegionAnomaliesState({});
+    setAnatomyRegionOverridesState(loadAnatomyOverrides(imageId));
+    pathologyResultRef.current = null;
+    setPathologyResultState(null);
+    setPathologyError(null);
     landmarkResultRef.current = null;
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
@@ -741,6 +793,11 @@ export function WorkspaceProvider({
     anatomyRegionTextsRef.current = {};
     setAnatomyRegionTextsState({});
     setAnatomyRegionTextsError(null);
+    anatomyRegionAnomaliesRef.current = {};
+    setAnatomyRegionAnomaliesState({});
+    pathologyResultRef.current = null;
+    setPathologyResultState(null);
+    setPathologyError(null);
     landmarkResultRef.current = null;
     setLandmarkResultState(null);
     setLandmarksSelectedState(null);
@@ -895,7 +952,12 @@ export function WorkspaceProvider({
       const raw = localStorage.getItem("aimaging.cardOrder");
       const arr = raw ? JSON.parse(raw) : null;
       if (Array.isArray(arr) && arr.every((id) => DEFAULT_CARD_ORDER.includes(id as SectionId))) {
-        return arr as SectionId[];
+        /* Fusionne les nouvelles cartes ajoutées au fil des versions : une
+           commande sauvegardée antérieurement ne doit jamais masquer une
+           section qui n'existait pas encore (ex. « pathology »). */
+        const saved = arr as SectionId[];
+        const missing = DEFAULT_CARD_ORDER.filter((id) => !saved.includes(id));
+        return [...saved, ...missing];
       }
     } catch {
       /* localStorage indisponible */
@@ -1188,6 +1250,11 @@ export function WorkspaceProvider({
       if (imageIdRef.current !== imageIdValue) return;
       anatomyRegionTextsRef.current = response.region_texts;
       setAnatomyRegionTextsState(response.region_texts);
+      const anomalies = response.region_anomalies ?? {};
+      anatomyRegionAnomaliesRef.current = anomalies;
+      setAnatomyRegionAnomaliesState(anomalies);
+      /* Les éditions manuelles survivent à une regénération IA. */
+      setAnatomyRegionOverridesState(loadAnatomyOverrides(imageIdValue));
     } catch (exc) {
       if (imageIdRef.current !== imageIdValue) return;
       const message = exc instanceof Error ? exc.message : "Interprétation IA des régions indisponible.";
@@ -1196,6 +1263,20 @@ export function WorkspaceProvider({
       anatomyRegionTextsLoadingRef.current = false;
       setAnatomyRegionTextsLoading(false);
     }
+  }, []);
+
+  /** Édition manuelle de l'observation d'une région : "" réinitialise vers l'IA. */
+  const saveAnatomyRegionObservation = useCallback((regionId: string, text: string): void => {
+    const imageIdValue = imageIdRef.current;
+    if (!imageIdValue || !regionId) return;
+    setAnatomyRegionOverridesState((cur) => {
+      const next = { ...cur };
+      const trimmed = text.trim();
+      if (trimmed) next[regionId] = trimmed;
+      else delete next[regionId];
+      persistAnatomyOverrides(imageIdValue, next);
+      return next;
+    });
   }, []);
 
   const runAnatomyAnalysis = useCallback(async (waitForImage = false): Promise<boolean> => {
@@ -1268,6 +1349,110 @@ export function WorkspaceProvider({
       void runAnatomyAnalysis();
     }
   }, [runAnatomyAnalysis, setAnatomyCardOpen]);
+
+  /** Pose les boxes YOLO comme formes rectangles éditables sur le canvas :
+      déplacement, redimensionnement et suppression passent par les outils
+      existants ; le libellé se renomme au double-clic. Remplace les boxes
+      d'une analyse précédente (même mécanique que les mesures landmarks). */
+  const placePathologyShapes = useCallback((result: PathologyResult): void => {
+    if (!result.yolo_boxes.length) return;
+    const idsToRemove = shapesRef.current
+      .filter((s) => s.actionId?.startsWith(PATHOLOGY_SHAPE_PREFIX))
+      .map((s) => s.id);
+    const newShapes: Shape[] = result.yolo_boxes.map((box, index) => {
+      const [x1, y1, x2, y2] = box.xyxy;
+      return {
+        id: randomId(),
+        type: "rectangle",
+        x: x1,
+        y: y1,
+        w: Math.max(2, x2 - x1),
+        h: Math.max(2, y2 - y1),
+        points: [],
+        strokeWidth: 2.5,
+        strokeColor: pathologyColorFor(box.class),
+        label: `${box.class.replace(/_/g, " ")} · ${(box.conf * 100).toFixed(0)} %`,
+        createdBy: "ai",
+        actionId: `${PATHOLOGY_SHAPE_PREFIX}${box.class}-${index}`,
+      };
+    });
+    if (idsToRemove.length > 0) removeShapes(idsToRemove);
+    commit([...shapesRef.current, ...newShapes]);
+  }, [commit, removeShapes]);
+
+  /* --------------------- Pathologies (backend « Neuro ») --------------------- */
+  const runPathologyAnalysis = useCallback(async (): Promise<boolean> => {
+    const imageIdValue = imageIdRef.current;
+    const imageSrcValue = imageSrcRef.current;
+    if (!imageIdValue || !imageSrcValue) {
+      setPathologyError("Chargez une radiographie avant de lancer la détection.");
+      return false;
+    }
+    if (pathologyLoadingRef.current) return false;
+    pathologyLoadingRef.current = true;
+    setPathologyLoading(true);
+    setPathologyError(null);
+    try {
+      const metadata = imageMetadataRef.current;
+      const image: ExamImage = {
+        id: imageIdValue,
+        name: imageNameRef.current || "Image",
+        src: imageSrcValue,
+        dims: dimsRef.current,
+        sourceKind: metadata?.modality ? "dicom" : "browser-image",
+        metadata: metadata ?? undefined,
+        state: {
+          src: imageSrcValue,
+          shapes: shapesRef.current,
+          wl: wlRef.current,
+          brightness: brightnessRef.current,
+          contrast: contrastRef.current,
+          inverted: invertedRef.current,
+          rotation: rotationRef.current,
+          flipH: flipHRef.current,
+          flipV: flipVRef.current,
+        },
+      };
+      const exam: Examination = {
+        id: `pathology-${imageIdValue}`,
+        name: "Détection pathologies",
+        modality: metadata?.modality ?? "image",
+        images: [image],
+        createdAt: new Date().toISOString(),
+        lastOpenedAt: new Date().toISOString(),
+        archived: false,
+      };
+      const manifest = buildWorkspaceManifest(exam, image.id, {});
+      const session = await createWorkspaceExam(manifest);
+      const response = await generateWorkspacePathology(session.workspace_id, imageIdValue, image);
+      if (imageIdRef.current !== imageIdValue) return false;
+      pathologyResultRef.current = response.result;
+      setPathologyResultState(response.result);
+      placePathologyShapes(response.result);
+      return true;
+    } catch (exc) {
+      if (imageIdRef.current !== imageIdValue) return false;
+      const message = exc instanceof Error ? exc.message : "Détection des pathologies indisponible.";
+      setPathologyError(message);
+      return false;
+    } finally {
+      pathologyLoadingRef.current = false;
+      setPathologyLoading(false);
+    }
+  }, [placePathologyShapes]);
+
+  const setPathologyCardOpen = useCallback((open: boolean) => {
+    pathologyCardOpenRef.current = open;
+    setPathologyCardOpenState(open);
+  }, []);
+
+  const togglePathologyCard = useCallback(() => {
+    const next = !pathologyCardOpenRef.current;
+    setPathologyCardOpen(next);
+    if (next && !pathologyResultRef.current && !pathologyLoadingRef.current && imageIdRef.current && imageSrcRef.current) {
+      void runPathologyAnalysis();
+    }
+  }, [runPathologyAnalysis, setPathologyCardOpen]);
 
   const setLandmarksSelected = useCallback((organ: string | null) => {
     setLandmarksSelectedState(organ);
@@ -2143,6 +2328,19 @@ const closeDocument = useCallback(() => {
       anatomyRegionTextsLoading,
       anatomyRegionTextsError,
       loadAnatomyRegionTexts,
+      anatomyRegionAnomalies,
+      anatomyRegionOverrides,
+      saveAnatomyRegionObservation,
+      pathologyResult,
+      pathologyLoading,
+      pathologyError,
+      pathologyCardOpen,
+      togglePathologyCard,
+      runPathologyAnalysis,
+      pathologyView,
+      setPathologyView,
+      pathologyHeatmapKey,
+      setPathologyHeatmapKey,
       landmarkResult,
       landmarkLoading,
       landmarkError,
@@ -2260,6 +2458,9 @@ imageSrc,
       gradcamOn, setGradcamOn, gradcamIntensity, setGradcamIntensity, gradcamMode, setGradcamMode, gradcamResult, setGradcamResult, threeDResult, setThreeDResult, threeDOn, setThreeDOn, threeDRunning, setThreeDRunning, threeDProgress, setThreeDProgress, pixelSpacingMm, setPixelSpacingMm, wl, setWl,
       anatomyResult, anatomyLoading, anatomyError, anatomyCardOpen, setAnatomyCardOpen, toggleAnatomyCard, anatomySelected, setAnatomySelected, runAnatomyAnalysis, cxrResult, setCxrResult,
       anatomyRegionTexts, anatomyRegionTextsLoading, anatomyRegionTextsError, loadAnatomyRegionTexts,
+      anatomyRegionAnomalies, anatomyRegionOverrides, saveAnatomyRegionObservation,
+      pathologyResult, pathologyLoading, pathologyError, pathologyCardOpen, togglePathologyCard, runPathologyAnalysis,
+      pathologyView, setPathologyView, pathologyHeatmapKey, setPathologyHeatmapKey,
       landmarkResult, landmarkLoading, landmarkError, landmarkCardOpen, setLandmarkCardOpen, toggleLandmarksCard, landmarksSelected, setLandmarksSelected, runLandmarksAnalysis,
       placeLandmarkMeasurements, removeLandmarkMeasurements,
       landmarkContours, landmarkLive, landmarkEdited, setLandmarkContourNode, resetLandmarkContours,

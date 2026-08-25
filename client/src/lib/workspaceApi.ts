@@ -524,6 +524,96 @@ export interface WorkspaceAnatomyRegionsRequest {
 
 export interface WorkspaceAnatomyRegionsResponse {
   region_texts: Record<string, string>;
+  /** Statut anomalie par région : true = écart signalé par l'IA. */
+  region_anomalies?: Record<string, boolean>;
+}
+
+/* --------------------- Pathologies (backend « Neuro ») --------------------- */
+
+/** Prédiction par classe NIH (probabilité + dépassement du seuil). */
+export interface PathologyPrediction {
+  prob: number;
+  positive: boolean;
+}
+
+/* Palette stable par classe de pathologie (boxes canvas + cartes). */
+const PATHOLOGY_PALETTE = ["#f87171", "#f97316", "#eab308", "#38bdf8", "#a78bfa", "#34d399", "#f472b6"];
+
+/** Couleur déterministe d'une classe de pathologie (hash du libellé). */
+export function pathologyColorFor(label: string): string {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  return PATHOLOGY_PALETTE[hash % PATHOLOGY_PALETTE.length];
+}
+
+export interface PathologyConfirmedFinding {
+  condition: string;
+  prob: number;
+  threshold: number;
+  normalized_conf: number;
+  risk: string;
+}
+
+export interface PathologyYoloBox {
+  class: string;
+  conf: number;
+  xyxy: [number, number, number, number];
+}
+
+export interface PathologyResultImages {
+  original_b64?: string;
+  heatmap_b64?: string;
+  boxes_b64?: string;
+  /** Heatmap Grad-CAM individuelle par pathologie positive (base64). */
+  individual_heatmaps: Record<string, string>;
+}
+
+/** Réponse unifiée du pipeline Neuro (DenseNet Grad-CAM + YOLOv8). */
+export interface PathologyResult {
+  status: string;
+  predictions: Record<string, PathologyPrediction>;
+  positive_conditions: string[];
+  confirmed_findings: PathologyConfirmedFinding[];
+  risk_level: string;
+  localization_type: Record<string, string>;
+  images: PathologyResultImages;
+  yolo_boxes: PathologyYoloBox[];
+  case_flags: string[];
+}
+
+export interface WorkspacePathologyResponse {
+  workspace_id: string;
+  image_id: string;
+  result: PathologyResult;
+  inference_time_ms?: number | null;
+}
+
+/** Détection de pathologies + heatmaps via le backend Neuro distant. */
+export async function generateWorkspacePathology(
+  workspaceId: string,
+  imageId: string,
+  image: ExamImage,
+): Promise<WorkspacePathologyResponse> {
+  const body = new FormData();
+  body.append("image_id", imageId);
+  body.append("image", await imageToBlob(image), image.name || `${image.id}.png`);
+  const response = await fetch(`${API_BASE_URL}/workspace/exams/${workspaceId}/pathology/detect`, {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) {
+    /* Le serveur renvoie {"detail": "..."} : afficher le détail lisible
+       (ex. « Backend Neuro endormi… ») plutôt que le JSON brut. */
+    let message = "";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      message = payload.detail ?? "";
+    } catch {
+      message = await response.text().catch(() => "");
+    }
+    throw new Error(message || `API ${response.status}: requête échouée`);
+  }
+  return (await response.json()) as WorkspacePathologyResponse;
 }
 
 /** Génère l'interprétation IA par région anatomique d'après l'image annotée et les données CXAS. */

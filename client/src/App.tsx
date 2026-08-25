@@ -202,6 +202,8 @@ function Shell({
   const autoAnatomyStartedFor = useRef<string | null>(null);
   const autoOpenCxrStartedFor = useRef<string | null>(null);
   const autoGradcamStartedFor = useRef<string | null>(null);
+  const gradcamAutoShownFor = useRef<string | null>(null);
+  const pathologyAutoStartedFor = useRef<string | null>(null);
   const anatomyAutoDecidedFor = useRef<string | null>(null);
   const anatomyAutoAllowed = useRef(true);
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
@@ -843,6 +845,24 @@ function Shell({
     })();
   }, [exam, imageIndex, w]);
 
+  /* Détection pathologies (backend Neuro distant) : lancée AUTOMATIQUEMENT au
+     chargement de chaque image radiographique compatible, dans un effet
+     propre — volontairement HORS de la garde « examen déjà évalué » qui
+     régit la chaîne locale lourde CXAS + HybridGNet. L'appel est du simple
+     HTTP vers le Space HF : aucun modèle local, donc toujours autorisé.
+     Garde anti-doublon par (examen, image). */
+  useEffect(() => {
+    if (!exam || exam.images.length === 0) return;
+    const current = exam.images[imageIndex];
+    if (!current) return;
+    if (!isRadiographyExam(exam)) return;
+    if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
+    const guardKey = `pathology:${exam.id}:${current.id}`;
+    if (pathologyAutoStartedFor.current === guardKey) return;
+    pathologyAutoStartedFor.current = guardKey;
+    void w.runPathologyAnalysis().catch(() => undefined);
+  }, [exam, imageIndex, w]);
+
   /* Phase 3 — Grad-CAM générée une seule fois à l'ouverture, mais uniquement
      APRÈS la classification (current.prediction disponible) : cela séquence
      les pipelines lourds côté serveur (au lieu de tout lancer en parallèle,
@@ -861,7 +881,15 @@ function Shell({
     if (!current.prediction) return;
     if (current.gradcam) {
       w.setGradcamResult(current.gradcam);
-      w.setGradcamOn(true);
+      /* Affichage automatique UNE SEULE fois par image : sans cette garde,
+         le setGradcamOn(true) ci-dessous était rejoué à chaque rendu (w
+         change d'identité en permanence) et réactivait l'overlay juste
+         après que l'utilisateur l'avait désactivé. */
+      const showKey = `gradcam-show:${exam.id}:${current.id}`;
+      if (gradcamAutoShownFor.current !== showKey) {
+        gradcamAutoShownFor.current = showKey;
+        w.setGradcamOn(true);
+      }
       return;
     }
     /* Examen déjà évalué une fois → aucune régénération automatique de la

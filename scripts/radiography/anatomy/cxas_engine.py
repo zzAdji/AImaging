@@ -87,6 +87,11 @@ def get_cxas():
     return _cxas_instance
 
 
+def is_loaded() -> bool:
+    """L'instance CXAS (pipeline + poids) est-elle déjà en mémoire ?"""
+    return _cxas_instance is not None
+
+
 def shutdown():
     """Libère l'instance CXAS (utile en fin de CLI)."""
     global _cxas_instance

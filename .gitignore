@@ -8,6 +8,7 @@
 /DeepScan3D/
 /kaggle/
 /_handoff-anatomy/
+/CXR-Pathology_Analysis/
 
 # Optional common Python/IDE artifacts
 __pycache__/

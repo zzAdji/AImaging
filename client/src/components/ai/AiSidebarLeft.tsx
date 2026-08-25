@@ -643,6 +643,13 @@ export function AiSidebarLeft({
                   dataAttr="ai-tool-landmarks"
                   onClick={() => w.toggleLandmarksCard()}
                 />
+                <RadioToolButton
+                  label="Détection"
+                  icon={Crosshair}
+                  active={w.pathologyCardOpen}
+                  dataAttr="ai-tool-pathology"
+                  onClick={() => w.togglePathologyCard()}
+                />
               </div>
             </>
           )}

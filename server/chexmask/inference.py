@@ -28,7 +28,12 @@ class CheXmaskUnavailableError(RuntimeError):
 
 
 class LandmarkInference:
-    """Instance paresseuse du modèle : matrice + poids chargés au premier appel."""
+    """Instance du modèle : matrice + poids chargés au premier appel.
+
+    Le serveur garde une instance unique (voir ``chexmask_service.get_engine``)
+    et la réutilise entre les requêtes : le coût ``build_model`` + ``torch.load``
+    n'est payé qu'une fois, idéalement au démarrage via ``preload()``.
+    """
 
     def __init__(self, weights_path: Path = DEFAULT_WEIGHTS, n_samples: int = 50):
         self.weights_path = Path(weights_path)
@@ -42,6 +47,11 @@ class LandmarkInference:
         if self._model is None:
             self._load()
         return self._model
+
+    @property
+    def is_loaded(self) -> bool:
+        """Les poids sont-ils déjà en mémoire ?"""
+        return self._model is not None
 
     def _load(self):
         if not self.weights_path.exists():
@@ -68,18 +78,22 @@ class LandmarkInference:
         return torch.from_numpy(image).unsqueeze(0).unsqueeze(0).to(self.device).float()
 
     @torch.no_grad()
-    def predict_landmarks(self, image_bgr: np.ndarray) -> dict:
+    def predict_landmarks(self, image_bgr: np.ndarray, n_samples: int | None = None) -> dict:
         """Prédit les 120 nœuds (px, py) + incertitude par nœud.
+
+        ``n_samples`` peut surcharger la valeur du constructeur : le moteur
+        étant partagé entre requêtes, chacune choisit son nombre d'échantillons.
 
         Retourne un dict {nodes, mean_x, mean_y, std_x, std_y} où chaque
         tableau a 120 lignes, en coordonnées pixels de l'image 1024×1024.
         """
+        samples = self.n_samples if n_samples is None else max(1, int(n_samples))
         model = self.model
         data = self.preprocess(image_bgr)
 
         mu, log_var, conv6, conv5 = model.encode(data)
 
-        zs = [model.sampling(mu, log_var) for _ in range(self.n_samples)]
+        zs = [model.sampling(mu, log_var) for _ in range(samples)]
         z_exp = torch.stack(zs, dim=0)
         batch_size = z_exp.shape[0]
 
@@ -87,7 +101,7 @@ class LandmarkInference:
         conv5_exp = conv5.repeat(batch_size, 1, 1, 1)
 
         batch_output, _, _ = model.decode(z_exp, conv6_exp, conv5_exp)
-        batch_output = batch_output.cpu().numpy().reshape(self.n_samples, -1, 2) * INPUT_SIZE
+        batch_output = batch_output.cpu().numpy().reshape(samples, -1, 2) * INPUT_SIZE
 
         means = np.mean(batch_output, axis=0)
         stds = np.std(batch_output, axis=0)

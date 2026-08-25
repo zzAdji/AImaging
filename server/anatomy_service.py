@@ -33,6 +33,29 @@ def is_available() -> bool:
         return False
 
 
+def preload() -> None:
+    """Importe CXAS et charge pipeline + poids immédiatement (démarrage).
+
+    Évite le coût froid (imports torch, instanciation UNet, lecture des
+    poids — voire téléchargement au tout premier lancement) payé sinon à
+    la première analyse. Lève l'exception sous-jacente en cas d'échec ;
+    l'appelant décide (le serveur l'enregistre sans bloquer le démarrage).
+    """
+    from scripts.radiography.anatomy.cxas_engine import get_cxas
+
+    get_cxas()
+
+
+def is_loaded() -> bool:
+    """Le pipeline CXAS est-il déjà en mémoire ?"""
+    try:
+        from scripts.radiography.anatomy.cxas_engine import is_loaded as _loaded
+
+        return _loaded()
+    except Exception:
+        return False
+
+
 def analyze_anatomy_image(
     image_path: Path,
     config: CxasServerConfig,

@@ -27,6 +27,7 @@ import {
   type SectionId,
 } from "../state/workspace";
 import { AnatomyMapCard } from "./ai/AnatomyMap";
+import { PathologyDetectionCard } from "./ai/PathologyDetection";
 import { AnatomySegmentationCard } from "./ai/AnatomySegmentation";
 import { LandmarksMeasurementsCard } from "./ai/LandmarksMeasurements";
 import { FetalCardsBody } from "./fetal/FetalRightPanel";
@@ -422,24 +423,87 @@ const SEVERITY_STYLE: Record<string, string> = {
   low: "bg-[#4ade80]/15 text-[#4ade80]",
 };
 
+type MergedSeverity = "low" | "medium" | "high";
+
+interface MergedFinding {
+  key: string;
+  label: string;
+  prob: number;
+  severity: MergedSeverity;
+  /** Source du finding : ensemble local ou backend Neuro (YOLOv8+DenseNet). */
+  source: "ensemble" | "neuro";
+  risk?: string;
+  region?: { x: number; y: number; w: number; h: number };
+}
+
+function riskToSeverity(risk: string): MergedSeverity {
+  if (risk === "CRITICAL" || risk === "HIGH") return "high";
+  if (risk === "MEDIUM") return "medium";
+  return "low";
+}
+
+function normalizeLabel(label: string): string {
+  return label.replace(/_/g, " ").trim().toLowerCase();
+}
+
+/** Fusionne les diagnostics de l'ensemble local et les findings confirmés du
+    backend Neuro (détection YOLOv8 filtrée par DenseNet). Un finding Neuro
+    dont la classe est déjà signalée par l'ensemble local n'est pas dupliqué :
+    l'entrée locale fait foi (elle porte la région du zoom). */
+function mergeFindings(w: ReturnType<typeof useWorkspace>): MergedFinding[] {
+  const merged: MergedFinding[] = w.aiResults.diagnostics.map((d) => ({
+    key: `local-${d.label}`,
+    label: d.label,
+    prob: d.prob,
+    severity: d.severity,
+    source: "ensemble" as const,
+    region: d.region,
+  }));
+  const known = new Set(merged.map((f) => normalizeLabel(f.label)));
+  const result = w.pathologyResult;
+  if (result) {
+    for (const finding of result.confirmed_findings) {
+      const label = finding.condition.replace(/_/g, " ");
+      const norm = normalizeLabel(label);
+      if (known.has(norm)) continue;
+      const box = result.yolo_boxes.find((b) => normalizeLabel(b.class) === norm);
+      merged.push({
+        key: `neuro-${finding.condition}`,
+        label,
+        prob: finding.prob,
+        severity: riskToSeverity(finding.risk),
+        source: "neuro",
+        risk: finding.risk,
+        region: box
+          ? {
+              x: box.xyxy[0],
+              y: box.xyxy[1],
+              w: Math.max(1, box.xyxy[2] - box.xyxy[0]),
+              h: Math.max(1, box.xyxy[3] - box.xyxy[1]),
+            }
+          : undefined,
+      });
+    }
+  }
+  return merged.sort((a, b) => b.prob - a.prob);
+}
+
 function DiagnosticsSection() {
   const w = useWorkspace();
+  const findings = mergeFindings(w);
   return (
     <Section id="diagnostics" title="Diagnostics">
       <div data-attr="ai-card-diagnostics">
-        {w.aiResults.diagnostics.length === 0 ? (
+        {findings.length === 0 ? (
           <p className="px-1 text-[11px] text-ink-3">
             Aucune analyse — lancez une commande comme « Analyse cette radiographie. »
           </p>
         ) : (
           <div className="space-y-1">
-            {w.aiResults.diagnostics.map((d) => (
-              <button
-                key={d.label}
-                type="button"
-                onClick={() => d.region && w.focusAiRegion(d.region)}
-                className="w-full rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:border-accent/40 hover:bg-accent/5"
-                title="Zoom sur la région suspecte"
+            {findings.map((d) => (
+              <div
+                key={d.key}
+                className="w-full rounded-lg border border-transparent px-2 py-1.5 text-left"
               >
                 <div className="flex items-center gap-2">
                   <span className="truncate text-[11.5px] text-ink">{d.label}</span>
@@ -448,10 +512,17 @@ function DiagnosticsSection() {
                     {d.severity === "high" ? "Élevé" : d.severity === "medium" ? "Modéré" : "Faible"}
                   </span>
                 </div>
-                <div className="mt-1">
-                  <ProgressBar value={Math.round(d.prob * 100)} tone={d.prob >= 0.3 ? "accent" : "neutral"} />
+                <div className="mt-1 flex items-center gap-1.5">
+                  <div className="min-w-0 flex-1">
+                    <ProgressBar value={Math.round(d.prob * 100)} tone={d.prob >= 0.3 ? "accent" : "neutral"} />
+                  </div>
+                  {d.source === "neuro" && (
+                    <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[8.5px] font-medium uppercase tracking-wide text-ink-3">
+                      {d.risk ?? "Neuro"}
+                    </span>
+                  )}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -584,6 +655,7 @@ const CARD_TITLES: Record<SectionId, string> = {
   anatomy: "Segmentation",
   landmarks: "Mesures landmarks",
   anatomymap: "Carte anatomique",
+  pathology: "Détection & Heatmaps",
   diagnostics: "Diagnostics",
   report: "Rapport",
 };
@@ -614,6 +686,12 @@ function renderCard(id: SectionId) {
           <AnatomyMapCard />
         </Section>
       );
+    case "pathology":
+      return (
+        <Section id="pathology" title={CARD_TITLES.pathology}>
+          <PathologyDetectionCard />
+        </Section>
+      );
     case "diagnostics":
       return <DiagnosticsSection />;
     case "report":
@@ -637,6 +715,8 @@ function isCardVisible(id: SectionId, w: ReturnType<typeof useWorkspace>): boole
       return w.landmarkCardOpen;
     case "anatomymap":
       return w.tool === "probe";
+    case "pathology":
+      return w.pathologyCardOpen;
   }
 }
 

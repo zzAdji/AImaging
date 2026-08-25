@@ -78,6 +78,24 @@ class OpenCxrServerConfig:
     health_timeout_seconds: float = 3.0
 
 
+@dataclass
+class NeuroServerConfig:
+    """Backend « Neuro » (projet CXR-Pathology_Analysis).
+
+    Détection de pathologies YOLOv8 + heatmaps Grad-CAM DenseNet-121 (classes
+    NIH). Le service tourne à distance (Hugging Face Space public par défaut)
+    et est joint par HTTP : aucun poids ni ``ultralytics`` requis localement.
+    Timeout large : cold start du container HF possible au premier appel.
+    """
+
+    remote_url: str = os.environ.get(
+        "NEURO_BACKEND_URL", "https://sagarsarangi26-neuro.hf.space"
+    ).strip().rstrip("/")
+    timeout_seconds: float = float(os.environ.get("NEURO_TIMEOUT", "120"))
+    # Sonde de santé : large car le Space peut être en cold start.
+    health_timeout_seconds: float = float(os.environ.get("NEURO_HEALTH_TIMEOUT", "15"))
+
+
 def validate_gemini_config(config: GeminiConfig) -> None:
     if not config.api_key:
         raise RuntimeError(

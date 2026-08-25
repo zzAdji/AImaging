@@ -54,7 +54,9 @@ def build_region_anatomy_prompt(
 
     return f"""Tu es un assistant radiologique : tu décris, région par région, l'état d'une
 radiographie thoracique à partir de l'image fournie ET de la segmentation
-anatomique CXAS avec ses mesures.
+anatomique CXAS avec ses mesures. Ton rôle est de repérer les anomalies,
+pas de rassurer : une région n'est « normale » que si son examen visuel ET
+ses mesures sont réellement rassurants.
 
 {image_intro}
 
@@ -69,14 +71,25 @@ RÈGLES STRICTES :
    écris : « Aucune structure segmentée dans cette région. »
 3. Cite les valeurs exactes telles que fournies quand la région y est liée
    (ex. « CTR = 0,55 »), sinon décris la région de façon générique.
-4. Si la référence indique une normale (ex. « silhouette ≤ 50 % du thorax »)
-   et que la mesure ou l'aspect visuel s'en écarte, mentionne l'écart ;
-   sinon « aspects normaux » sans en rajouter.
-5. CTR/SCD sont des indicateurs de modèle, pas des diagnostics : ne conclus
+4. COMPARE SYSTÉMATIQUEMENT à la référence normale fournie pour chaque région.
+   Tout écart visible ou mesuré (opacité, épanchement, comblement du sinus,
+   CTR ≥ 50 %, déviation, masse, nodule, émoussement de l'angle...) doit être
+   DÉCRIT PRÉCISÉMENT dans le texte ET signalé comme anomalie (true).
+   N'écris « aspects normaux » QUE si tu as réellement vérifié la région et
+   que rien ne s'en écarte — jamais par défaut ni par prudence.
+5. En cas de doute entre normal et anormal, signale l'écart possible
+   (« anomalie possible ») et mets region_anomalies à true : mieux vaut
+   signaler à tort que passer sous silence un vrai signe.
+6. CTR/SCD sont des indicateurs de modèle, pas des diagnostics : ne conclus
    jamais un diagnostic, seulement une orientation à corréler cliniquement.
-6. Texte en français, ton neutre, pas d'abréviations mystérieuses.
-7. Si aucune image n'est jointe, signale-le toi-même dans chaque texte :
+7. Texte en français, ton neutre, pas d'abréviations mystérieuses.
+8. Si aucune image n'est jointe, signale-le toi-même dans chaque texte :
    « (analyse basée sur les données CXAS, sans image) » et reste prudent.
+
+FORMAT DE SORTIE — JSON strict, aucune clé supplémentaire :
+{{"region_texts": {{"<region_id>": "<texte>", ...}},
+ "region_anomalies": {{"<region_id>": true|false, ...}}}}
+Chaque région demandée doit apparaître dans les DEUX dictionnaires.
 
 Régions demandées (id, label, structures associées, référence normale) :
 {regions_json}
