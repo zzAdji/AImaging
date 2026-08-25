@@ -58,8 +58,8 @@ export function PathologyDetectionCard() {
 
       <p className="text-[9.5px] leading-relaxed text-ink-3">
         {w.pathologyView === "detection"
-          ? "Boxes YOLOv8 posées sur le canvas : déplacez, redimensionnez, supprimez ; double-clic pour renommer."
-          : "Heatmap Grad-CAM (DenseNet-121) superposée au canvas."}
+          ? "Sur le canvas, déplacez, redimensionnez, supprimez ; double-clic pour renommer."
+          : "Heatmap superposée au canvas."}
       </p>
 
       {/* Choix de la heatmap affichée (vue Heatmap uniquement) */}

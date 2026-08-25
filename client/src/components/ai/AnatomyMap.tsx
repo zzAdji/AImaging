@@ -133,7 +133,7 @@ export function AnatomyMapCard() {
            sans survol ni sélection pour attirer l'œil sur la carte. */
         ctx.fillStyle = hexToRgba("#ef4444", isSel ? 0.3 : 0.2);
         ctx.fill();
-        ctx.strokeStyle = hexToRgba("#ef4444", isSel ? 0.95 : 0.75);
+        ctx.strokeStyle = hexToRgba("#ef4444", isSel ? 0.95 : 0.0);
         ctx.lineWidth = isSel ? 2.5 : 1.6;
         ctx.stroke();
       } else {
@@ -394,7 +394,7 @@ export function AnatomyMapCard() {
 
             {/* Constats IA (fusionnés dans l'Observation) */}
             <div className="mt-1 space-y-0.5">
-              {findings.length === 0 ? (
+              {findings.length === 0 && !isAnomalous ? (
                 <p className="mt-0.5 text-[10px] italic text-ink-3">
                   Rien d'anormal signalé {effectiveRegion ? "dans cette région" : "pour l'instant"}.
                 </p>
