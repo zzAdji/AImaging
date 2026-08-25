@@ -463,8 +463,10 @@ export function WorkspaceProvider({
   const [pathologyError, setPathologyError] = useState<string | null>(null);
   const [pathologyCardOpen, setPathologyCardOpenState] = useState(false);
   const pathologyCardOpenRef = useRef(false);
-  /** Vue canvas : boxes de détection (formes posées) ou heatmap Grad-CAM. */
-  const [pathologyView, setPathologyView] = useState<"detection" | "heatmap">("detection");
+  /** Affichages canvas de la détection : boxes YOLO (formes posées) et
+      heatmap Grad-CAM — deux toggles indépendants, comme gradcamOn. */
+  const [pathologyBoxesOn, setPathologyBoxesOn] = useState(true);
+  const [pathologyHeatmapOn, setPathologyHeatmapOn] = useState(false);
   /** Heatmap choisie : null = composite globale, sinon individual_heatmaps[key]. */
   const [pathologyHeatmapKey, setPathologyHeatmapKey] = useState<string | null>(null);
 
@@ -1380,6 +1382,29 @@ export function WorkspaceProvider({
     commit([...shapesRef.current, ...newShapes]);
   }, [commit, removeShapes]);
 
+  /** Pose les boxes YOLO quand le toggle « Détections » est actif, les retire
+      sinon. Le résultat reste en mémoire : réactiver le toggle repose les
+      boxes du dernier résultat (une nouvelle analyse les remplace). */
+  const pathologyPlacedForResultRef = useRef<PathologyResult | null>(null);
+  useEffect(() => {
+    const ids = shapesRef.current
+      .filter((s) => s.actionId?.startsWith(PATHOLOGY_SHAPE_PREFIX))
+      .map((s) => s.id);
+    if (!pathologyBoxesOn) {
+      pathologyPlacedForResultRef.current = null;
+      removeShapes(ids);
+      return;
+    }
+    const result = pathologyResultRef.current;
+    if (!result?.yolo_boxes.length) return;
+    /* Repose les boxes uniquement si aucune n'est posée ou si le résultat a
+       changé (nouvelle analyse) ; sinon préserve les boxes éditées par
+       l'utilisateur (déplacement, redimensionnement, renommage). */
+    if (ids.length > 0 && pathologyPlacedForResultRef.current === result) return;
+    placePathologyShapes(result);
+    pathologyPlacedForResultRef.current = result;
+  }, [pathologyBoxesOn, pathologyResult, placePathologyShapes, removeShapes]);
+
   /* --------------------- Pathologies (backend « Neuro ») --------------------- */
   const runPathologyAnalysis = useCallback(async (): Promise<boolean> => {
     const imageIdValue = imageIdRef.current;
@@ -1428,7 +1453,9 @@ export function WorkspaceProvider({
       if (imageIdRef.current !== imageIdValue) return false;
       pathologyResultRef.current = response.result;
       setPathologyResultState(response.result);
-      placePathologyShapes(response.result);
+      /* La pose des boxes passe par l'effet de synchronisation ci-dessus :
+         il les pose si le toggle « Détections » est actif, sinon les garde
+         masquées jusqu'à réactivation. */
       return true;
     } catch (exc) {
       if (imageIdRef.current !== imageIdValue) return false;
@@ -2337,8 +2364,10 @@ const closeDocument = useCallback(() => {
       pathologyCardOpen,
       togglePathologyCard,
       runPathologyAnalysis,
-      pathologyView,
-      setPathologyView,
+      pathologyBoxesOn,
+      setPathologyBoxesOn,
+      pathologyHeatmapOn,
+      setPathologyHeatmapOn,
       pathologyHeatmapKey,
       setPathologyHeatmapKey,
       landmarkResult,
@@ -2460,7 +2489,7 @@ imageSrc,
       anatomyRegionTexts, anatomyRegionTextsLoading, anatomyRegionTextsError, loadAnatomyRegionTexts,
       anatomyRegionAnomalies, anatomyRegionOverrides, saveAnatomyRegionObservation,
       pathologyResult, pathologyLoading, pathologyError, pathologyCardOpen, togglePathologyCard, runPathologyAnalysis,
-      pathologyView, setPathologyView, pathologyHeatmapKey, setPathologyHeatmapKey,
+      pathologyBoxesOn, setPathologyBoxesOn, pathologyHeatmapOn, setPathologyHeatmapOn, pathologyHeatmapKey, setPathologyHeatmapKey,
       landmarkResult, landmarkLoading, landmarkError, landmarkCardOpen, setLandmarkCardOpen, toggleLandmarksCard, landmarksSelected, setLandmarksSelected, runLandmarksAnalysis,
       placeLandmarkMeasurements, removeLandmarkMeasurements,
       landmarkContours, landmarkLive, landmarkEdited, setLandmarkContourNode, resetLandmarkContours,

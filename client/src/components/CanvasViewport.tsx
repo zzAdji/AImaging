@@ -1777,7 +1777,7 @@ export function CanvasViewport({
               retraitement pixel de GradCamOverlay (réservé aux heatmaps
               brutes) qui faussait les couleurs. Les boxes YOLO, elles, sont
               de vraies formes rectangles posées sur le canvas (éditables). */}
-          {w.pathologyView === "heatmap" && neuroHeatmapSrc && (
+          {w.pathologyHeatmapOn && neuroHeatmapSrc && (
             <NeuroHeatmapOverlay dims={dims} src={neuroHeatmapSrc} transform={imgTransform} />
           )}
 

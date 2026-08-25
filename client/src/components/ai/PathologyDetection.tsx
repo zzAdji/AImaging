@@ -1,10 +1,11 @@
-/** Carte « Détection & Heatmaps » — simple sélecteur de vue.
+/** Carte « Détection & Heatmaps » — deux toggles d'affichage indépendants.
  *
  *  La détection (backend « Neuro » distant : YOLOv8s + DenseNet-121) est
  *  lancée automatiquement à l'ouverture de l'espace de travail. Cette carte
- *  ne montre ni image ni findings : elle bascule l'affichage du canvas entre
- *  les boxes YOLO (posées comme formes rectangles éditables) et la heatmap
- *  Grad-CAM DenseNet. Les findings sont fusionnés dans la carte Diagnostics.
+ *  ne montre ni image ni findings : elle active/désactive l'affichage du
+ *  canvas — les boxes YOLO (posées comme formes rectangles éditables) et la
+ *  heatmap Grad-CAM DenseNet, chacun masquable séparément. Les findings sont
+ *  fusionnés dans la carte Diagnostics.
  */
 
 import { Brain, Crosshair, RefreshCw, TriangleAlert } from "lucide-react";
@@ -28,18 +29,18 @@ export function PathologyDetectionCard() {
 
   return (
     <div data-attr="ai-card-pathology" className="space-y-2">
-      {/* Bascule de la vue affichée sur le canvas */}
+      {/* Toggles d'affichage : chaque couche s'active/coupe indépendamment */}
       <div className="flex items-center gap-1">
         <ViewBtn
-          active={w.pathologyView === "detection"}
-          onClick={() => w.setPathologyView("detection")}
+          active={w.pathologyBoxesOn}
+          onClick={() => w.setPathologyBoxesOn(!w.pathologyBoxesOn)}
           label="Détections"
           icon={<Crosshair size={10} />}
           disabled={!result}
         />
         <ViewBtn
-          active={w.pathologyView === "heatmap"}
-          onClick={() => w.setPathologyView("heatmap")}
+          active={w.pathologyHeatmapOn}
+          onClick={() => w.setPathologyHeatmapOn(!w.pathologyHeatmapOn)}
           label="Heatmap"
           icon={<Brain size={10} />}
           disabled={!result?.images.heatmap_b64}
@@ -57,13 +58,16 @@ export function PathologyDetectionCard() {
       </div>
 
       <p className="text-[9.5px] leading-relaxed text-ink-3">
-        {w.pathologyView === "detection"
-          ? "Sur le canvas, déplacez, redimensionnez, supprimez ; double-clic pour renommer."
-          : "Heatmap superposée au canvas."}
+        {w.pathologyBoxesOn
+          ? Object.keys(result?.images.individual_heatmaps ?? {}).length > 0 ? "Sur le canvas, déplacez, redimensionnez, supprimez ; double-clic pour renommer." 
+          : "Aucune pathologie détectée."
+          : w.pathologyHeatmapOn
+            ? "Heatmap superposée au canvas."
+            : "Affichages masqués : réactivez Détections ou Heatmap."}
       </p>
 
-      {/* Choix de la heatmap affichée (vue Heatmap uniquement) */}
-      {w.pathologyView === "heatmap" && Object.keys(result?.images.individual_heatmaps ?? {}).length > 0 && (
+      {/* Choix de la heatmap affichée (toggle Heatmap actif uniquement) */}
+      {w.pathologyHeatmapOn && Object.keys(result?.images.individual_heatmaps ?? {}).length > 0 && (
         <div className="space-y-1">
           <p className="text-[9px] font-semibold uppercase tracking-[0.05em] text-ink-3">
             Heatmap affichée

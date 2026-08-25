@@ -576,9 +576,13 @@ export interface WorkspaceState {
   togglePathologyCard: () => void;
   /** Lance (ou relance) la détection de pathologies sur l'image active. */
   runPathologyAnalysis: () => Promise<boolean>;
-  /** Vue active sur le canvas : boxes de détection ou heatmap Grad-CAM. */
-  pathologyView: "detection" | "heatmap";
-  setPathologyView: (view: "detection" | "heatmap") => void;
+  /** Boxes YOLO affichées sur le canvas sous forme de rectangles éditables
+      (toggle indépendant, sur le modèle de gradcamOn). */
+  pathologyBoxesOn: boolean;
+  setPathologyBoxesOn: (on: boolean) => void;
+  /** Heatmap Grad-CAM superposée au canvas (toggle indépendant). */
+  pathologyHeatmapOn: boolean;
+  setPathologyHeatmapOn: (on: boolean) => void;
   /** Heatmap affichée : null = composite globale, sinon clé dans individual_heatmaps. */
   pathologyHeatmapKey: string | null;
   setPathologyHeatmapKey: (key: string | null) => void;
