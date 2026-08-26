@@ -216,14 +216,34 @@ export interface RadiographyReportResponse {
   rendered_text: string;
 }
 
+/**
+ * Contexte clinique additionnel transmis à /radiography/report : détections
+ * Neuro confirmées + observations anatomiques régionales (voir
+ * lib/reports/clinicalContext.ts). Champ OPTIONNEL du contrat : un backend
+ * qui ne le connaît pas encore l'ignorera sans casser la génération ; le
+ * client enrichit de toute façon le texte rendu localement.
+ */
+export interface ReportClinicalContextPayload {
+  neuro_findings?: Array<{ condition: string; prob: number; risk: string }>;
+  neuro_risk_level?: string | null;
+  anatomy_observations?: Array<{
+    region_id: string;
+    label: string;
+    observation: string;
+    anomaly: boolean;
+    source: "ai" | "practitioner";
+  }>;
+}
+
 /** Generates the clinical report from an already obtained ensemble prediction. */
 export function generateRadiographyReport(
   prediction: RadiographyPrediction,
   patient: PatientReportContext = { nom_prenom: "Patient non renseigné" },
+  context?: ReportClinicalContextPayload,
 ): Promise<RadiographyReportResponse> {
   return request<RadiographyReportResponse>("/radiography/report", {
     method: "POST",
-    body: JSON.stringify({ prediction, patient }),
+    body: JSON.stringify(context ? { prediction, patient, ...context } : { prediction, patient }),
   });
 }
 

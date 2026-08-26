@@ -3,11 +3,13 @@ import { Download, Pencil } from "lucide-react";
 import { cn } from "../lib/cn";
 import { downloadDataUrl, exportImageDataUrl } from "../lib/exportImage";
 import {
+  buildRadiographyStructuredData,
   defaultTemplateData,
   renderDocument,
   type ReportModality,
   type ReportTemplateData,
 } from "../lib/reports/engine";
+import { buildReportClinicalContext } from "../lib/reports/clinicalContext";
 import {
   buildReportFilename,
   buildReportJsonExport,
@@ -24,6 +26,7 @@ import {
   buildImageFilter,
   isShapeVisible,
   useWorkspace,
+  type PatientInfo,
   type SectionId,
 } from "../state/workspace";
 import { AnatomyMapCard } from "./ai/AnatomyMap";
@@ -32,7 +35,7 @@ import { AnatomySegmentationCard } from "./ai/AnatomySegmentation";
 import { LandmarksMeasurementsCard } from "./ai/LandmarksMeasurements";
 import { FetalCardsBody } from "./fetal/FetalRightPanel";
 import { useEditorModality } from "../state/editorModality";
-import { Button, Divider, KV, ProgressBar, Section, Segmented, Slider, Toggle } from "./ui";
+import { Button, Divider, ProgressBar, Section, Segmented, Slider, Toggle } from "./ui";
 
 /* ---------------------------------- Image --------------------------------- */
 
@@ -257,10 +260,96 @@ function ImageSection() {
 
 /* -------------------------------- Document -------------------------------- */
 
+/** Champs patient éditables de la carte « Document », dans l'ordre d'affichage. */
+const PATIENT_FIELDS: Array<{ key: PatientInfoKey; label: string }> = [
+  { key: "name", label: "Patient" },
+  { key: "patientId", label: "Patient ID" },
+  { key: "age", label: "Age" },
+  { key: "sex", label: "Sex" },
+  { key: "studyDate", label: "Study date" },
+  { key: "modality", label: "Modality" },
+  { key: "study", label: "Study" },
+];
+
+type PatientInfoKey = keyof PatientInfo;
+
+/** Ligne KV cliquable : un clic passe en édition inline (Enter valide,
+ *  Escape annule), exactement comme le renommage du document. */
+function PatientFieldRow({
+  label,
+  value,
+  editing,
+  draft,
+  onStart,
+  onDraft,
+  onCommit,
+  onCancel,
+}: {
+  label: string;
+  value: string;
+  editing: boolean;
+  draft: string;
+  onStart: () => void;
+  onDraft: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 px-1 py-[3px]">
+        <span className="w-[78px] shrink-0 truncate text-[11.5px] text-ink-3">{label}</span>
+        <input
+          autoFocus
+          data-attr={`doc-field-input-${label}`}
+          value={draft}
+          onChange={(e) => onDraft(e.target.value)}
+          onBlur={onCommit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onCommit();
+            if (e.key === "Escape") onCancel();
+          }}
+          className="min-w-0 flex-1 rounded-md border border-border bg-btn px-1.5 py-0.5 text-[12px] text-ink outline-none focus:border-accent/60"
+        />
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-attr={`doc-field-${label}`}
+      title={`Modifier ${label.toLowerCase()}`}
+      onClick={onStart}
+      className="group flex w-full items-baseline gap-2 rounded-md px-1 py-[3px] text-left transition-colors duration-150 ease-out hover:bg-hover"
+    >
+      <span className="w-[78px] shrink-0 truncate text-[11.5px] text-ink-3">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-right text-[12px] text-ink-2 group-hover:text-ink">
+        {value || "—"}
+      </span>
+      <Pencil
+        size={10}
+        className="shrink-0 self-center text-transparent transition-colors group-hover:text-ink-3"
+      />
+    </button>
+  );
+}
+
 function DocumentSection() {
   const w = useWorkspace();
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
+  /* Édition inline des infos patient (une ligne à la fois, pattern rename). */
+  const [editingKey, setEditingKey] = useState<PatientInfoKey | null>(null);
+  const [fieldDraft, setFieldDraft] = useState("");
+
+  const startFieldEdit = (key: PatientInfoKey) => {
+    setFieldDraft(w.patientInfo[key]);
+    setEditingKey(key);
+  };
+  const commitFieldEdit = () => {
+    if (editingKey !== null) w.setPatientInfo({ [editingKey]: fieldDraft.trim() });
+    setEditingKey(null);
+  };
+  const cancelFieldEdit = () => setEditingKey(null);
 
   const startRename = () => {
     setDraft(w.imageName);
@@ -350,16 +439,25 @@ function DocumentSection() {
               </button>
             </div>
           )}
-          <p className="text-[11px] text-ink-3">CR · Chest · PA view</p>
+          <p className="text-[11px] text-ink-3">
+            {[w.patientInfo.modality, w.patientInfo.study].filter(Boolean).join(" · ") || "CR · Chest · PA view"}
+          </p>
         </div>
       </div>
       <Divider />
-      <KV k="Patient" v="P-2048-71" />
-      <KV k="Patient ID" v="ID-4821-993" />
-      <KV k="Age / Sex" v="57 / M" />
-      <KV k="Study date" v="2026-04-12" />
-      <KV k="Modality" v="CR" />
-      <KV k="Study" v="CHEST PA" />
+      {PATIENT_FIELDS.map(({ key, label }) => (
+        <PatientFieldRow
+          key={key}
+          label={label}
+          value={w.patientInfo[key]}
+          editing={editingKey === key}
+          draft={fieldDraft}
+          onStart={() => startFieldEdit(key)}
+          onDraft={setFieldDraft}
+          onCommit={commitFieldEdit}
+          onCancel={cancelFieldEdit}
+        />
+      ))}
       <Divider />
       <div className="flex gap-2">
         <Button className="flex-1" data="doc-export" disabled={!w.imageSrc} onClick={doExport}>
@@ -543,11 +641,75 @@ function ReportSection() {
     const template =
       getLocalDefault(modality, null)?.data ??
       (defaultTemplateData(modality) as ReportTemplateData);
-    const structured = {
-      findings: { draft: (w.aiResults.report ?? "").slice(0, 4000) },
-      note: "Contenu édité par le praticien.",
+    /* Infos patient de la carte « Document » : injectées comme variables du
+       template (upsert par clé) pour que les tokens `{{patientName}}` etc. des
+       blocs libres et les cellules d'en-tête PDF/Word portent les vraies
+       valeurs éditées par le praticien — plus jamais les valeurs codées en dur. */
+    const p = w.patientInfo;
+    const patientTokens: Record<string, string> = {
+      patientName: p.name,
+      patientId: p.patientId,
+      age: p.age,
+      sex: p.sex,
+      ageSex: [p.age, p.sex].filter((s) => s.length > 0).join(" / "),
+      examDate: p.studyDate,
+      modality: p.modality,
+      study: p.study,
     };
-    const rendered = renderDocument(modality, structured, template);
+    const existingKeys = new Set(template.variables.map((v) => v.key));
+    const withPatient: ReportTemplateData = {
+      ...template,
+      variables: [
+        ...template.variables.map((v) =>
+          v.key in patientTokens ? { ...v, value: patientTokens[v.key] ?? v.value } : v,
+        ),
+        ...Object.entries(patientTokens)
+          .filter(([key]) => !existingKeys.has(key))
+          .map(([key, value]) => ({
+            key,
+            label: key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()),
+            value,
+            visible: true,
+          })),
+      ],
+    };
+    /* Défaut §1 : le structured_data doit venir des vraies données collectées
+       (champs LLM, diagnostics fusionnés, cohérence, mesures) — jamais du
+       texte brut tronqué. `buildRadiographyStructuredData` (engine.ts) est la
+       source unique consommée par l'aperçu, le PDF, le Word et le JSON. */
+    /* Contexte clinique reconstruit depuis l'état live du workspace :
+       détections Neuro confirmées + observations régionales anatomiques
+       (éditions praticien prioritaires sur les textes IA). */
+    const clinicalCtx = buildReportClinicalContext({
+      pathologyResult: w.pathologyResult,
+      anatomyRegionTexts: w.anatomyRegionTexts,
+      anatomyRegionAnomalies: w.anatomyRegionAnomalies,
+      anatomyRegionOverrides: w.anatomyRegionOverrides,
+    });
+    const structured =
+      modality === "radiography"
+        ? buildRadiographyStructuredData({
+            /* Champs structurés bruts du backend (RadiologyReportFields) ; `{}`
+               tant qu'aucune génération LLM n'a réussi (aucune valeur inventée). */
+            fields: w.aiResults.reportFields ?? {},
+            coherenceIssues: w.aiResults.reportCoherenceIssues,
+            renderedText: w.aiResults.report ?? undefined,
+            ensemblePrediction: mergeFindings(w)[0]?.label ?? null,
+            numModels: w.aiResults.modelCount,
+            neuroFindings: clinicalCtx.neuro_findings,
+            neuroRiskLevel: clinicalCtx.neuro_risk_level,
+            anatomyObservations: clinicalCtx.anatomy_observations,
+            /* TODO(§1) : brancher les mesures réellement posées sur le canvas
+               (LandmarksMeasurementsCard) — ce composant n'expose pas encore
+               ses données au niveau du workspace ; aucune mesure n'est donc
+               inventée ici tant que ce câblage n'existe pas. */
+            measurements: [],
+          })
+        : {
+            findings: { draft: (w.aiResults.report ?? "").slice(0, 4000) },
+            note: "Contenu édité par le praticien.",
+          };
+    const rendered = renderDocument(modality, structured, withPatient);
     const date = new Date();
     if (kind === "pdf") {
       printDocument(documentHtml(rendered));

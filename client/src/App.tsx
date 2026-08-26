@@ -80,6 +80,7 @@ import { useIsMobile } from "./lib/useMediaQuery";
 import { Button, Divider, Modal, Segmented, Slider } from "./components/ui";
 import { cn } from "./lib/cn";
 import { buildWorkspaceManifest, captureAnnotatedImage, WORKSPACE_PROTOCOL_VERSION, type AiActionPlan } from "./lib/workspaceProtocol";
+import { buildReportClinicalContext, appendClinicalSections } from "./lib/reports/clinicalContext";
 import { captureMutableSnapshots, type MutableSnapshotMap } from "./lib/aiTransaction";
 import {
   analyzeWorkspaceImages,
@@ -93,6 +94,7 @@ import {
   standardizeWorkspaceImageOpenCxr,
   toAnatomyContext,
   type OpenCxrImageResult,
+  type PatientReportContext,
   type RadiographyPrediction,
 } from "./lib/workspaceApi";
 
@@ -185,6 +187,29 @@ function Shell({
 }) {
   const w = useWorkspace();
   const { splitOn, setSplitOn } = w;
+  /* Contexte patient réellement transmis à /radiography/report (défaut §2) :
+     sans ce mapping, le backend recevait "Patient non renseigné" même quand
+     la carte « Document » était renseignée par le praticien. */
+  const buildPatientReportContext = useCallback((): PatientReportContext => {
+    const p = w.patientInfo;
+    const context: PatientReportContext = { nom_prenom: p.name.trim() || "Patient non renseigné" };
+    if (p.studyDate.trim().length > 0) context.date_examen = p.studyDate;
+    return context;
+  }, [w.patientInfo]);
+  /* Contexte clinique complet du rapport : findings Neuro confirmés +
+     observations régionales de la carte anatomique (éditions praticien
+     prioritaires). Transmis au backend ET utilisé pour enrichir localement
+     le texte rendu et le structured_data. */
+  const buildClinicalContext = useCallback(
+    () =>
+      buildReportClinicalContext({
+        pathologyResult: w.pathologyResult,
+        anatomyRegionTexts: w.anatomyRegionTexts,
+        anatomyRegionAnomalies: w.anatomyRegionAnomalies,
+        anatomyRegionOverrides: w.anatomyRegionOverrides,
+      }),
+    [w.pathologyResult, w.anatomyRegionTexts, w.anatomyRegionAnomalies, w.anatomyRegionOverrides],
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
@@ -644,15 +669,26 @@ function Shell({
         if (reportPlanActions.length > 0) {
           if (current.prediction) {
             try {
-              const generated = await generateRadiographyReport(current.prediction);
+              /* Contexte clinique complet : findings Neuro + observations
+                 anatomiques régionales, transmis au backend puis fusionnés
+                 localement dans le texte rendu (garanti même si le backend
+                 ignore encore ce champ optionnel). */
+              const clinicalCtx = buildClinicalContext();
+              const generated = await generateRadiographyReport(current.prediction, buildPatientReportContext(), clinicalCtx);
               reportWarnings = generated.coherence_issues ?? [];
+              w.setRadioReportGeneration({
+                fields: generated.report ?? {},
+                coherencePassed: generated.coherence_passed,
+                coherenceIssues: generated.coherence_issues ?? [],
+                context: clinicalCtx,
+              });
               planToRoute = {
                 ...localPlan,
                 summary: generated.coherence_passed
                   ? "Rapport Gemini généré à partir de la prédiction de l'image active."
                   : "Rapport généré avec avertissements de cohérence.",
                 actions: localPlan.actions.map((action) => action.type === "generate_report"
-                  ? { ...action, type: "replace_report" as const, text: generated.rendered_text }
+                  ? { ...action, type: "replace_report" as const, text: appendClinicalSections(generated.rendered_text, clinicalCtx) }
                   : action),
               };
             } catch (error) {
@@ -706,15 +742,22 @@ function Shell({
           throw new Error("Aucune prédiction disponible. Lancez d'abord @analyze ou @predict.");
         }
         try {
-          const generated = await generateRadiographyReport(current.prediction);
+          const clinicalCtx = buildClinicalContext();
+          const generated = await generateRadiographyReport(current.prediction, buildPatientReportContext(), clinicalCtx);
           const reportAction = parsed.plan.actions.find((action) => action.type === "generate_report");
           if (!reportAction) throw new Error("Le plan de rapport est invalide.");
+          w.setRadioReportGeneration({
+            fields: generated.report ?? {},
+            coherencePassed: generated.coherence_passed,
+            coherenceIssues: generated.coherence_issues ?? [],
+            context: clinicalCtx,
+          });
           const plan: AiActionPlan = {
             ...parsed.plan,
             summary: generated.coherence_passed
               ? "Rapport Gemini généré à partir de la prédiction de l'image active."
               : "Rapport généré avec avertissements de cohérence.",
-            actions: [{ ...reportAction, type: "replace_report" as const, text: generated.rendered_text }],
+            actions: [{ ...reportAction, type: "replace_report" as const, text: appendClinicalSections(generated.rendered_text, clinicalCtx) }],
           };
           return { plan, assistantMessage: plan.summary, warnings: [...consistencyWarnings, ...generated.coherence_issues] };
         } catch (error) {

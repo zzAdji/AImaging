@@ -22,6 +22,7 @@ import {
   type LayerId,
   type ImageStateSnapshot,
   type NotificationKind,
+  type PatientInfo,
   type PixelSpacingMm,
   type Prefs,
   type SectionId,
@@ -36,6 +37,7 @@ import type { LinearImageBuffer } from "../lib/dicom";
 import { linearToDataUrl } from "../lib/dicomRenderer";
 import { imageToPngDataUrl } from "../lib/exportImage";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
+import type { ReportClinicalContext } from "../lib/reports/clinicalContext";
 import { buildWorkspaceManifest, captureAnnotatedImage } from "../lib/workspaceProtocol";
 import type { AnatomyRegionPayload, OpenCxrImageResult, PathologyResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult, WorkspaceThreeDProgress } from "../lib/workspaceApi";
 import { createWorkspaceExam, generateWorkspaceAnatomy, generateWorkspaceAnatomyAnalysis, generateWorkspaceAnatomyRegions, generateWorkspaceLandmarks, generateWorkspacePathology, pathologyColorFor, toAnatomyContext } from "../lib/workspaceApi";
@@ -594,6 +596,40 @@ export function WorkspaceProvider({
   const imageNameRef = useRef("Chest X-Ray ÔÇö PA");
   const dimsRef = useRef({ w: 1200, h: 1063 });
 
+  /* ------------------------- Infos patient éditables -----------------------
+     Carte « Document » du panneau droit. Pré-remplissage depuis les
+     métadonnées DICOM de l'image active (jamais d'écrasement des champs
+     déjà saisis) ; injectées ensuite dans les rapports exportés. */
+  const [patientInfo, setPatientInfoState] = useState<PatientInfo>({
+    name: "",
+    patientId: "",
+    age: "",
+    sex: "",
+    studyDate: new Date().toISOString().slice(0, 10),
+    modality: "CR",
+    study: "CHEST PA",
+  });
+  const setPatientInfo = useCallback((patch: Partial<PatientInfo>) => {
+    setPatientInfoState((p) => ({ ...p, ...patch }));
+  }, []);
+  useEffect(() => {
+    if (!imageMetadata) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPatientInfoState((p) => ({
+      ...p,
+      name: p.name || imageMetadata.patientPseudonym || "",
+      studyDate: p.studyDate || imageMetadata.studyDate || p.studyDate,
+      modality: imageMetadata.modality || p.modality,
+      study:
+        p.study && p.study !== "CHEST PA"
+          ? p.study
+          : imageMetadata.studyDescription || imageMetadata.bodyPartExamined
+            ? `${imageMetadata.bodyPartExamined ?? ""}${imageMetadata.viewPosition ? ` ${imageMetadata.viewPosition}` : ""}`.trim() || imageMetadata.studyDescription || p.study
+            : p.study,
+    }));
+  }, [imageMetadata]);
+
+
   useEffect(() => {
     imageIdRef.current = imageId;
     imageSrcRef.current = imageSrc;
@@ -1033,6 +1069,9 @@ export function WorkspaceProvider({
     lastLimitations: [],
     modelName: null,
     modelCount: null,
+    reportFields: null,
+    reportCoherencePassed: null,
+    reportCoherenceIssues: [],
   });
   const setAiDiagnostics = useCallback((diagnostics: AiDiagnosis[], metadata?: { modelName?: string; modelCount?: number }) => {
     setAiResults((results) => ({
@@ -1042,6 +1081,27 @@ export function WorkspaceProvider({
       modelCount: metadata?.modelCount ?? results.modelCount,
     }));
     setAnalysis("done");
+  }, []);
+  /* Capture le résultat brut de /radiography/report (défaut §1/§3) : sans ce
+     setter, seul le texte plat survivait à la génération et `fields` /
+     `coherenceIssues` retombaient sur `{}` / `[]` à la persistance et à
+     l'export, quelle que soit la réponse réelle du backend. Le contexte
+     clinique (Neuro + anatomie) est mémorisé pour enrichir le structured_data
+     persisté. */
+  const lastReportClinicalCtxRef = useRef<ReportClinicalContext | null>(null);
+  const setRadioReportGeneration = useCallback((result: {
+    fields: Record<string, string>;
+    coherencePassed: boolean;
+    coherenceIssues: string[];
+    context?: ReportClinicalContext;
+  }) => {
+    lastReportClinicalCtxRef.current = result.context ?? null;
+    setAiResults((results) => ({
+      ...results,
+      reportFields: result.fields,
+      reportCoherencePassed: result.coherencePassed,
+      reportCoherenceIssues: result.coherenceIssues,
+    }));
   }, []);
   const [aiFocus, setAiFocus] = useState<AiFocus | null>(null);
   const [aiThought, setAiThought] = useState<{ id: string; text: string } | null>(null);
@@ -1074,16 +1134,25 @@ export function WorkspaceProvider({
     const text = aiResults.report;
     if (!examId || !text || text === lastPersistedReportTextRef.current) return;
     lastPersistedReportTextRef.current = text;
+    /* Contexte clinique de la dernière génération réussie (Neuro + anatomie) :
+       mémorisé par setRadioReportGeneration, injecté dans structured_data. */
+    const clinicalCtx = lastReportClinicalCtxRef.current;
     void persistGeneratedRadioReport(
       examId,
       imageIdRef.current ? [imageIdRef.current] : [],
       {
-        fields: {},
-        coherencePassed: true,
-        coherenceIssues: [],
+        /* Champs/cohérence réels de la génération LLM (§1/§3) ; `{}`/`true`
+           seulement en dernier recours si le texte a été édité manuellement
+           avant toute génération réussie (jamais None inventé côté backend). */
+        fields: aiResults.reportFields ?? {},
+        coherencePassed: aiResults.reportCoherencePassed ?? true,
+        coherenceIssues: aiResults.reportCoherenceIssues,
         renderedText: text,
         ensemblePrediction: aiResults.diagnostics[0]?.label ?? null,
         numModels: aiResults.modelCount,
+        neuroFindings: clinicalCtx?.neuro_findings,
+        neuroRiskLevel: clinicalCtx?.neuro_risk_level ?? null,
+        anatomyObservations: clinicalCtx?.anatomy_observations,
       },
     )
       .then((row) => {
@@ -2437,6 +2506,7 @@ const closeDocument = useCallback(() => {
       saveReportDraft,
       radioReportValidated: radioReport?.status === "validated",
       validateRadioReport,
+      setRadioReportGeneration,
       cursorPos,
       setCursorPos,
 imageSrc,
@@ -2449,6 +2519,8 @@ imageSrc,
       imageIdRef,
       imageName,
       setImageName,
+      patientInfo,
+      setPatientInfo,
       imageMetadata,
       setImageMetadata,
       openImageData,
@@ -2507,8 +2579,8 @@ imageSrc,
       setAiTransactionUndo, undoAiTransaction, aiTransactionUndoable, setAiTransactionUndoable, aiThought,
       reportEditOpen, setReportEditOpen, reportDraft, setReportDraft,
       openReportEditor, saveReportDraft,
-      radioReport, validateRadioReport,
-      cursorPos, setCursorPos, imageSrc, renderSrc, dicomLinear, setDicomLinear, imageId, setImageId, imageIdRef, imageName, imageMetadata, setImageMetadata, openImageData,
+      radioReport, validateRadioReport, setRadioReportGeneration,
+      cursorPos, setCursorPos, imageSrc, renderSrc, dicomLinear, setDicomLinear, imageId, setImageId, imageIdRef, imageName, setImageName, patientInfo, setPatientInfo, imageMetadata, setImageMetadata, openImageData,
       closeDocument, saveDocument, captureImageState, applyImageState, fitSignal, requestFit,
       layers, setLayerVisible, setLayerLocked, setLayerName, setLayerOpacity,
       moveLayer, deleteLayerContent,

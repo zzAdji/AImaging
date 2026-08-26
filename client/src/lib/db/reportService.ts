@@ -34,6 +34,17 @@ export interface RadioReportInput {
   renderedText: string;
   ensemblePrediction?: string | null;
   numModels?: number | null;
+  /** Détections confirmées du pipeline Neuro (YOLOv8 filtré par DenseNet). */
+  neuroFindings?: Array<{ condition: string; prob: number; risk: string }>;
+  neuroRiskLevel?: string | null;
+  /** Observations régionales de la carte anatomique (IA + éditions praticien). */
+  anatomyObservations?: Array<{
+    region_id: string;
+    label: string;
+    observation: string;
+    anomaly: boolean;
+    source: "ai" | "practitioner";
+  }>;
 }
 
 /**
@@ -63,6 +74,13 @@ export async function persistGeneratedRadioReport(
       limitations: input.coherenceIssues,
       coherence_passed: input.coherencePassed,
       source_analysis_runs: [...new Set(sourceRuns)],
+      /* Détections Neuro confirmées + observations régionales anatomiques :
+         absents tant que non fournis (aucune valeur inventée, §3/§4). */
+      neuro: {
+        risk_level: input.neuroRiskLevel ?? null,
+        confirmed: (input.neuroFindings ?? []) as unknown as Json,
+      },
+      anatomy_regions: (input.anatomyObservations ?? []) as unknown as Json,
     };
     const row = await createReport({
       examination_id: ctx.examinationUuid,

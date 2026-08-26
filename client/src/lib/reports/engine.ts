@@ -68,6 +68,20 @@ export interface ReportTemplateData {
     phone: string | null;
     email: string | null;
     align: "left" | "center" | "right";
+    /**
+     * Titre du document affiché en gras/souligné sous l'en-tête (ex. « RADIOGRAPHIE »,
+     * « ÉCHOGRAPHIE OBSTÉTRICALE »). `null` ⇒ titre générique existant conservé
+     * (rétrocompatible avec les templates déjà enregistrés).
+     */
+    documentTitle: string | null;
+    /**
+     * En-tête institutionnel bilingue façon administration (ex. République du
+     * Cameroun / Republic of Cameroon, ministère, hôpital…) : une ligne par
+     * entrée, colonne gauche et colonne droite encadrant le logo centré.
+     * Tableaux vides ⇒ en-tête simple (logo + organizationName) inchangé.
+     */
+    letterheadLinesLeft: string[];
+    letterheadLinesRight: string[];
   };
   footer: { visible: boolean; text: string | null; showDate: boolean; showPagination: boolean };
   sections: TemplateSection[];
@@ -91,12 +105,13 @@ export interface ReportTemplateData {
 
 const RADIO_SECTIONS_FR: TemplateSection[] = [
   { id: "header", title: "En-tête", visible: true },
-  { id: "overview", title: "Overview", visible: true },
-  { id: "findings", title: "Findings", visible: true },
-  { id: "ai_results", title: "AI Results", visible: true },
-  { id: "measurements", title: "Measurements", visible: true },
-  { id: "impression", title: "Impression", visible: true },
-  { id: "footer", title: "Footer", visible: true },
+  { id: "overview", title: "Résultat", visible: true },
+  { id: "findings", title: "Remarques", visible: true },
+  { id: "measurements", title: "Mesures", visible: true },
+  { id: "neuro_detections", title: "Détections complémentaires", visible: true },
+  { id: "anatomy_regions", title: "Observations régionales", visible: true },
+  { id: "impression", title: "Conclusion", visible: true },
+  { id: "footer", title: "Pied de page", visible: true },
 ];
 
 const FETAL_SECTIONS_FR: TemplateSection[] = [
@@ -113,11 +128,39 @@ const FETAL_SECTIONS_FR: TemplateSection[] = [
   { id: "footer", title: "Footer", visible: true },
 ];
 
+/**
+ * En-tête institutionnel par défaut (façon Hôpital Général de Garoua) :
+ * colonne gauche en français, colonne droite en anglais, logo centré.
+ * Éditable dans le builder de template.
+ */
+const DEFAULT_LETTERHEAD_LEFT: string[] = [
+  "RÉPUBLIQUE DU CAMEROUN",
+  "Paix – Travail – Patrie",
+  "MINISTÈRE DE LA SANTÉ PUBLIQUE",
+  "HÔPITAL GÉNÉRAL DE GAROUA",
+  "DIRECTION GÉNÉRALE",
+  "DIRECTION DES PRESTATIONS MÉDICALES",
+  "DÉPARTEMENT MÉDICO-SANITAIRE ET NURSING",
+  "SERVICE DE RADIOLOGIE-IMAGERIE MÉDICALE",
+];
+
+const DEFAULT_LETTERHEAD_RIGHT: string[] = [
+  "REPUBLIC OF CAMEROON",
+  "Peace – Work – Fatherland",
+  "MINISTRY OF PUBLIC HEALTH",
+  "GENERAL HOSPITAL OF GAROUA",
+  "DIRECTION GENERAL",
+  "MEDICAL ACTIVITIES DEPARTMENT",
+  "MEDICAL SANITARY AND NURSING DEPARTMENT",
+  "RADIOLOGY AND MEDICAL IMAGING DEPARTMENT",
+];
+
 function baseTemplate(sections: TemplateSection[]): ReportTemplateData {
   return {
     page: { size: "A4", orientation: "portrait", marginsMm: { top: 18, right: 15, bottom: 15, left: 15 } },
     typography: { fontFamily: "Inter, sans-serif", fontSizePt: 11, lineHeight: 1.45, color: "#111111" },
-    accentColor: "#2563eb",
+    /* Document hospitalier : tout en noir, aucune couleur d'accent. */
+    accentColor: "#000000",
     header: {
       visible: true,
       logoPath: null,
@@ -127,6 +170,9 @@ function baseTemplate(sections: TemplateSection[]): ReportTemplateData {
       phone: null,
       email: null,
       align: "left",
+      documentTitle: null,
+      letterheadLinesLeft: [...DEFAULT_LETTERHEAD_LEFT],
+      letterheadLinesRight: [...DEFAULT_LETTERHEAD_RIGHT],
     },
     footer: { visible: true, text: null, showDate: true, showPagination: true },
     sections,
@@ -143,6 +189,7 @@ export function defaultVariables(): TemplateVariable[] {
     { key: "examinerName", label: "Médecin demandeur / interprétateur", value: "____________________", visible: true },
     { key: "examDate", label: "Date de l'examen", value: "____ / ____ / ________", visible: true },
     { key: "examId", label: "N° d'examen", value: "____________________", visible: true },
+    { key: "indication", label: "Indication clinique", value: "", visible: true },
   ];
 }
 
@@ -191,7 +238,15 @@ export function defaultTemplateData(
       : modality === "radiography"
         ? RADIO_SECTIONS_FR.map((s) => ({ ...s }))
         : RADIO_SECTIONS_FR.map((s) => ({ ...s }));
-  return baseTemplate(sections);
+  const template = baseTemplate(sections);
+  /* Titre officiel centré/souligné façon formulaire imprimé, par modalité. */
+  template.header.documentTitle =
+    modality === "fetal_ultrasound"
+      ? "ÉCHOGRAPHIE OBSTÉTRICALE"
+      : modality === "radiography"
+        ? "RADIOGRAPHIE"
+        : "RAPPORT D'EXAMEN";
+  return template;
 }
 
 /* ------------------------ Rendu document (data+template) -------------------- */
@@ -290,6 +345,16 @@ export interface RadiographyReportInput {
   numModels?: number | null;
   /** Mesures réellement posées sur l'image (unité préservée). */
   measurements?: Array<{ label: string; value: number | null; unit: string; source: "ai" | "user" }>;
+  /** Détections confirmées du pipeline Neuro (YOLOv8 filtré par DenseNet). */
+  neuroFindings?: Array<{ condition: string; prob: number; risk: string }>;
+  neuroRiskLevel?: string | null;
+  /** Observations régionales de la carte anatomique (IA + éditions praticien). */
+  anatomyObservations?: Array<{
+    label: string;
+    observation: string;
+    anomaly: boolean;
+    source: "ai" | "practitioner";
+  }>;
 }
 
 /** Construit le structured_data radio — aucune valeur inventée (§3/§4). */
@@ -307,6 +372,13 @@ export function buildRadiographyStructuredData(input: RadiographyReportInput): S
       assisted: true,
     },
     measurements: input.measurements ?? [],
+    /* Détections Neuro confirmées + observations régionales anatomiques :
+       absentes du rapport tant que non fournies (jamais de section vide). */
+    neuro: {
+      risk_level: input.neuroRiskLevel ?? null,
+      confirmed: input.neuroFindings ?? [],
+    },
+    anatomy_regions: input.anatomyObservations ?? [],
   };
 }
 
@@ -323,24 +395,30 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
   const sections: RenderedSection[] = [];
   const overview: string[] = [];
   for (const [key, value] of Object.entries(findings)) {
+    /* Clés techniques internes : jamais affichées dans le document. */
+    if (key === "note") continue;
+    /* Le texte rédigé du rapport (`draft`) est restitué tel quel, sans
+       préfixe de clé — c'est le contenu du « RESULTAT » du document. */
+    if (key === "draft") {
+      const text = str(value).trim();
+      if (text.length > 0) {
+        for (const paragraph of text.split(/\n+/)) {
+          const trimmed = paragraph.trim();
+          if (trimmed.length > 0) pushLine(overview, trimmed);
+        }
+      }
+      continue;
+    }
     pushLine(overview, `${key} : ${str(value)}`);
   }
-  sections.push({ id: "overview", title: "Overview", lines: overview, visible: true });
+  sections.push({ id: "overview", title: "Résultat", lines: overview, visible: true });
 
+  /* Remarques de cohérence uniquement (aucune mention d'assistance ou de
+     modèle : le rapport reste un compte rendu hospitalier classique). */
   const findingLines: string[] = [];
-  if (ai.assisted === true) {
-    pushLine(findingLines, "AI-assisted results — needs review until validation.");
-  }
   const issues = Array.isArray(ai.coherence_issues) ? (ai.coherence_issues as unknown[]) : [];
   for (const issue of issues) pushLine(findingLines, `⚠ ${str(issue)}`);
-  sections.push({ id: "findings", title: "Findings", lines: findingLines, visible: true });
-
-  const aiLines: string[] = [];
-  const modelCount = num(ai.model_count);
-  if (modelCount !== null) pushLine(aiLines, `Ensemble de ${modelCount} modèle(s).`);
-  const prediction = str(impression.ensemble_prediction);
-  if (prediction.length > 0) pushLine(aiLines, `Prédiction ensemble : ${prediction}`);
-  sections.push({ id: "ai_results", title: "AI Results", lines: aiLines, visible: true });
+  sections.push({ id: "findings", title: "Remarques", lines: findingLines, visible: true });
 
   const measLines: string[] = [];
   for (const m of measurements) {
@@ -349,12 +427,40 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
     if (value === null) continue;
     pushLine(measLines, `${str(m.label)} : ${value} ${str(m.unit)} (${str(m.source)})`);
   }
-  sections.push({ id: "measurements", title: "Measurements", lines: measLines, visible: true });
+  sections.push({ id: "measurements", title: "Mesures", lines: measLines, visible: true });
+
+  /* Détections complémentaires du pipeline Neuro (YOLOv8 filtré par DenseNet) :
+     section omise tant qu'aucune détection confirmée n'est disponible. */
+  const neuro = (data.neuro ?? {}) as Record<string, unknown>;
+  const confirmed = Array.isArray(neuro.confirmed) ? (neuro.confirmed as Array<Record<string, unknown>>) : [];
+  const neuroLines: string[] = [];
+  for (const f of confirmed) {
+    const prob = num(f.prob);
+    pushLine(
+      neuroLines,
+      `${str(f.condition).replace(/_/g, " ")} : ${
+        prob !== null ? `${Math.round(prob * 100)} %` : "probabilité non fournie"
+      }${str(f.risk).length > 0 ? ` (risque ${str(f.risk)})` : ""}`,
+    );
+  }
+  sections.push({ id: "neuro_detections", title: "Détections complémentaires", lines: neuroLines, visible: true });
+
+  /* Observations régionales de la carte anatomique : texte praticien,
+     flag anomalie préservés ; section omise si aucune. */
+  const regions = Array.isArray(data.anatomy_regions) ? (data.anatomy_regions as Array<Record<string, unknown>>) : [];
+  const regionLines: string[] = [];
+  for (const r of regions) {
+    if (str(r.observation).length === 0) continue;
+    const flag = r.anomaly === true ? " — anomalie signalée" : "";
+    pushLine(regionLines, `${str(r.label)}${flag} : ${str(r.observation)}`);
+  }
+  sections.push({ id: "anatomy_regions", title: "Observations régionales", lines: regionLines, visible: true });
 
   const impressionLines: string[] = [];
-  if (prediction.length > 0) pushLine(impressionLines, `Suspicion / prédiction : ${prediction}`);
+  const prediction = str(impression.ensemble_prediction);
+  if (prediction.length > 0) pushLine(impressionLines, `Suspicion : ${prediction}`);
   for (const issue of issues) pushLine(impressionLines, `Limite : ${str(issue)}`);
-  sections.push({ id: "impression", title: "Impression", lines: impressionLines, visible: true });
+  sections.push({ id: "impression", title: "Conclusion", lines: impressionLines, visible: true });
 
   void headerFields;
   return sections;

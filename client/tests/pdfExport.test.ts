@@ -42,7 +42,7 @@ describe("pipeline PDF/print (§26-§30)", () => {
     );
   });
 
-  it("HTML A4 : header org, sections ordonnées/visibles uniquement, badge IA", () => {
+  it("HTML A4 : header org, sections ordonnées/visibles uniquement, sans mention IA", () => {
     const template = defaultTemplateData("radiography");
     template.header.organizationName = "Hôpital Général";
     template.sections = template.sections.map((s) =>
@@ -53,11 +53,15 @@ describe("pipeline PDF/print (§26-§30)", () => {
     expect(html).toContain("@page"); // A4 paginé
     expect(html).toContain("A4 portrait");
     expect(html).toContain("Hôpital Général");
-    expect(html).toContain("Assisté IA · à relire"); // badge permanent
+    /* Aucune mention d'assistance IA dans le document (badge supprimé). */
+    expect(html).not.toContain("Assisté IA");
+    expect(html).not.toContain("ai-badge");
+    /* Titre officiel par défaut, centré/souligné façon formulaire imprimé. */
+    expect(html).toContain("RADIOGRAPHIE");
     expect(html).toContain("Opacité basale droite.");
     expect(html).toContain("break-inside: avoid"); // §30 sections non coupées
     /* Section masquée par le template : absente du rendu. */
-    expect(html).not.toContain("<h2>Impression</h2>");
+    expect(html).not.toContain("<h2>Conclusion</h2>");
   });
 
   it("printDocument délègue au moteur natif via iframe cachée", () => {
@@ -95,7 +99,7 @@ describe("exports Word/JSON (§37)", () => {
     const doc = renderDocument("radiography", RADIO, defaultTemplateData("radiography"));
     const word = buildWordDocument(doc);
     expect(word).toContain("urn:schemas-microsoft-com:office:word");
-    expect(word).toContain("Rapport d'examen");
+    expect(word).toContain("RADIOGRAPHIE");
   });
 
   it("buildReportJsonExport contient template + sections + texte brut", () => {

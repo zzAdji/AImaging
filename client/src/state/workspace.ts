@@ -3,6 +3,7 @@ import type { ExamImageMetadata, GradCamResult, ThreeDResult } from "../lib/exam
 import type { LinearImageBuffer } from "../lib/dicom";
 import type { OpenCxrImageResult, PathologyResult, WorkspaceAnatomyResult, WorkspaceLandmarksResult } from "../lib/workspaceApi";
 import type { LandmarkContours, LiveLandmarkAnalysis } from "../lib/landmarkMeasure";
+import type { ReportClinicalContext } from "../lib/reports/clinicalContext";
 import type { AiActionPlan } from "../lib/workspaceProtocol";
 
 export type ToolId =
@@ -399,6 +400,34 @@ export interface AiResults {
   lastLimitations: string[];
   modelName: string | null;
   modelCount: number | null;
+  /** Champs structurés bruts renvoyés par /radiography/report (RadiologyReportFields) ;
+   *  source unique de vérité pour la persistance DB ET l'export (§1/§3 du brief).
+   *  `null` tant qu'aucune génération LLM n'a réussi — jamais de valeur inventée. */
+  reportFields: Record<string, string> | null;
+  /** Cohérence renvoyée par la même génération ; conservée pour l'export et la DB. */
+  reportCoherencePassed: boolean | null;
+  reportCoherenceIssues: string[];
+}
+
+/** Informations patient affichées dans la carte « Document » du panneau droit
+ *  et injectées dans les rapports (tokens `{{patientName}}`, cellules d'en-tête
+ *  PDF/Word…). Tout est éditable par le praticien ; le pré-remplissage se fait
+ *  depuis les métadonnées DICOM quand elles existent, jamais l'inverse. */
+export interface PatientInfo {
+  /** Nom / pseudonyme du patient (token `{{patientName}}`). */
+  name: string;
+  /** Identifiant patient affiché (token `{{patientId}}`). */
+  patientId: string;
+  /** Âge en années (token `{{age}}` ; combiné via `{{ageSex}}`). */
+  age: string;
+  /** Sexe : M / F (token `{{sex}}` ; combiné via `{{ageSex}}`). */
+  sex: string;
+  /** Date de l'examen ISO `YYYY-MM-DD` (token `{{examDate}}`). */
+  studyDate: string;
+  /** Modalité DICOM courte : CR, DX… (token `{{modality}}`). */
+  modality: string;
+  /** Description de l'examen : « CHEST PA »… (token `{{study}}`). */
+  study: string;
 }
 
 export interface AiActionExecutionResult {
@@ -685,6 +714,17 @@ export interface WorkspaceState {
   aiHistory: AiHistoryItem[];
   aiResults: AiResults;
   setAiDiagnostics: (diagnostics: AiDiagnosis[], metadata?: { modelName?: string; modelCount?: number }) => void;
+  /** Enregistre les champs structurés + la cohérence d'une génération
+   *  /radiography/report réussie, en plus du texte déjà propagé par l'action
+   *  `replace_report` du plan IA — pour que la persistance DB et l'export
+   *  PDF/Word/JSON disposent des vraies données (§1/§2/§3). Le contexte
+   *  clinique optionnel (Neuro + anatomie) est mémorisé pour la persistance. */
+  setRadioReportGeneration: (result: {
+    fields: Record<string, string>;
+    coherencePassed: boolean;
+    coherenceIssues: string[];
+    context?: ReportClinicalContext;
+  }) => void;
   /** Region to zoom into; fresh object each time → CanvasViewport reacts to it */
   aiFocus: AiFocus | null;
   /** "Asks the canvas to zoom into a region (px in image space)" */
@@ -754,6 +794,10 @@ imageSrc: string;
   imageIdRef: { current: string | null };
   imageName: string;
   setImageName: (n: string) => void;
+  /** Infos patient éditables (carte « Document »), pré-remplies depuis les
+   *  métadonnées DICOM puis injectées dans les rapports exportés. */
+  patientInfo: PatientInfo;
+  setPatientInfo: (patch: Partial<PatientInfo>) => void;
   /** Real DICOM metadata for the active image, or null for an ordinary browser image. */
   imageMetadata: ExamImageMetadata | null;
   setImageMetadata: (metadata: ExamImageMetadata | null) => void;

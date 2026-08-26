@@ -39,13 +39,16 @@ describe("default templates par modalité (§7)", () => {
 });
 
 describe("rendu radiographie", () => {
-  it("génère overview/findings/ai/measurements/impression depuis les données", () => {
+  it("génère overview/findings/measurements/impression depuis les données, sans section IA", () => {
     const data = buildRadiographyStructuredData(RADIO_INPUT);
     const doc = renderDocument("radiography", data, null);
     const byId = new Map(doc.sections.map((s) => [s.id, s]));
 
     expect(byId.get("overview")?.lines.join("\n")).toContain("Opacité basale droite.");
-    expect(byId.get("ai_results")?.lines.join("\n")).toContain("Prédiction ensemble : Pneumonia");
+    /* Plus de section « AI Results » : la prédiction rejoint la conclusion,
+       libellée « Suspicion » sans mention de modèle (compte rendu hospitalier). */
+    expect(byId.has("ai_results")).toBe(false);
+    expect(byId.get("impression")?.lines.join("\n")).toContain("Suspicion : Pneumonia");
     expect(byId.get("measurements")?.lines.join("\n")).toContain("CTR : 0.44 ratio");
   });
 

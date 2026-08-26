@@ -393,6 +393,89 @@ function TemplateBuilderModal({
                 </div>
               ))}
             </div>
+{/* ————— En-tête / letterhead ————— */}
+            <div className="rounded-lg border border-border bg-canvas/30 p-2 space-y-2">
+              <p className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-ink-3">
+                En-tête du document
+              </p>
+              <label className="block text-[10.5px] text-ink-3">
+                Titre affiché (ex. « RADIOGRAPHIE »)
+                <input
+                  data-attr="template-header-title"
+                  value={template.header.documentTitle ?? ""}
+                  onChange={(e) =>
+                    update({
+                      ...template,
+                      header: { ...template.header, documentTitle: e.target.value.length > 0 ? e.target.value : null },
+                    })
+                  }
+                  placeholder="Rapport d'examen — (par défaut)"
+                  className="mt-1 w-full rounded border border-border bg-btn px-1.5 py-1 text-[11px] text-ink outline-none focus:border-accent/60"
+                />
+              </label>
+              <label className="block text-[10.5px] text-ink-3">
+                Logo (URL / chemin)
+                <input
+                  data-attr="template-header-logo"
+                  value={template.header.logoPath ?? "https://github.com/zzAdji/hgg-ai-intership-project/blob/main/client/public/hgg.jpg"}
+                  onChange={(e) =>
+                    update({
+                      ...template,
+                      header: { ...template.header, logoPath: e.target.value.length > 0 ? e.target.value : null },
+                    })
+                  }
+                  placeholder="/logo-hopital.png"
+                  className="mt-1 w-full rounded border border-border bg-btn px-1.5 py-1 text-[11px] text-ink outline-none focus:border-accent/60"
+                />
+              </label>
+              <label className="block text-[10.5px] text-ink-3">
+                Nom de l'établissement (sous le logo)
+                <input
+                  data-attr="template-header-orgname"
+                  value={template.header.organizationName}
+                  onChange={(e) => update({ ...template, header: { ...template.header, organizationName: e.target.value } })}
+                  placeholder="Hôpital Général de Garoua"
+                  className="mt-1 w-full rounded border border-border bg-btn px-1.5 py-1 text-[11px] text-ink outline-none focus:border-accent/60"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="block text-[10.5px] text-ink-3">
+                  Colonne gauche (1 ligne par entrée — ex. République, Ministère…)
+                  <textarea
+                    data-attr="template-header-left"
+                    value={template.header.letterheadLinesLeft.join("\n")}
+                    onChange={(e) =>
+                      update({
+                        ...template,
+                        header: { ...template.header, letterheadLinesLeft: e.target.value.split("\n") },
+                      })
+                    }
+                    rows={5}
+                    placeholder={"République du Cameroun\nPaix - Travail - Patrie\nMinistère de la Santé Publique\nHôpital Général de Garoua"}
+                    className="mt-1 w-full resize-none rounded border border-border bg-btn px-1.5 py-1 text-[11px] text-ink outline-none focus:border-accent/60"
+                  />
+                </label>
+                <label className="block text-[10.5px] text-ink-3">
+                  Colonne droite (miroir bilingue, optionnel)
+                  <textarea
+                    data-attr="template-header-right"
+                    value={template.header.letterheadLinesRight.join("\n")}
+                    onChange={(e) =>
+                      update({
+                        ...template,
+                        header: { ...template.header, letterheadLinesRight: e.target.value.split("\n") },
+                      })
+                    }
+                    rows={5}
+                    placeholder={"Republic of Cameroon\nPeace - Work - Fatherland\nMinistry of Public Health\nGeneral Hospital of Garoua"}
+                    className="mt-1 w-full resize-none rounded border border-border bg-btn px-1.5 py-1 text-[11px] text-ink outline-none focus:border-accent/60"
+                  />
+                </label>
+              </div>
+              <p className="text-[9.5px] text-ink-3">
+                Laissez les deux colonnes vides pour garder l'en-tête simple (logo + nom seuls).
+              </p>
+            </div>
 {/* ————— Variables personnalisables ————— */}
             <div className="rounded-lg border border-border bg-canvas/30 p-2">
               <p className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-ink-3">
