@@ -170,7 +170,7 @@ export function documentHtml(document: RenderedDocument): string {
   .org-name { font-size: 1.35em; font-weight: 700; letter-spacing: 0.6px; }
   .org-sub { font-size: 0.95em; margin-top: 2px; }
   .org-coord { display: flex; gap: 14px; font-size: 0.85em; margin-top: 4px; }
-  .logo { max-height: 52px; }
+  .logo { max-height: 220px; }
   /* En-tête bilingue façon administration : colonnes gauche/droite (fr/en…)
       centrées, encadrant le logo + nom d'organisation au centre. */
   .letterhead-grid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start;
@@ -208,8 +208,6 @@ export function documentHtml(document: RenderedDocument): string {
   ${metaBlock}
   ${customBlocks}
   ${sections}
-  ${signatureBlock}
-  ${footerText}
 </body></html>`;
 }
 

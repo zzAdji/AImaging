@@ -108,6 +108,107 @@ describe("rendu échographie obstétricale (§5)", () => {
   });
 });
 
+describe("forme stricte du document généré (logo + texte IA)", () => {
+  /* Texte tel que produit par /radiography/report (rendered_text) puis édité
+     dans l'éditeur de rapport — c'est CE qui était recopié tel quel avant. */
+  const AI_TEXT = [
+    "RADIOGRAPHIE THORACIQUE DE FACE",
+    "",
+    "Nom et Prénom : Jean DUPONT",
+    "Indication : Champs pulmonaires et silhouette cardiomédiastinale",
+    "Prescripteur : Dr KAMGA",
+    "Date : 26/08/2026",
+    "",
+    "RESULTAT",
+    "- Absence de foyer alvéolaire.",
+    "  - Sinus costophréniques libres.",
+    "",
+    "CONCLUSION",
+    "❖ Pneumopathie basale probable.",
+    "",
+    "--- Analyse assistée par intelligence artificielle ---",
+    "Niveau de confiance : Élevé (98 %)",
+    "Recommandation : Corrélation clinique recommandée",
+    "",
+    "Ce document est généré par un système d'aide au diagnostic et ne remplace pas " +
+      "l'interprétation d'un professionnel de santé qualifié.",
+  ].join("\n");
+
+  it("le logo par défaut hgg.jpg est présent dans le template", () => {
+    expect(defaultTemplateData("radiography").header.logoPath).toBe("/hgg.jpg");
+    expect(defaultTemplateData("fetal_ultrasound").header.logoPath).toBe("/hgg.jpg");
+  });
+
+  it("un template legacy sans logo retombe sur le logo par défaut", () => {
+    const doc = renderDocument("radiography", {}, { ...defaultTemplateData("radiography"), header: { ...defaultTemplateData("radiography").header, logoPath: null } } as ReportTemplateData);
+    expect(doc.template.header.logoPath).toBe("/hgg.jpg");
+  });
+
+  it("tirets, titres internes et méta-patient du texte IA ne sont jamais restitués tels quels", () => {
+    const doc = renderDocument("radiography", { findings: { draft: AI_TEXT } }, null);
+    const byId = new Map(doc.sections.map((s) => [s.id, s]));
+    const overview = byId.get("overview")?.lines.join("\n") ?? "";
+    expect(overview).toContain("Absence de foyer alvéolaire.");
+    expect(overview).toContain("Sinus costophréniques libres.");
+    /* Aucun tiret résiduel en début de ligne (les puces appartiennent au style
+       du document, pas au contenu). */
+    for (const line of overview.split("\n")) expect(line.startsWith("-")).toBe(false);
+    /* Titre « RESULTAT » dupliqué : supprimé. */
+    expect(overview).not.toContain("RESULTAT");
+    /* Méta-patient déjà présente dans le bloc d'identification : supprimée. */
+    expect(overview).not.toContain("Jean DUPONT");
+    expect(overview).not.toContain("Prescripteur");
+    /* Grand titre officiel dupliqué (première ligne tout en majuscules) : supprimé. */
+    expect(overview).not.toContain("RADIOGRAPHIE THORACIQUE DE FACE");
+    /* Mention légale : déjà couverte par le pied de page du modèle. */
+    expect(overview).not.toContain("système d'aide au diagnostic");
+  });
+
+  it("la Conclusion existe toujours et reçoit le diagnostic du texte IA", () => {
+    const doc = renderDocument("radiography", { findings: { draft: AI_TEXT } }, null);
+    const impression = doc.sections.find((s) => s.id === "impression")!;
+    expect(impression.lines.length).toBeGreaterThan(0);
+    expect(visibleSections(doc).some((s) => s.id === "impression")).toBe(true);
+    expect(impression.lines.join("\n")).toContain("Pneumopathie basale probable.");
+    /* Confiance/recommandation du bloc « Analyse assistée » → Conclusion. */
+    expect(impression.lines.join("\n")).toContain("Niveau de confiance : Élevé (98 %)");
+    expect(impression.lines.join("\n")).toContain("Corrélation clinique recommandée");
+  });
+
+  it("champs structurés : priorité sur le draft, jamais de doublon ; labels français", () => {
+    const base = buildRadiographyStructuredData({
+      fields: {
+        type_examen: "Radiographie thoracique de face",
+        zone_analysee: "Champs pulmonaires",
+        observations: "Absence de foyer alvéolaire.",
+        diagnostic_probable: "Pneumonie",
+        niveau_confiance: "Élevé (98 %)",
+        recommandation_orientation: "Corrélation clinique recommandée",
+      },
+      coherenceIssues: [],
+      ensemblePrediction: null,
+      numModels: null,
+    });
+    const data = {
+      ...base,
+      /* Champs structurés ET texte brut présents simultanément (cas réel). */
+      findings: { ...(base.findings as Record<string, unknown>), draft: AI_TEXT },
+    };
+    const doc = renderDocument("radiography", data, null);
+    const byId = new Map(doc.sections.map((s) => [s.id, s]));
+    const overview = byId.get("overview")?.lines.join("\n") ?? "";
+    const impression = byId.get("impression")?.lines.join("\n") ?? "";
+    /* Labels français au lieu des clés techniques backend. */
+    expect(overview).toContain("Observations : Absence de foyer alvéolaire.");
+    expect(overview).not.toContain("type_examen");
+    /* Diagnostic/confiance/recommandation dans la Conclusion. */
+    expect(impression).toContain("Diagnostic probable : Pneumonie");
+    expect(impression).toContain("Niveau de confiance : Élevé (98 %)");
+    /* Le draft brut n'est PAS dupliqué à côté des champs structurés. */
+    expect(overview).not.toContain("Sinus costophréniques libres.");
+  });
+});
+
 describe("template contrôle ordre/visibilité/titres (§6/§16)", () => {
   it("section masquée reste dans le document mais est omise de l'affichage", () => {
     const template = defaultTemplateData("radiography");

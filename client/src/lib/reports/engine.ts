@@ -163,7 +163,9 @@ function baseTemplate(sections: TemplateSection[]): ReportTemplateData {
     accentColor: "#000000",
     header: {
       visible: true,
-      logoPath: null,
+      /* Logo institutionnel par défaut (public/hgg.jpg), affiché centré dans
+         l'en-tête lettre du document généré. */
+      logoPath: "/hgg.jpg",
       organizationName: "",
       subtitle: null,
       address: null,
@@ -206,7 +208,14 @@ export function normalizeTemplateData(template: ReportTemplateData): ReportTempl
     page: template.page ?? defaults.page,
     typography: template.typography ?? defaults.typography,
     accentColor: template.accentColor ?? defaults.accentColor,
-    header: { ...defaults.header, ...(template.header ?? {}) },
+    /* Logo par défaut : un template persisté avant l'introduction du logo
+       (logoPath null/"") retombe sur le logo institutionnel /hgg.jpg au lieu
+       d'un en-tête sans image. */
+    header: {
+      ...defaults.header,
+      ...(template.header ?? {}),
+      logoPath: template.header?.logoPath || defaults.header.logoPath,
+    },
     footer: { ...defaults.footer, ...(template.footer ?? {}) },
     signature: { ...defaults.signature, ...(template.signature ?? {}) },
     sections: Array.isArray(template.sections) && template.sections.length > 0
@@ -382,7 +391,84 @@ export function buildRadiographyStructuredData(input: RadiographyReportInput): S
   };
 }
 
+/* --------------------- Forme stricte du texte IA (draft) -------------------- */
+
+/** Supprime les puces/tirets/markdown en tête de ligne (- – — • * ❖ ▪ · > #). */
+function stripListMarker(line: string): string {
+  return line.replace(/^(?:\s*[-–—•*❖▪◦·>#]+\s*)+/, "").trim();
+}
+
+interface DraftSections {
+  overview: string[];
+  conclusion: string[];
+}
+
+/**
+ * Analyse le texte brut produit par l'IA (`rendered_text`) et le répartit
+ * dans les sections officielles du document. La STRUCTURE appartient au
+ * moteur : les titres de sections (« RESULTAT », « CONCLUSION »), les puces,
+ * les séparateurs « --- » et les méta-données patient déjà présentes dans le
+ * bloc d'identification sont retirés — jamais restitués tels quels.
+ */
+function parseDraftSections(text: string): DraftSections {
+  const overview: string[] = [];
+  const conclusion: string[] = [];
+  let target: string[] | null = null; // null ⇒ avant tout titre de section
+  let leadingTitleSkipped = false;
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+
+    const bare = stripListMarker(line).replace(/[:.;]+$/, "").trim().toUpperCase();
+    /* Titres de sections du texte IA → simple bascule de section courante. */
+    if (/^(RESULTATS?|RÉSULTATS?|COMPTE RENDU|OBSERVATIONS?)$/.test(bare)) {
+      target = overview;
+      continue;
+    }
+    if (/^(CONCLUSIONS?|IMPRESSION|SYNTHÈSE|SYNTHESE)$/.test(bare)) {
+      target = conclusion;
+      continue;
+    }
+    /* Séparateur « --- Analyse assistée par intelligence artificielle --- » :
+       confiance et recommandation rejoignent la Conclusion du document. */
+    if (/^(-{3,}|={3,}|_{3,})/.test(line) || /analyse assist/i.test(line)) {
+      target = conclusion;
+      continue;
+    }
+    /* Mention légale : déjà couverte par le pied de page du modèle. */
+    if (/^ce document est g[ée]n[ée]r/i.test(line)) continue;
+
+    if (target === null) {
+      /* Méta-patient : déjà affichée dans le bloc d'identification du document. */
+      if (/^(nom(\s+et\s+pr[ée]nom)?|indication|prescripteur|date|age|âge|sexe)\s*[:：]/i.test(line)) continue;
+      /* Première ligne « RADIOGRAPHIE THORACIQUE … » : doublon du grand titre
+         officiel déjà imprimé sous l'en-tête. */
+      if (!leadingTitleSkipped && !line.includes(":") && line === line.toUpperCase() && line.length <= 60) {
+        leadingTitleSkipped = true;
+        continue;
+      }
+    }
+
+    const clean = stripListMarker(line);
+    if (clean.length === 0) continue;
+    (target ?? overview).push(clean);
+  }
+  return { overview, conclusion };
+}
+
 /* --------------------------- Rendu radiographie ----------------------------- */
+
+/* Libellés français des champs structurés backend (RadiologyReportFields) ;
+   toute autre clé est restituée telle quelle (rétrocompatible). */
+const RADIO_FIELD_LABELS: Record<string, string> = {
+  type_examen: "Type d'examen",
+  zone_analysee: "Zone analysée",
+  observations: "Observations",
+  diagnostic_probable: "Diagnostic probable",
+  niveau_confiance: "Niveau de confiance",
+  recommandation_orientation: "Recommandation",
+};
 
 function renderRadiography(data: StringMap, headerFields: Array<{ label: string; value: string }>): RenderedSection[] {
   const findings = (data.findings ?? {}) as Record<string, unknown>;
@@ -393,24 +479,32 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
     : [];
 
   const sections: RenderedSection[] = [];
+
+  /* Texte IA brut (`draft`, ex. rendered_text) : re-mis en forme strictement
+     par le moteur — jamais recopié avec ses tirets et ses titres internes. */
+  const parsedDraft = parseDraftSections(str(findings.draft));
+
   const overview: string[] = [];
+  const conclusionFieldLines: string[] = [];
+  let hasStructuredFields = false;
   for (const [key, value] of Object.entries(findings)) {
     /* Clés techniques internes : jamais affichées dans le document. */
-    if (key === "note") continue;
-    /* Le texte rédigé du rapport (`draft`) est restitué tel quel, sans
-       préfixe de clé — c'est le contenu du « RESULTAT » du document. */
-    if (key === "draft") {
-      const text = str(value).trim();
-      if (text.length > 0) {
-        for (const paragraph of text.split(/\n+/)) {
-          const trimmed = paragraph.trim();
-          if (trimmed.length > 0) pushLine(overview, trimmed);
-        }
-      }
-      continue;
+    if (key === "note" || key === "draft") continue;
+    const text = str(value);
+    if (text.length === 0) continue;
+    hasStructuredFields = true;
+    const label = RADIO_FIELD_LABELS[key] ?? key;
+    /* Diagnostic/confiance/recommandation appartiennent à la Conclusion,
+       pas au Résultat (structure d'un compte rendu hospitalier). */
+    if (key === "diagnostic_probable" || key === "niveau_confiance" || key === "recommandation_orientation") {
+      pushLine(conclusionFieldLines, `${label} : ${text}`);
+    } else {
+      pushLine(overview, `${label} : ${text}`);
     }
-    pushLine(overview, `${key} : ${str(value)}`);
   }
+  /* Sans champs structurés (export depuis l'éditeur de rapport), le texte IA
+     analysé alimente le Résultat ; sinon il serait dupliqué. */
+  if (!hasStructuredFields) overview.push(...parsedDraft.overview);
   sections.push({ id: "overview", title: "Résultat", lines: overview, visible: true });
 
   /* Remarques de cohérence uniquement (aucune mention d'assistance ou de
@@ -456,7 +550,10 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
   }
   sections.push({ id: "anatomy_regions", title: "Observations régionales", lines: regionLines, visible: true });
 
-  const impressionLines: string[] = [];
+  const impressionLines: string[] = [...conclusionFieldLines];
+  /* Sans champs structurés (éditeur de rapport), la Conclusion vient du
+     texte IA analysé — le grand titre « Conclusion » existe donc toujours. */
+  if (!hasStructuredFields) impressionLines.push(...parsedDraft.conclusion);
   const prediction = str(impression.ensemble_prediction);
   if (prediction.length > 0) pushLine(impressionLines, `Suspicion : ${prediction}`);
   for (const issue of issues) pushLine(impressionLines, `Limite : ${str(issue)}`);
