@@ -1,1353 +1,1517 @@
-# AIMAGING — FINALISATION DU SYSTÈME DE RAPPORTS
-# RAPPORTS MULTI-MODALITÉS + SAISIE VOCALE + TEMPLATES + EXPORT PDF
+# AIMAGING — PHASE DOCUMENTATION & CODE CLEANUP
+#
+# OBJECTIF :
+# produire une documentation technique complète et propre du projet
+# AImaging, tout en uniformisant les commentaires du code.
 #
 # IMPORTANT :
+#
 # AImaging existe déjà.
 #
-# Il existe déjà :
-# - éditeur Figma-like ;
-# - module radiographie ;
-# - module échographie fœtale ;
-# - annotations ;
-# - mesures ;
-# - résultats IA ;
-# - analysis_runs ;
-# - rapports persistants dans Supabase ;
-# - ReportEditor ;
-# - Supabase Storage ;
-# - Supabase Auth.
+# Cette phase ne doit PAS ajouter de fonctionnalité.
+# Elle ne doit PAS modifier le comportement métier.
+# Elle ne doit PAS modifier les modèles.
+# Elle ne doit PAS modifier les pipelines IA.
 #
-# Cette phase doit FINALISER le système de rapports.
+# PÉRIMÈTRE :
 #
-# NE CRÉE PAS une nouvelle application.
-# NE CRÉE PAS un dashboard séparé.
-# NE CRÉE PAS une page de gestion hospitalière.
-# NE CRÉE PAS une seconde interface d'édition.
+#   client/
+#   scripts/
+#   server/
 #
-# Le système de rapports doit être intégré dans l'éditeur AImaging existant.
+# EXCLUS DU PÉRIMÈTRE :
+#
+#   échographie fœtale
+#   autres dossiers considérés comme sources externes
+#   modèles externes
+#   dépôts clonés
+#   checkpoints
+#   données
+#
+# La 3D est également définitivement hors périmètre.
 
 ==================================================
-1. OBJECTIF GLOBAL
+1. OBJECTIF FINAL
 ==================================================
 
-Nous voulons passer de :
+Je veux pouvoir donner le repository AImaging à un développeur
+et lui permettre de comprendre :
 
-"un texte de rapport généré"
+- l'architecture ;
+- les responsabilités ;
+- les flux ;
+- les fonctionnalités ;
+- les interactions client/serveur ;
+- les scripts IA ;
+- les services ;
+- les APIs ;
+- les données ;
+- les dépendances ;
+- les points d'entrée ;
+- les composants importants.
 
-à :
+La documentation doit expliquer le projet à trois niveaux :
 
-"un véritable Report Builder médical intégré à AImaging."
+NIVEAU 1
+→ vue globale
 
-Le système doit permettre :
+NIVEAU 2
+→ architecture par couche
 
-1. générer un rapport à partir des données structurées ;
-2. éditer le rapport ;
-3. saisir ou modifier des éléments au clavier ;
-4. utiliser la voix ;
-5. générer/reformuler une section ;
-6. choisir un template ;
-7. modifier le template ;
-8. ajouter logo ;
-9. configurer en-tête ;
-10. configurer pied de page ;
-11. configurer signature ;
-12. gérer les informations de l'établissement ;
-13. prévisualiser ;
-14. valider ;
-15. exporter en PDF ;
-16. retrouver le rapport plus tard.
-
-==================================================
-2. DEUX TYPES DE RAPPORTS
-==================================================
-
-AImaging possède au minimum :
-
-A. RADIOGRAPHIE THORACIQUE
-
-B. ÉCHOGRAPHIE OBSTÉTRICALE / FŒTALE
-
-Les deux doivent utiliser le même moteur de rapports.
-
-Mais chacun possède son propre contenu métier.
-
-Architecture :
-
-ReportEngine
-│
-├── ReportTemplate
-├── ReportEditor
-├── ReportPreview
-├── ReportVoiceInput
-├── ReportValidation
-└── ReportExport
-       │
-       ├── RadiographyReportBuilder
-       └── FetalUltrasoundReportBuilder
-
-NE DUPLIQUE PAS tout le système pour chaque modalité.
+NIVEAU 3
+→ fonctionnement détaillé de chaque fonctionnalité importante
 
 ==================================================
-3. PRINCIPLE IMPORTANT — STRUCTURED DATA FIRST
+2. SOURCE DE VÉRITÉ
 ==================================================
 
-Le rapport doit toujours être construit à partir de données
-structurées.
+Le CODE ACTUEL est la source de vérité.
+
+Ne pas documenter une fonctionnalité uniquement parce qu'elle
+est mentionnée dans un ancien README.
+
+Pour chaque fonctionnalité :
+
+- vérifier son implémentation ;
+- identifier son point d'entrée ;
+- identifier les fichiers concernés ;
+- suivre le flux réel ;
+- préciser les dépendances ;
+- distinguer les fonctionnalités réelles des fonctionnalités
+  expérimentales ou incomplètes.
+
+Ne rien inventer.
+
+==================================================
+3. PREMIÈRE ÉTAPE — CARTOGRAPHIE DU REPOSITORY
+==================================================
+
+Avant de modifier quoi que ce soit :
+
+inspecter :
+
+client/
+scripts/
+server/
+
+Créer une carte détaillée.
 
 Exemple :
 
-analysis_runs
-measurements
-findings
-annotations
-metadata
+client/
+├── app
+├── components
+├── state
+├── services
+├── lib
+└── ...
 
+server/
+├── API
+├── services
+├── schemas
+├── persistence
+└── ...
+
+scripts/
+├── radiography
+├── opencxr
+├── shared
+└── ...
+
+Pour chaque dossier important :
+
+- responsabilité ;
+- principaux fichiers ;
+- dépendances ;
+- rôle dans l'application.
+
+==================================================
+4. DOCUMENTATION GLOBALE
+==================================================
+
+Créer ou restructurer une documentation centrale.
+
+Proposition :
+
+docs/
+├── README.md
+├── architecture.md
+├── client.md
+├── server.md
+├── scripts.md
+├── api.md
+├── data-model.md
+├── workflows.md
+├── configuration.md
+└── features/
+    ├── radiography.md
+    ├── dicom.md
+    ├── gradcam.md
+    ├── anatomy.md
+    ├── measurements.md
+    ├── reports.md
+    ├── workspace.md
+    └── ai-agent.md
+
+Adapter cette structure au repository réel.
+
+Ne pas créer des fichiers inutiles.
+
+==================================================
+5. DOCUMENTATION — README GLOBAL
+==================================================
+
+Le README principal doit expliquer rapidement :
+
+AImaging
 ↓
-structured report data
+ce que fait le logiciel
 ↓
-template
+architecture générale
 ↓
-rendered report
-
-NE PAS demander au LLM de "deviner" les valeurs.
-
-NE PAS inventer :
-
-- mesures ;
-- scores ;
-- findings ;
-- biométrie ;
-- diagnostic.
-
-Une donnée absente doit rester absente.
-
-==================================================
-4. RAPPORT RADIOGRAPHIE
-==================================================
-
-Le rapport radiographique doit être structuré.
-
-Conserver les éléments déjà présents dans le système.
-
-Architecture minimale :
-
-HEADER
-
-- établissement
-- service
-- identité affichable si autorisée
-- indication
-- date
-- prescripteur
-- autres champs existants
-
-FINDINGS
-
-- observations
-- anomalies
-- éléments normaux pertinents
-- résultats IA
-- mesures
-
-IMAGING / EVIDENCE
-
-- image référencée
-- Grad-CAM si pertinent
-- segmentation si pertinente
-- mesures
-
-IMPRESSION
-
-- synthèse
-- diagnostic ou suspicion
-- degré de confiance lorsque disponible
-- limites
-
-FOOTER
-
-- auteur
-- validation
-- date
-- signature
-
-Conserver les champs déjà utilisés par le projet.
-
-==================================================
-5. RAPPORT ÉCHOGRAPHIE OBSTÉTRICALE
-==================================================
-
-Le rapport doit suivre la structure des comptes rendus
-obstétricaux utilisés comme référence dans le projet.
-
-Structure :
-
-EN-TÊTE
-
-ÉCHOGRAPHIE OBSTÉTRICALE
-
-Nom et prénom
-Âge
-Indication
-Prescripteur
-Date
-etc.
-
-COMPTE RENDU
-
-Observations générales :
-
-- utérus gravide
-- activité cardiaque
-- présentation
-- morphologie
-- liquide amniotique
-- placenta
-- col
-
-BIOMÉTRIE
-
-Fetus 1
-- CRL
-- BPD
-- AC
-- FL
-- CT
-- âge gestationnel
-- DPA
-
-Fetus 2 si applicable
-- mêmes données
-
-Autres données réellement disponibles.
-
-CONCLUSION
-
-- type de grossesse
-- évolution
-- DPA
-- poids estimé si disponible
-- col
-- observations importantes
-
-IMPORTANT :
-
-Ne jamais afficher Fetus 2 si l'examen n'est pas multiple.
-
-Ne jamais afficher une mesure absente.
-
-Ne jamais convertir un mock en donnée médicale réelle.
-
-==================================================
-6. SYSTÈME DE TEMPLATE
-==================================================
-
-Nous voulons un système de templates.
-
-Un template doit être un objet persistant.
-
-Conceptuellement :
-
-ReportTemplate
-
-- id
-- name
-- modality
-- description
-- version
-- page_size
-- orientation
-- margins
-- header
-- footer
-- typography
-- sections
-- logo
-- signature
-- metadata
-
-Ajouter les champs réellement nécessaires au projet.
-
-Ne pas transformer le template en HTML arbitraire non contrôlé.
-
-Préférer une structure JSONB définie et validée.
-
-==================================================
-7. TEMPLATES PAR MODALITÉ
-==================================================
-
-Un template peut être :
-
-radiography
-fetal_ultrasound
-generic
-
-Un template spécifique à la radiographie ne doit pas être
-automatiquement utilisé pour l'échographie.
-
-Lors de la création d'un rapport :
-
-exam.modality
+technologies
 ↓
-templates disponibles
+fonctionnalités principales
 ↓
-template sélectionné
+installation
+↓
+démarrage
+↓
+structure du repository
+↓
+documentation détaillée.
 
-Prévoir un template par défaut pour chaque modalité.
+Le README doit rester lisible.
 
-==================================================
-8. TEMPLATE BUILDER
-==================================================
-
-Créer un éditeur de template intégré à AImaging.
-
-Ce n'est PAS un nouveau dashboard.
-
-Il doit fonctionner comme un petit éditeur visuel.
-
-L'utilisateur doit pouvoir configurer :
-
-HEADER
-
-- logo
-- nom établissement
-- sous-titre
-- adresse
-- téléphone
-- email
-- couleur d'accent
-- alignement
-- taille
-- visibilité
-
-DOCUMENT
-
-- taille page
-- portrait / paysage
-- marges
-- largeur de colonne
-
-TYPOGRAPHIE
-
-- famille
-- taille
-- poids
-- interligne
-- couleur
-
-SECTIONS
-
-- ordre
-- titre
-- visibilité
-- espacement
-
-FOOTER
-
-- informations
-- pagination
-- date
-
-SIGNATURE
-
-- nom
-- fonction
-- image signature
-- position
-- taille
+Ne pas y recopier toute la documentation technique.
 
 ==================================================
-9. PREVIEW LIVE
+6. DOCUMENTATION — ARCHITECTURE
 ==================================================
 
-Le template editor doit afficher un aperçu en temps réel.
+Créer une documentation détaillée de l'architecture :
 
-Architecture :
+                    AImaging
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+        Client       Server       Scripts
+          │            │            │
+          │            │            │
+          └────────────┴────────────┘
+                       │
+                    Supabase
 
-Template Editor
-        │
-        ├── configuration
-        │
-        └── Live Preview
+Décrire :
 
-Le preview doit être proche du rendu PDF.
-
-Ne pas construire deux renderers complètement différents
-si cela peut être évité.
-
-Utiliser un modèle de document commun.
-
-==================================================
-10. LOGO
-==================================================
-
-Permettre d'uploader un logo.
-
-Le logo doit être stocké dans Supabase Storage.
-
-Prévoir un emplacement dédié, par exemple :
-
-profile-assets/
-ou
-organization-assets/
-
-NE PAS stocker le logo en base64.
-
-Le template conserve uniquement :
-
-storage_path
-ou
-asset_id.
-
-Le logo doit pouvoir être :
-
-- ajouté
-- remplacé
-- supprimé
-- redimensionné
-- aligné
+- responsabilités ;
+- communication ;
+- dépendances ;
+- flux de données ;
+- appels API ;
+- persistance ;
+- fichiers lourds ;
+- runtime.
 
 ==================================================
-11. SIGNATURE
+7. CLIENT — DOCUMENTATION
 ==================================================
 
-Permettre une signature graphique.
+Documenter le frontend.
 
-Formats possibles :
+Inclure :
 
-PNG
-JPEG
-SVG si support sûr.
+- architecture ;
+- pages ;
+- composants ;
+- providers ;
+- state management ;
+- services ;
+- repositories ;
+- canvas ;
+- outils ;
+- AI workspace ;
+- reports ;
+- authentification ;
+- persistance.
 
-Stockage :
+Ne pas documenter seulement les composants visuels.
 
-Supabase Storage.
-
-Ne pas stocker en base64 dans PostgreSQL.
-
-La signature doit être liée au profil ou au template
-selon le comportement métier réel.
-
-Prévoir :
-
-- nom du signataire
-- fonction
-- image
-- visibilité
-
-La validation du rapport reste une action explicite.
-
-==================================================
-12. INFORMATIONS DE L'ÉTABLISSEMENT
-==================================================
-
-Créer une notion réutilisable d'informations de rapport.
+Décrire les relations.
 
 Exemple :
 
-OrganizationProfile
-
-- name
-- logo
-- address
-- phone
-- email
-- website
-- department
-
-L'objectif est de ne pas répéter ces informations
-dans chaque rapport.
-
-Le template référence l'organisation.
+App
+↓
+WorkspaceProvider
+↓
+Canvas
+↓
+Tools
+↓
+API
+↓
+Server
 
 ==================================================
-13. DATABASE — TEMPLATES
+8. CLIENT — OUTILS
 ==================================================
 
-Inspecter la base actuelle.
-
-Si aucune table de templates n'existe :
-
-proposer une migration dédiée.
-
-Exemple :
-
-report_templates
-
-id
-owner_id
-organization_id
-name
-modality
-version
-is_default
-template_data JSONB
-created_at
-updated_at
-
-Adapter à l'architecture réelle.
-
-IMPORTANT :
-
-Ne pas créer une nouvelle base.
-
-Utiliser la base Supabase existante.
-
-==================================================
-14. DATABASE — ORGANIZATION
-==================================================
-
-Si nécessaire, proposer une table dédiée :
-
-organizations
-
-ou une extension de :
-
-profiles
-
-avant implémentation.
-
-Ne pas créer plusieurs structures concurrentes.
-
-Un utilisateur doit pouvoir avoir un contexte d'établissement
-réutilisable.
-
-Si le projet reste mono-utilisateur/mono-établissement pour le prototype,
-préférer une structure simple plutôt qu'une architecture multi-tenant
-complexe.
-
-==================================================
-15. VERSIONING DES TEMPLATES
-==================================================
-
-Un template utilisé dans un rapport doit être traçable.
-
-Lors de la génération :
-
-report
-→ template_id
-→ template_version
-
-Ajouter ces références au modèle de rapport si nécessaire.
-
-Un changement futur du template ne doit pas modifier
-rétroactivement les anciens rapports.
-
-IMPORTANT :
-
-Le rapport validé doit rester reproductible.
-
-==================================================
-16. REPORT DATA + TEMPLATE
-==================================================
+Documenter le système des outils.
 
 Séparer :
 
-DATA
+COMMON TOOLS
+AI TOOLS
+MODALITY TOOLS
 
-de :
+Pour chaque outil :
 
-PRESENTATION
+- nom ;
+- rôle ;
+- composant ;
+- état ;
+- action déclenchée ;
+- données consommées ;
+- données produites ;
+- backend éventuel.
 
-Data :
+Pour la radiographie :
 
-structured_data
+documenter les outils spécifiques existants.
 
-Template :
-
-template_data
-
-Le rendu final :
-
-structured_data
-+
-template_data
-=
-document
-
-Cela permet :
-
-- changer le template ;
-- conserver les mêmes données ;
-- créer plusieurs modèles ;
-- exporter plusieurs styles.
+Ne pas documenter les outils échographiques dans cette phase.
 
 ==================================================
-17. ÉDITION DU RAPPORT
+9. CLIENT — CANVAS
 ==================================================
 
-Le ReportEditor doit permettre :
+Documenter :
 
-- édition libre ;
-- édition par section ;
-- réordonner si autorisé ;
-- masquer une section ;
-- afficher une section ;
-- modifier un texte ;
-- restaurer une section générée ;
-- verrouiller certaines données IA si nécessaire.
+CanvasViewport
+ShapesLayer
+annotations
+measurements
+zoom
+pan
+selection
+rendering
+image loading
+DICOM rendering
+etc.
 
-IMPORTANT :
+Expliquer le flux :
 
-Les valeurs médicales importantes ne doivent pas être modifiées
-silencieusement par une génération libre.
-
-Si une mesure change :
-
-indiquer clairement :
-
-Original AI value
-Edited value
-
-La provenance doit être conservée.
-
-==================================================
-18. SAISIE VOCALE
-==================================================
-
-Nous voulons une fonction de saisie vocale.
-
-La voix doit servir principalement à :
-
-- dicter du texte ;
-- ajouter une observation ;
-- modifier une section ;
-- lancer une commande de rapport.
-
-Exemples :
-
-"Ajoute dans les observations absence de foyer alvéolaire."
-
-"Ajoute une conclusion normale."
-
-"Remplace la conclusion par..."
-
-"Pour F1, ajoute BPD 28 millimètres."
-
-"Ajoute une observation sur le placenta."
-
-IMPORTANT :
-
-La voix ne doit PAS écrire automatiquement
-une donnée médicale importante sans possibilité de validation.
-
-Pipeline :
-
-MICROPHONE
+image
 ↓
-Speech-to-Text
+canvas
 ↓
-transcription
+interaction
 ↓
-preview / confirmation
+state
 ↓
-appliquer au rapport
+persistence
 
 ==================================================
-19. VOICE UI
+10. CLIENT — WORKSPACE
 ==================================================
 
-Dans ReportEditor :
+Documenter :
 
-bouton micro discret.
+WorkspaceProvider
+workspace state
+runtime state
+annotations
+measurements
+AI state
+reports
+undo/redo
+command bar
 
-États :
+Faire la distinction :
 
-Idle
-Listening
-Processing
-Preview
-Applied
-Error
-
-Pendant l'écoute :
-
-afficher :
-
-Listening…
-
-niveau audio visuel discret.
-
-Après transcription :
-
-afficher :
-
-"Texte reconnu"
-
-avec :
-
-Apply
-Edit
-Cancel
-
-Ne jamais remplacer immédiatement le contenu
-sans confirmation pour une action importante.
+PERSISTED STATE
+vs
+RUNTIME STATE
+vs
+CACHE
+vs
+UI PREFERENCES
 
 ==================================================
-20. COMMAND BAR + VOICE
+11. CLIENT — PERSISTENCE
 ==================================================
 
-La command bar d'AImaging existe déjà.
+Documenter précisément :
 
-Elle doit également pouvoir contrôler le rapport.
+Supabase
+localStorage
+Storage
+repositories
+cache
 
-Exemples :
+Expliquer :
 
-"Génère le rapport"
+quoi est dans PostgreSQL ;
+quoi est dans Storage ;
+quoi reste local ;
+pourquoi.
 
-"Ajoute cette observation au rapport"
+Ne pas présenter localStorage comme source de vérité
+si le code actuel utilise Supabase comme source principale.
 
-"Montre-moi la conclusion"
+==================================================
+12. CLIENT — AUTH
+==================================================
 
-"Modifie la conclusion"
+Documenter :
 
-"Ajoute la mesure dans la biométrie de F1"
+Login
+Session
+Logout
+Password reset
+AuthProvider/authService
+Supabase Auth
+RLS relation.
 
-"Valide le rapport"
+Flux :
 
-La différence :
+Login
+↓
+Supabase Auth
+↓
+auth.uid()
+↓
+RLS
+↓
+user data
+
+==================================================
+13. CLIENT — REPORT ENGINE
+==================================================
+
+Documenter :
+
+ReportEditor
+ReportEngine
+ReportTemplate
+ReportPreview
+Voice
+Validation
+PDF
+Storage
+
+Séparer :
+
+REPORT DATA
+REPORT TEMPLATE
+REPORT RENDERING
+REPORT EXPORT
+
+Expliquer précisément les responsabilités.
+
+==================================================
+14. SERVER — DOCUMENTATION
+==================================================
+
+Documenter l'architecture FastAPI.
+
+Inclure :
+
+- entry point ;
+- routes ;
+- schemas ;
+- services ;
+- dependencies ;
+- middleware ;
+- configuration ;
+- errors ;
+- runtime state.
+
+Créer une vue :
+
+Request
+↓
+Router
+↓
+Service
+↓
+Model / external service
+↓
+Response
+
+==================================================
+15. SERVER — API
+==================================================
+
+Produire une documentation complète des endpoints existants.
+
+Pour chaque endpoint :
+
+- méthode ;
+- chemin ;
+- rôle ;
+- input ;
+- output ;
+- erreurs ;
+- authentification ;
+- dépendances ;
+- appel frontend.
+
+Créer un tableau :
+
+| Method | Endpoint | Purpose | Input | Output | Auth | Client |
+|---|---|---|---|---|---|---|
+
+Ne pas inventer d'endpoint.
+
+==================================================
+16. SERVER — RADIOGRAPHIE
+==================================================
+
+Documenter le pipeline réel.
+
+Pipeline cible actuel :
+
+Image
+↓
+Technical validation
+↓
+OpenCXR sort
+↓
+5-model ensemble
+↓
+Classification
+↓
+Grad-CAM
+↓
+CXAS
+↓
+HybridGNet
+↓
+Measurements
+↓
+Report
+
+Pour chaque étape :
+
+- fichier ;
+- classe/fonction ;
+- input ;
+- output ;
+- modèle ;
+- checkpoint ;
+- preprocessing ;
+- erreurs ;
+- dépendances.
+
+==================================================
+17. SERVER — ENSEMBLE RADIO
+==================================================
+
+Documenter séparément :
+
+DenseNet121
+ResNet50
+ResNet101
+EfficientNet-B0
+EfficientNet-B2
+
+Puis :
+
+Soft voting.
+
+Expliquer :
+
+- poids ;
+- input ;
+- probabilités ;
+- fusion ;
+- classes ;
+- résultat final.
+
+NE PAS documenter le training comme s'il était encore exécuté
+par le serveur si le serveur fait uniquement l'inférence.
+
+==================================================
+18. SERVER — OPENCXR
+==================================================
+
+Documenter :
+
+- microservice ;
+- sort ;
+- standardization ;
+- communication ;
+- ports ;
+- dépendances ;
+- erreurs ;
+- fail-closed.
+
+Inclure le comportement :
+
+invalid image
+→ rejected
+
+non-CXR
+→ rejected
+
+CXR
+→ analysis
+
+==================================================
+19. SERVER — DICOM
+==================================================
+
+Documenter :
+
+- parsing ;
+- metadata ;
+- pseudonymization ;
+- frames ;
+- window/level ;
+- pixel spacing ;
+- rendu ;
+- sécurité.
+
+Ne pas copier des exemples complets de DICOM.
+
+Décrire les flux.
+
+==================================================
+20. SERVER — ANATOMY
+==================================================
+
+Documenter :
+
+CXAS
+HybridGNet
+/anatomy-analysis
+measurements
+
+Pour chaque composant :
+
+- modèle ;
+- checkpoint ;
+- input ;
+- output ;
+- mesures ;
+- unités ;
+- uncertainty ;
+- relation avec analysis_runs.
+
+==================================================
+21. SERVER — AI AGENT
+==================================================
+
+Documenter :
+
+workspace agent
+Gemini
+workspace protocol
+command execution
+validation
+fallback
+context
+
+Flux :
 
 Command
-→ action structurée
-
-Dictation
-→ texte à insérer.
-
-Ne pas mélanger les deux comportements.
-
-==================================================
-21. SPEECH ENGINE
-==================================================
-
-Avant d'ajouter une dépendance :
-
-inspecter l'environnement actuel.
-
-Déterminer si le projet utilise déjà :
-
-Web Speech API
-SpeechRecognition
-service externe
-autre solution.
-
-Si aucune solution robuste n'existe :
-
-créer une abstraction :
-
-SpeechService
-
-avec :
-
-start()
-stop()
-cancel()
-onTranscript()
-
-Le provider réel pourra être branché plus tard.
-
-NE PAS coupler ReportEditor directement
-à une API spécifique.
-
-==================================================
-22. LANGUES
-==================================================
-
-Le logiciel doit être capable de gérer au minimum :
-
-français
-anglais
-
-La langue du rapport doit pouvoir être configurée.
-
-Le contenu médical ne doit pas être traduit automatiquement
-sans contrôle si cela change les termes médicaux.
-
-Prévoir :
-
-report.language
-
-avec :
-
-fr
-en
-
-ou l'énumération appropriée.
-
-==================================================
-23. GÉNÉRATION IA DU RAPPORT
-==================================================
-
-Conserver Gemini et le mécanisme actuel.
-
-Le LLM reçoit uniquement les faits structurés autorisés.
-
-Pipeline :
-
-analysis
 ↓
+Protocol
+↓
+Action plan
+↓
+Validation
+↓
+Execution
+↓
+Result
+
+Ne pas exposer de secrets.
+
+==================================================
+22. SERVER — REPORTS
+==================================================
+
+Documenter le chemin :
+
 facts
 ↓
 LLM
 ↓
 structured report
 ↓
-coherence check
+coherence
 ↓
 needs_review
 ↓
-editor
-
-NE PAS laisser le LLM écrire directement en base.
-
-NE PAS laisser le LLM modifier directement le template.
-
-==================================================
-24. VALIDATION
-==================================================
-
-Le workflow doit être :
-
-DRAFT
+ReportEditor
 ↓
-GENERATED
-↓
-NEEDS REVIEW
-↓
-EDITED
-↓
-VALIDATED
-
-Le bouton "Valider" doit être explicite.
-
-Après validation :
-
-- afficher un badge Validé ;
-- conserver date ;
-- utilisateur ;
-- template version.
-
-Une modification après validation doit revenir :
-
-needs_review
-
-et ne doit pas rester "validated".
-
-==================================================
-25. SIGNATURE
-==================================================
-
-Après validation :
-
-le rapport peut afficher :
-
-Signature
-Nom
-Fonction
-Date
-
-Le système doit distinguer :
-
-- signature visuelle
-- validation applicative
-
-Une image de signature ne doit pas automatiquement signifier
-que le rapport a été validé.
-
-==================================================
-26. EXPORT PDF
-==================================================
-
-Créer un vrai pipeline :
-
-Report Data
-+
-Template
-↓
-Document Renderer
+validation
 ↓
 PDF
 ↓
-Preview
-↓
-Export
-
-Le PDF doit reproduire :
-
-- en-tête ;
-- logo ;
-- corps ;
-- sections ;
-- tableaux ;
-- biométrie ;
-- conclusion ;
-- pied de page ;
-- signature ;
-- pagination.
-
-Ne pas créer un PDF simplifié uniquement avec du texte brut.
+Storage
 
 ==================================================
-27. PDF PREVIEW
+23. SCRIPTS — DOCUMENTATION
 ==================================================
 
-Avant téléchargement/export :
+Documenter séparément les scripts.
 
-afficher un aperçu fidèle.
+Pour chaque dossier :
 
-Actions :
+- objectif ;
+- point d'entrée ;
+- commandes ;
+- dépendances ;
+- input ;
+- output ;
+- utilisation.
 
-Preview
-Export PDF
-Print
-Back to editor
+Inclure notamment :
 
-L'utilisateur doit pouvoir revenir modifier le rapport.
+scripts/radiography/
+scripts/opencxr/
+scripts/shared/
 
-==================================================
-28. PDF STORAGE
-==================================================
-
-Après export :
-
-uploader le PDF vers :
-
-reports
-
-Structure :
-
-reports/
-{user_id}/
-{workspace_id}/
-{examination_id}/
-{report_id}/
-exports/
-report-v{version}.pdf
-
-Stocker uniquement :
-
-storage_path
-
-dans PostgreSQL.
-
-Le fichier reste dans Storage privé.
+NE PAS documenter les scripts échographiques dans cette phase.
 
 ==================================================
-29. FORMAT DE NOM DE FICHIER
+24. SCRIPTS — MODÈLES
 ==================================================
 
-Le nom doit être propre et stable.
+Pour chaque modèle réellement utilisé en radiographie :
+
+- nom ;
+- architecture ;
+- checkpoint ;
+- input size ;
+- preprocessing ;
+- classes ;
+- usage ;
+- emplacement du poids.
+
+Ne pas inventer de métriques.
+
+==================================================
+25. SCRIPTS — CHECKPOINTS
+==================================================
+
+Documenter où les modèles sont chargés.
+
+Identifier :
+
+- chemin ;
+- format ;
+- taille approximative si disponible ;
+- usage.
+
+Ne jamais inclure de checkpoint binaire
+dans la documentation.
+
+==================================================
+26. WORKFLOWS
+==================================================
+
+Créer une documentation des workflows réels.
+
+Au minimum :
+
+WORKFLOW RADIOGRAPHIE
+
+Import
+→ Validation
+→ OpenCXR
+→ Ensemble
+→ Grad-CAM
+→ Anatomy
+→ Measurements
+→ Report
+
+WORKFLOW DICOM
+
+Import
+→ Parse
+→ Pseudonymize
+→ Render
+→ Analysis
+
+WORKFLOW AI
+
+Command
+→ Protocol
+→ Action
+→ Backend
+→ Result
+
+WORKFLOW REPORT
+
+Analysis
+→ Facts
+→ Report
+→ Edit
+→ Validate
+→ PDF
+
+==================================================
+27. DIAGRAMMES
+==================================================
+
+Dans la documentation, utiliser des diagrammes Mermaid
+lorsqu'ils apportent réellement de la valeur.
+
+Créer notamment :
+
+1. architecture globale ;
+2. flux radiographie ;
+3. flux DICOM ;
+4. flux rapport ;
+5. relation client/server ;
+6. modèle de persistance.
+
+Ne pas mettre un diagramme partout.
+
+==================================================
+28. COMMENTAIRES — OBJECTIF
+==================================================
+
+Maintenant, uniformiser les commentaires de :
+
+client/
+scripts/
+server/
+
+Le style doit être identique dans les trois parties.
+
+Objectif :
+
+commentaires courts ;
+directs ;
+techniques ;
+factuels.
+
+==================================================
+29. RÈGLE PRINCIPALE DES COMMENTAIRES
+==================================================
+
+COMMENTER :
+
+- pourquoi une décision existe ;
+- comportement non évident ;
+- contrainte ;
+- sécurité ;
+- dépendance ;
+- format ;
+- workaround ;
+- invariant.
+
+NE PAS COMMENTER :
+
+- ce que le code dit déjà clairement ;
+- chaque variable ;
+- chaque ligne ;
+- les évidences ;
+- les opérations triviales.
+
+==================================================
+30. STYLE D'ÉCRITURE
+==================================================
+
+Utiliser partout :
+
+- français technique ;
+- phrases courtes ;
+- présent ;
+- vocabulaire stable ;
+- une idée par commentaire ;
+- pas de ton conversationnel ;
+- pas de "IMPORTANT !!!" ;
+- pas de commentaires pédagogiques inutiles ;
+- pas de répétition.
+
+Exemple acceptable :
+
+# Applique le même preprocessing que l'entraînement.
+
+Exemple non souhaité :
+
+# Cette fonction permet de faire le preprocessing de l'image,
+# ce qui est important parce que le modèle a été entraîné avec
+# ce preprocessing...
+
+Préférer :
+
+# Reproduit le preprocessing d'entraînement.
+
+==================================================
+31. DOCSTRINGS
+==================================================
+
+Pour les fonctions et classes publiques importantes :
+
+utiliser des docstrings courtes.
+
+Format recommandé Python :
+
+def analyze_image(...):
+    """Analyse une image radiographique."""
+
+Pas de docstring de 30 lignes
+pour une fonction de 10 lignes.
+
+Pour TypeScript :
+
+utiliser un commentaire uniquement lorsque
+le comportement n'est pas évident.
+
+==================================================
+32. HEADERS DE FICHIERS
+==================================================
+
+Uniformiser les headers des fichiers importants.
+
+Format :
+
+"""
+AImaging · <module>
+
+Rôle :
+<description courte>
+"""
+
+Uniquement lorsque cela apporte réellement
+de la valeur.
+
+NE PAS ajouter un header à chaque fichier trivial.
+
+==================================================
+33. COMMENTAIRES TEMPORAIRES
+==================================================
+
+Supprimer :
+
+- TODO déjà résolus ;
+- commentaires historiques inutiles ;
+- commentaires indiquant qu'un fichier vient d'être modifié ;
+- commentaires de debugging ;
+- longs journaux de développement ;
+- commentaires mentionnant des prompts internes ;
+- explications obsolètes.
+
+Conserver :
+
+- vrais TODO ;
+- contraintes ;
+- limitations ;
+- dépendances externes ;
+- décisions d'architecture utiles.
+
+==================================================
+34. NOMMAGE
+==================================================
+
+Pendant cette phase :
+
+NE PAS renommer massivement les fonctions/classes.
+
+NE PAS changer les APIs simplement pour améliorer
+le style.
+
+Le nettoyage concerne principalement :
+
+- commentaires ;
+- docstrings ;
+- documentation ;
+- cohérence rédactionnelle.
+
+Si un nom est clairement incorrect et risque de tromper
+la documentation :
+
+le signaler dans le rapport plutôt que de le renommer
+automatiquement.
+
+==================================================
+35. COMMENTAIRES MÉDICAUX / IA
+==================================================
+
+Pour les composants médicaux :
+
+être précis sur :
+
+- segmentation ;
+- classification ;
+- confidence ;
+- uncertainty ;
+- pixel spacing ;
+- unités ;
+- modèles ;
+- résultats.
+
+Ne jamais écrire :
+
+"diagnostic confirmé"
+
+si le code produit seulement :
+
+prediction
+ou
+suspected finding.
+
+La documentation doit respecter exactement
+ce que produit le système.
+
+==================================================
+36. FEATURES À DOCUMENTER
+==================================================
+
+Créer une fiche pour chaque fonctionnalité majeure existante.
+
+Minimum :
+
+1. Authentication
+2. Workspaces
+3. Examination management
+4. Image import
+5. Image viewer
+6. DICOM
+7. CXR validation
+8. OpenCXR
+9. Ensemble classification
+10. Grad-CAM
+11. CXAS
+12. HybridGNet
+13. Measurements
+14. Annotations
+15. AI command system
+16. AI agent
+17. Reports
+18. Templates
+19. Voice input
+20. PDF export
+21. Supabase persistence
+22. Storage
+23. Security/RLS
+
+Pour chaque fiche :
+
+# Fonctionnalité
+
+## Objectif
+
+## Flux
+
+## Entrées
+
+## Traitement
+
+## Sorties
+
+## Fichiers principaux
+
+## Dépendances
+
+## Persistance
+
+## Limites
+
+## Statut
+
+Statuts autorisés :
+
+VERIFIED
+PARTIAL
+EXPERIMENTAL
+MOCKED
+BROKEN
+
+==================================================
+5 BIS. README — NORMALISATION COMPLÈTE
+==================================================
+
+Tous les fichiers README.md présents dans le périmètre :
+
+client/
+scripts/
+server/
+
+et dans leurs sous-dossiers pertinents doivent être audités.
+
+Objectif :
+
+AUCUN README ne doit rester :
+
+- obsolète ;
+- contradictoire avec le code ;
+- trop verbeux ;
+- rédigé dans un style différent ;
+- rempli de détails qui ne correspondent plus au fonctionnement actuel ;
+- incomplet sur le rôle réel du dossier/module.
+
+Pour chaque README.md :
+
+1. vérifier son contenu contre le code réel ;
+2. supprimer les informations obsolètes ;
+3. corriger les chemins ;
+4. corriger les commandes ;
+5. corriger les noms de modules ;
+6. corriger les noms de modèles ;
+7. corriger les ports ;
+8. corriger les variables d'environnement ;
+9. corriger les dépendances ;
+10. documenter uniquement ce qui existe réellement.
+
+==================================================
+CONVENTION README
+==================================================
+
+Tous les README doivent suivre une même philosophie rédactionnelle :
+
+- direct ;
+- technique ;
+- concis ;
+- structuré ;
+- factuel ;
+- sans marketing ;
+- sans répétition.
+
+Éviter les longues introductions.
+
+Éviter les paragraphes génériques.
+
+Commencer directement par le rôle du dossier/module.
+
+==================================================
+STRUCTURE README STANDARD
+==================================================
+
+Lorsqu'un README est pertinent, utiliser cette structure :
+
+# <Nom>
+
+## Rôle
+
+Description courte du module ou dossier.
+
+## Structure
+
+Présentation concise des sous-dossiers/fichiers importants.
+
+## Fonctionnement
+
+Flux principal du module.
+
+## Entrées
+
+Données ou paramètres attendus.
+
+## Sorties
+
+Résultats produits.
+
+## Utilisation
+
+Commandes réellement disponibles.
+
+## Configuration
+
+Variables d'environnement ou prérequis réellement nécessaires.
+
+## Dépendances
+
+Dépendances importantes uniquement.
+
+## Intégration
+
+Interaction avec le reste d'AImaging.
+
+## Limites
+
+Limitations réellement présentes.
+
+## Statut
+
+VERIFIED / PARTIAL / EXPERIMENTAL / MOCKED / BROKEN
+
+Ne pas utiliser toutes les sections lorsqu'elles sont inutiles.
+
+==================================================
+README DES DOSSIERS
+==================================================
+
+Pour chaque dossier important :
+
+README.md
+
+doit répondre rapidement à :
+
+"À quoi sert ce dossier ?"
+
+"Quels sont ses fichiers principaux ?"
+
+"Comment fonctionne-t-il ?"
+
+"Comment l'utiliser ?"
+
+"De quoi dépend-il ?"
+
+==================================================
+README DES SCRIPTS
+==================================================
+
+Pour scripts/ et ses sous-dossiers :
+
+documenter notamment :
+
+- point d'entrée ;
+- commande d'exécution ;
+- arguments ;
+- environnement requis ;
+- modèle/checkpoint utilisé ;
+- format d'entrée ;
+- format de sortie.
+
+Ne pas transformer chaque README en tutoriel complet.
+
+==================================================
+README CLIENT
+==================================================
+
+Documenter :
+
+- démarrage ;
+- build ;
+- tests ;
+- architecture ;
+- composants principaux ;
+- providers ;
+- services ;
+- persistance ;
+- intégration API.
+
+==================================================
+README SERVER
+==================================================
+
+Documenter :
+
+- démarrage FastAPI ;
+- port ;
+- routes principales ;
+- structure ;
+- services ;
+- dépendances externes ;
+- configuration ;
+- tests.
+
+==================================================
+COHÉRENCE ENTRE README
+==================================================
+
+Les README locaux doivent être cohérents avec :
+
+docs/README.md
+docs/architecture.md
+docs/client.md
+docs/server.md
+docs/scripts.md
+docs/configuration.md
+
+Une information définie comme centrale ne doit pas être contredite
+dans un README local.
+
+==================================================
+RÈGLE DE STYLE COMMUNE
+==================================================
+
+Les README et commentaires doivent avoir la même "main d'écriture".
+
+Même style :
+
+- phrases courtes ;
+- vocabulaire stable ;
+- présent ;
+- formulations directes ;
+- titres explicites ;
+- aucune sur-explication.
 
 Exemple :
 
-AImaging_Report_2026-08-24.pdf
+Mauvais :
 
-ou selon les données disponibles :
+"Ce dossier contient différents scripts qui sont utilisés
+afin de permettre au système de traiter les images..."
 
-AImaging_Radiography_2026-08-24.pdf
+Bon :
 
-Ne pas exposer de données sensibles inutiles dans le nom du fichier.
+"Contient les scripts d'inférence et de preprocessing."
 
-==================================================
-30. PRINT
-==================================================
+Mauvais :
 
-Prévoir un mode impression.
+"Dans cette fonction, nous allons essentiellement..."
 
-Le rendu print doit respecter :
+Bon :
 
-A4
-marges
-header
-footer
-pagination
-
-Le moteur doit éviter que les tableaux/sections
-soient coupés arbitrairement entre pages.
+"Charge le modèle et exécute l'inférence."
 
 ==================================================
-31. RAPPORT RADIOGRAPHIE — UI
+README OBSOLÈTES
 ==================================================
 
-Dans la sidebar droite existante :
+Si un README décrit une fonctionnalité abandonnée :
 
-REPORT
+ne pas la présenter comme active.
 
-Sections :
+Exemple :
 
-Overview
-Findings
-AI Results
-Measurements
-Impression
-Template
-Validation
+La 3D est abandonnée.
 
-Actions :
+Toute documentation qui la présente comme une fonctionnalité active
+doit être corrigée.
 
-Generate
-Edit
-Voice
-Preview
-Validate
-Export PDF
+Ne pas supprimer automatiquement une documentation historique utile.
 
-Le contenu reste dans le même workspace.
+Si nécessaire :
+
+"Ancienne fonctionnalité — hors périmètre actuel."
 
 ==================================================
-32. RAPPORT ÉCHOGRAPHIE — UI
+README ÉCHOGRAPHIE
 ==================================================
 
-Dans la sidebar droite :
+IMPORTANT :
 
-REPORT
+L'échographie est hors périmètre de cette phase documentaire.
 
-Sections :
+NE PAS développer sa documentation fonctionnelle.
 
-Patient / Exam Header
-Observations
-Fetus 1
-Fetus 2
-Biometry
-Placenta
-Amniotic Fluid
-Cervix
-Findings
-Conclusion
-Template
-Validation
+Mais si un README existant dans les dossiers ciblés
+contient des références à l'échographie :
 
-Actions :
+ne pas inventer ou étendre cette documentation.
 
-Generate
-Edit
-Voice
-Preview
-Validate
-Export PDF
-
-Ne pas afficher F2 si grossesse unique.
+Corriger uniquement les contradictions évidentes
+avec l'état actuel du projet.
 
 ==================================================
-33. REPORT TEMPLATE TOOL
+VALIDATION DES README
 ==================================================
 
-Ajouter un outil :
+Après réécriture :
 
-Template
+1. rechercher tous les README.md ;
+2. vérifier qu'aucun README important n'est oublié ;
+3. vérifier les liens internes ;
+4. vérifier les chemins ;
+5. vérifier les commandes ;
+6. vérifier les noms de fichiers ;
+7. vérifier les variables d'environnement ;
+8. vérifier les ports ;
+9. vérifier les statuts.
 
-dans les outils de rapport.
+Créer une liste :
 
-Lorsque l'utilisateur ouvre Template :
+README
+→ VALIDATED
 
-Right Sidebar
-→ Template settings
+ou :
 
-avec :
+README
+→ NEEDS_REVIEW
 
-- Header
-- Logo
-- Organization
-- Typography
-- Sections
-- Footer
-- Signature
-- Page
-- Colors
-
-Le canvas/report preview se met à jour en direct.
-
+Aucun README ne doit contenir une information
+non vérifiée dans le code lorsque cette information
+est prés
+entée comme actuelle.
 ==================================================
-34. TEMPLATE PER MODALITY
-==================================================
-
-Radiographie :
-
-template radio.
-
-Échographie :
-
-template obstétrical.
-
-Ne pas appliquer automatiquement la structure
-échographique à la radiographie.
-
-==================================================
-35. RESPONSIVE REPORT EDITOR
+37. DOCUMENTATION DES LIMITES
 ==================================================
 
-L'éditeur principal reste le canvas AImaging.
+Une documentation technique sérieuse doit indiquer
+les limites connues.
 
-Le rapport peut apparaître :
+Exemples si confirmés par le code :
 
-- dans la sidebar droite ;
-- en panneau plus large ;
-- en preview plein écran
-si cette infrastructure existe déjà.
+- dépendance opencxr ;
+- fallback Gemini ;
+- données mockées ;
+- absence d'anomaly échographique ;
+- tests live dépendants des credentials ;
+- limitations DICOM.
 
-Mais ne crée pas une application séparée.
-
-==================================================
-36. PERSISTENCE
-==================================================
-
-Les reports sont déjà persistés.
-
-Compléter la persistance avec :
-
-- template_id
-- template_version
-- language
-- validation data
-- PDF storage path
-- signature reference
-- organization reference
-
-Uniquement si le schéma actuel ne permet pas déjà
-de stocker ces informations.
-
-Créer une migration Supabase si nécessaire.
+Ne pas cacher les limitations.
 
 ==================================================
-37. AUDIT TRAIL
+38. DOCUMENTATION DE CONFIGURATION
 ==================================================
 
-Conserver les informations importantes :
+Créer un document listant :
 
-generated_at
-generated_by
-validated_at
-validated_by
-template_version
+- Python ;
+- Node ;
+- dépendances ;
+- variables d'environnement ;
+- ports ;
+- services ;
+- modèles requis ;
+- chemins importants.
 
-Ne pas créer une usine à logs.
+Ne jamais afficher les secrets.
 
-Ajouter uniquement ce qui est nécessaire à la traçabilité.
+Exemple :
 
-==================================================
-38. SÉCURITÉ
-==================================================
+GEMINI_API_KEY=<required>
 
-Les rapports sont sensibles.
+et non :
 
-Les PDFs doivent rester privés.
-
-Les logos/signatures doivent rester privés si nécessaire.
-
-Ne jamais :
-
-- créer un bucket public ;
-- exposer une service_role ;
-- mettre des données sensibles dans des URLs publiques.
-
-Utiliser les mécanismes Supabase existants.
+GEMINI_API_KEY=AIza...
 
 ==================================================
-39. RÉSULTATS IA
+39. DOCUMENTATION DES COMMANDES
 ==================================================
 
-Un rapport ne doit jamais être considéré comme un résultat
-médical autonome.
+Documenter les commandes réellement utilisées.
 
-Le système doit afficher clairement :
+Exemple :
 
-AI-generated / AI-assisted
+Frontend
 
-et :
+npm install
+npm run dev
+npm run build
+npm run test
 
-Needs review
+Backend
 
-jusqu'à validation explicite.
+uvicorn ...
+pytest
 
-==================================================
-40. TESTS REPORT
-==================================================
+Scripts
 
-Créer des tests :
+commandes réellement présentes
 
-RADIO
-
-- generate
-- edit
-- regenerate
-- validate
-- edit after validation
-- export PDF
-- load existing report
-
-ECHOGRAPHIE
-
-- structured data mapping
-- F1
-- F2
-- biometry
-- placenta
-- fluid
-- cervix
-- conclusion
-- report persistence
-
-VOICE
-
-- transcription mock
-- preview
-- apply
-- cancel
-- command vs dictation
-
-TEMPLATE
-
-- create
-- update
-- logo
-- signature
-- sections
-- version
-- modality
-
-PDF
-
-- render
-- export
-- storage
-- download
-
-RLS
-
-- USER A access
-- USER B denied
+Ne pas inventer de commandes.
 
 ==================================================
-41. LIVE TESTS
+40. VALIDATION DE LA DOCUMENTATION
 ==================================================
 
-Si les credentials Supabase sont disponibles :
+Une fois la documentation écrite :
 
-tester réellement :
+vérifier tous les liens relatifs.
 
-USER A
-→ crée report
-→ export PDF
-→ download
+Vérifier les chemins de fichiers.
 
-USER B
-→ impossible de lire
-→ impossible de modifier
-→ impossible de supprimer
+Vérifier les noms de fonctions/classes.
 
-Tester également :
+Vérifier les endpoints.
 
-logo
-signature
-template
+Vérifier les commandes.
+
+Vérifier les noms des modèles.
+
+Aucune référence cassée.
 
 ==================================================
-42. NON-RÉGRESSION
+41. VALIDATION DU CODE
 ==================================================
 
-Après implémentation :
+Le nettoyage des commentaires ne doit modifier
+aucune logique.
 
-- npm run build ;
-- vitest ;
-- pytest ;
-- tests Supabase live.
+Après modification :
 
-Vérifier :
+npm run build
 
-Radiography
-Fetal Ultrasound
-DICOM
-Annotations
-Measurements
-AI Workspace
-Reports
+vitest
 
-==================================================
-43. IMPORTANT — NE PAS CASSER LES RAPPORTS EXISTANTS
-==================================================
+pytest
 
-Les rapports radiographiques existants doivent rester lisibles.
+Comparer les résultats avant/après.
 
-Les rapports déjà persistés doivent être migrables
-vers le nouveau modèle sans perte de contenu.
-
-Ne pas supprimer les anciens rapports.
-
-Créer un mapping de compatibilité si nécessaire.
+Les 6 problèmes DICOM connus restent séparés
+s'ils sont toujours présents.
 
 ==================================================
-44. RAPPORT FINAL DE PHASE
+42. GIT DIFF
 ==================================================
 
-À la fin, produire :
+Avant de terminer :
 
-1. architecture Report Engine ;
-2. templates ;
-3. database changes ;
-4. Storage changes ;
-5. voice architecture ;
-6. report editor ;
-7. validation ;
-8. PDF pipeline ;
-9. radiography report ;
-10. fetal report ;
-11. tests ;
-12. live tests ;
-13. problèmes ;
-14. recommandations.
+inspecter git diff.
 
-Créer cette matrice :
+Identifier les modifications :
 
-| Fonction | Radio | Échographie | Persisté | Testé | Statut |
-|---|---|---|---|---|---|
-| Generate | ✓ | ✓ | ✓ | ✓ | DONE |
-| Edit | ✓ | ✓ | ✓ | ✓ | DONE |
-| Voice | ✓ | ✓ | ✓ | ✓ | DONE |
-| Template | ✓ | ✓ | ✓ | ✓ | DONE |
-| Logo | ✓ | ✓ | ✓ | ✓ | DONE |
-| Signature | ✓ | ✓ | ✓ | ✓ | DONE |
-| Validation | ✓ | ✓ | ✓ | ✓ | DONE |
-| Preview | ✓ | ✓ | ✓ | ✓ | DONE |
-| PDF | ✓ | ✓ | ✓ | ✓ | DONE |
-| Storage | ✓ | ✓ | ✓ | ✓ | DONE |
+A. documentation
+B. commentaires
+C. code fonctionnel
+
+Objectif :
+
+C = 0
+
+ou uniquement des changements absolument nécessaires
+pour corriger une référence documentaire cassée.
 
 ==================================================
-45. RÈGLE FINALE
+43. RAPPORT FINAL
 ==================================================
 
-Cette phase concerne UNIQUEMENT :
+Produire :
 
-REPORT SYSTEM
+1. architecture documentée ;
+2. documents créés ;
+3. fonctionnalités documentées ;
+4. fichiers client documentés ;
+5. fichiers server documentés ;
+6. scripts documentés ;
+7. commentaires nettoyés ;
+8. conventions de rédaction utilisées ;
+9. tests ;
+10. éventuelles incohérences découvertes ;
+11. documentation encore manquante.
 
+Créer une matrice :
+
+| Domaine | Documentation | Commentaires | Tests | Statut |
+|---|---|---|---|---|
+| Client | ✓ | ✓ | ✓ | DONE |
+| Server | ✓ | ✓ | ✓ | DONE |
+| Scripts | ✓ | ✓ | ✓ | DONE |
+| Radiography | ✓ | ✓ | ✓ | DONE |
+| DICOM | ✓ | ✓ | ✓ | DONE |
+| AI | ✓ | ✓ | ✓ | DONE |
+| Reports | ✓ | ✓ | ✓ | DONE |
+
+==================================================
+44. RÈGLE FINALE
+==================================================
+
+Cette phase est une phase de :
+
+DOCUMENTATION
 +
-
-VOICE INPUT
-
+NORMALISATION DES COMMENTAIRES
 +
+NETTOYAGE RÉDACTIONNEL
 
-TEMPLATE BUILDER
+Elle ne doit pas devenir une phase de refactoring.
 
-+
+NE PAS :
 
-PDF EXPORT
+- modifier l'architecture ;
+- changer les modèles ;
+- changer les APIs ;
+- modifier les résultats ;
+- modifier les workflows ;
+- ajouter une fonctionnalité ;
+- implémenter l'échographie ;
+- implémenter anomaly detection ;
+- réintroduire la 3D.
 
-+
-
-RADIOGRAPHY REPORT
-
-+
-
-FETAL ULTRASOUND REPORT
-
-NE PAS commencer :
-
-- nouvelle modalité ;
-- anomaly detection ;
-- multimodal DeepFetal ;
-- PACS ;
-- RAG ;
-- production ;
-- 3D.
-
-Lorsque tout est terminé :
+Lorsque la documentation et le nettoyage sont terminés :
 
 ARRÊTE-TOI.
 

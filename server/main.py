@@ -1,3 +1,9 @@
+"""
+AImaging · Server
+
+Rôle :
+point d'entrée FastAPI et orchestration des routes.
+"""
 from __future__ import annotations
 
 import base64

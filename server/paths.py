@@ -1,3 +1,9 @@
+"""
+AImaging · paths
+
+Rôle :
+ajoute les dossiers scripts/ nécessaires au sys.path du serveur.
+"""
 from __future__ import annotations
 
 import sys

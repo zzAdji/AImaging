@@ -1,5 +1,5 @@
 # Ignore dataset files and raw data folders
-/data/chest-xray/
+/data/
 /docs/litterature/**
 /docs/litterature/
 /models/
