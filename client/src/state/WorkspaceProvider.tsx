@@ -1060,7 +1060,9 @@ export function WorkspaceProvider({
   const dismissNotification = useCallback((id: string) => {
     setNotifications((list) => list.filter((n) => n.id !== id));
   }, []);
-  const [aiResults, setAiResults] = useState<AiResults>({
+  /** État IA vide : utilisé à l'initialisation ET à chaque changement
+   *  d'examen (voir l'effet de purge plus bas). */
+  const emptyAiResults = useCallback((): AiResults => ({
     diagnostics: [],
     report: null,
     lastSummary: null,
@@ -1072,7 +1074,8 @@ export function WorkspaceProvider({
     reportFields: null,
     reportCoherencePassed: null,
     reportCoherenceIssues: [],
-  });
+  }), []);
+  const [aiResults, setAiResults] = useState<AiResults>(emptyAiResults);
   const setAiDiagnostics = useCallback((diagnostics: AiDiagnosis[], metadata?: { modelName?: string; modelCount?: number }) => {
     setAiResults((results) => ({
       ...results,
@@ -1111,6 +1114,30 @@ export function WorkspaceProvider({
   const [radioReport, setRadioReport] = useState<{ id: string; status: "draft" | "generated" | "needs_review" | "validated" } | null>(null);
   const lastPersistedReportTextRef = useRef<string>("");
   const reportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [reportEditOpen, setReportEditOpen] = useState(false);
+  const [reportDraft, setReportDraft] = useState("");
+
+  /* Changement d'examen (persistenceExamId) : purge des résultats IA et du
+     rapport courant. Le provider survit au changement d'examen (monté une
+     seule fois par session utilisateur) ; sans cette purge, l'ouverture d'un
+     autre examen affichait encore les diagnostics et le rapport du précédent,
+     et le rapport persisté du nouvel examen était ignoré car `report` n'était
+     plus null au moment du chargement ci-dessous. */
+  const examScopedIdRef = useRef<string | null>(persistenceExamId);
+  useEffect(() => {
+    if (examScopedIdRef.current === persistenceExamId) return;
+    examScopedIdRef.current = persistenceExamId;
+    lastPersistedReportTextRef.current = "";
+    lastReportClinicalCtxRef.current = null;
+    if (reportSaveTimerRef.current !== null) {
+      clearTimeout(reportSaveTimerRef.current);
+      reportSaveTimerRef.current = null;
+    }
+    setRadioReport(null);
+    setAiResults(emptyAiResults());
+    setReportDraft("");
+    setReportEditOpen(false);
+  }, [persistenceExamId, emptyAiResults, setReportDraft, setReportEditOpen]);
 
   useEffect(() => {
     if (!persistenceExamId || !isSupabaseConfigured) return;
@@ -1170,8 +1197,6 @@ export function WorkspaceProvider({
     });
   }, [radioReport]);
 
-  const [reportEditOpen, setReportEditOpen] = useState(false);
-  const [reportDraft, setReportDraft] = useState("");
   const aiTimer = useRef<number | null>(null);
   const aiThoughtTimers = useRef<number[]>([]);
   const commandResolverRef = useRef<AiCommandResolver | null>(null);

@@ -39,23 +39,28 @@ describe("default templates par modalité (§7)", () => {
 });
 
 describe("rendu radiographie", () => {
-  it("génère overview/findings/measurements/impression depuis les données, sans section IA", () => {
+  it("génère Résultat/Conclusion uniquement : mesures et observations en puces du Résultat, sans section IA ni section dédiée", () => {
     const data = buildRadiographyStructuredData(RADIO_INPUT);
     const doc = renderDocument("radiography", data, null);
     const byId = new Map(doc.sections.map((s) => [s.id, s]));
 
-    expect(byId.get("overview")?.lines.join("\n")).toContain("Opacité basale droite.");
-    /* Plus de section « AI Results » : la prédiction rejoint la conclusion,
-       libellée « Suspicion » sans mention de modèle (compte rendu hospitalier). */
+    const overview = byId.get("overview")?.lines.join("\n") ?? "";
+    expect(overview).toContain("Opacité basale droite.");
+    /* Les mesures sont des puces du Résultat, pas une section « Mesures ». */
+    expect(overview).toContain("CTR : 0.44 ratio (ai)");
+    /* Plus aucune section dédiée : tout est une puce du Résultat. */
+    expect(byId.has("measurements")).toBe(false);
+    expect(byId.has("findings")).toBe(false);
+    expect(byId.has("neuro_detections")).toBe(false);
+    expect(byId.has("anatomy_regions")).toBe(false);
     expect(byId.has("ai_results")).toBe(false);
     expect(byId.get("impression")?.lines.join("\n")).toContain("Suspicion : Pneumonia");
-    expect(byId.get("measurements")?.lines.join("\n")).toContain("CTR : 0.44 ratio");
   });
 
   it("une mesure absente reste absente — jamais inventée (§3)", () => {
     const doc = renderDocument("radiography", buildRadiographyStructuredData(RADIO_INPUT), null);
-    const measurements = doc.sections.find((s) => s.id === "measurements")!;
-    expect(measurements.lines.join("\n")).not.toContain("Distance");
+    const overview = doc.sections.find((s) => s.id === "overview")!;
+    expect(overview.lines.join("\n")).not.toContain("Distance");
   });
 });
 
@@ -110,7 +115,8 @@ describe("rendu échographie obstétricale (§5)", () => {
 
 describe("forme stricte du document généré (logo + texte IA)", () => {
   /* Texte tel que produit par /radiography/report (rendered_text) puis édité
-     dans l'éditeur de rapport — c'est CE qui était recopié tel quel avant. */
+     dans l'éditeur de rapport — sans bloc « Analyse assistée par IA », sans
+     niveau de confiance, sans avertissement (rapport signable tel quel). */
   const AI_TEXT = [
     "RADIOGRAPHIE THORACIQUE DE FACE",
     "",
@@ -125,13 +131,7 @@ describe("forme stricte du document généré (logo + texte IA)", () => {
     "",
     "CONCLUSION",
     "❖ Pneumopathie basale probable.",
-    "",
-    "--- Analyse assistée par intelligence artificielle ---",
-    "Niveau de confiance : Élevé (98 %)",
-    "Recommandation : Corrélation clinique recommandée",
-    "",
-    "Ce document est généré par un système d'aide au diagnostic et ne remplace pas " +
-      "l'interprétation d'un professionnel de santé qualifié.",
+    "❖ Corrélation clinique recommandée.",
   ].join("\n");
 
   it("le logo par défaut hgg.jpg est présent dans le template", () => {
@@ -164,15 +164,15 @@ describe("forme stricte du document généré (logo + texte IA)", () => {
     expect(overview).not.toContain("système d'aide au diagnostic");
   });
 
-  it("la Conclusion existe toujours et reçoit le diagnostic du texte IA", () => {
+  it("la Conclusion existe toujours et reçoit le diagnostic du texte IA, sans métrique IA", () => {
     const doc = renderDocument("radiography", { findings: { draft: AI_TEXT } }, null);
     const impression = doc.sections.find((s) => s.id === "impression")!;
     expect(impression.lines.length).toBeGreaterThan(0);
     expect(visibleSections(doc).some((s) => s.id === "impression")).toBe(true);
     expect(impression.lines.join("\n")).toContain("Pneumopathie basale probable.");
-    /* Confiance/recommandation du bloc « Analyse assistée » → Conclusion. */
-    expect(impression.lines.join("\n")).toContain("Niveau de confiance : Élevé (98 %)");
-    expect(impression.lines.join("\n")).toContain("Corrélation clinique recommandée");
+    /* Aucune métrique IA, aucun niveau de confiance, aucun avertissement. */
+    expect(impression.lines.join("\n")).not.toContain("Niveau de confiance");
+    expect(impression.lines.join("\n")).not.toContain("système d'aide au diagnostic");
   });
 
   it("champs structurés : priorité sur le draft, jamais de doublon ; labels français", () => {
@@ -201,11 +201,32 @@ describe("forme stricte du document généré (logo + texte IA)", () => {
     /* Labels français au lieu des clés techniques backend. */
     expect(overview).toContain("Observations : Absence de foyer alvéolaire.");
     expect(overview).not.toContain("type_examen");
-    /* Diagnostic/confiance/recommandation dans la Conclusion. */
+    /* Diagnostic/Recommandation dans la Conclusion ; le niveau de confiance
+       (métrique IA) n'y figure jamais. */
     expect(impression).toContain("Diagnostic probable : Pneumonie");
-    expect(impression).toContain("Niveau de confiance : Élevé (98 %)");
+    expect(impression).not.toContain("Niveau de confiance");
     /* Le draft brut n'est PAS dupliqué à côté des champs structurés. */
     expect(overview).not.toContain("Sinus costophréniques libres.");
+  });
+
+  it("les détections Neuro sont des puces du Résultat, à égalité avec les observations locales (plus de section dédiée)", () => {
+    /* Export « panneau droit » = champs structurés + contexte Neuro structuré. */
+    const data = buildRadiographyStructuredData({
+      fields: { observations: "Cœur de taille normale." },
+      coherenceIssues: [],
+      ensemblePrediction: null,
+      numModels: null,
+      neuroFindings: [{ condition: "Cardiomegaly", prob: 0.82, risk: "HIGH" }],
+      neuroRiskLevel: "high",
+    });
+    const doc = renderDocument("radiography", data, null);
+    const byId = new Map(doc.sections.map((s) => [s.id, s]));
+    const overview = byId.get("overview")?.lines.join("\n") ?? "";
+    /* Plus de section « Détections complémentaires » dédiée. */
+    expect(byId.has("neuro_detections")).toBe(false);
+    /* La Neuro vit dans le Résultat, au même niveau que l'observation locale. */
+    expect(overview).toContain("Cardiomegaly : 82 % (risque HIGH)");
+    expect(overview).toContain("Observations : Cœur de taille normale.");
   });
 });
 

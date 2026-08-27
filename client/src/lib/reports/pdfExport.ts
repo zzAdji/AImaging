@@ -128,20 +128,6 @@ export function documentHtml(document: RenderedDocument): string {
 
   const customBlocks = (document.blocks ?? []).map((block) => block.html).join("\n");
 
-  const signatureBlock = t.signature.visible
-    ? `<footer class="signature pos-${t.signature.position}">
-        ${t.signature.imagePath !== null ? `<img class="sig-img" src="${escapeHtml(t.signature.imagePath)}" alt="signature"/>` : ""}
-        ${t.signature.name !== null && t.signature.name.length > 0 ? `<div class="sig-name">${escapeHtml(t.signature.name)}</div>` : ""}
-        ${t.signature.role !== null && t.signature.role.length > 0 ? `<div class="muted">${escapeHtml(t.signature.role)}</div>` : ""}
-      </footer>`
-    : "";
-
-  const footerText = t.footer.visible
-    ? `<footer class="report-footer muted">
-        ${t.footer.showDate ? `<span>${new Date().toLocaleDateString("fr-FR")}</span>` : ""}
-        ${t.footer.text !== null && t.footer.text.length > 0 ? `<span>${escapeHtml(t.footer.text)}</span>` : ""}
-      </footer>`
-    : "";
   return `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"/>
 <style>

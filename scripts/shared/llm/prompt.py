@@ -19,12 +19,59 @@ from report_schemas import RadiologyReportFields
 SYSTEM_INSTRUCTION = """Tu es un assistant de rédaction de comptes rendus radiologiques pour l'Hôpital Général de Garoua (HGG).
 
 RÈGLES STRICTES, NON NÉGOCIABLES :
-1. Le champ "diagnostic_probable" DOIT correspondre exactement à la classe prédite par le modèle fournie dans les faits — ne jamais la reformuler vers une autre pathologie, ne jamais l'inventer.
+1. Le champ "diagnostic_probable" DOIT refléter TOUTES les sources fournies, à égalité : la classe prédite par l'ensemble ET les éventuelles détections confirmées (pipeline Neuro) listées dans les faits. Ne jamais reformuler vers une autre pathologie, ne jamais en inventer, ne jamais privilégier une seule source quand plusieurs concordent.
 2. Le champ "niveau_confiance" DOIT refléter fidèlement la probabilité réelle fournie dans les faits — ne jamais l'exagérer ni la minimiser.
-3. Le champ "observations" décrit l'impression GLOBALE que le modèle a détectée. Le modèle classe l'image entière ; il n'évalue PAS zone par zone (pas de silhouette cardio-médiastinale, plèvre, ou cadre osseux évalués séparément) — ne jamais affirmer un constat sur une structure anatomique que le modèle n'a pas spécifiquement évaluée.
+3. Le champ "observations" décrit l'impression GLOBALE que le modèle a détectée. S'y ajoutent, sous forme de constatations factuelles, les détections confirmées et les observations anatomiques régionales fournies dans les faits — sans affirmer un constat sur une structure que les données ne couvrent pas.
 4. Le champ "recommandation_orientation" ne doit JAMAIS formuler un diagnostic médical définitif, ni remplacer l'avis d'un professionnel de santé — toujours recommander une corrélation clinique ou un avis spécialisé.
 5. Style : français médical, sobre, factuel, cohérent avec le ton des comptes rendus HGG illustrés par les exemples ci-dessous.
 6. Ne jamais inventer d'information absente des faits fournis (âge du patient, antécédents, etc.)."""
+
+
+def build_clinical_facts(
+    neuro_findings: list | None = None,
+    neuro_risk_level: str | None = None,
+    anatomy_observations: list | None = None,
+) -> str:
+    """Met en forme le contexte clinique complémentaire (pipeline Neuro +
+    observations anatomiques régionales) en faits lisibles pour le LLM.
+
+    Ces faits sont présentés À ÉGALITÉ avec la prédiction de l'ensemble :
+    le diagnostic ne provient pas du résultat local seul. Aucune valeur
+    n'est inventée — une source absente n'apparaît pas.
+    """
+    lines: list[str] = []
+
+    neuro = neuro_findings or []
+    if neuro:
+        lines.append("Détections confirmées (pipeline Neuro) :")
+        for finding in neuro:
+            condition = str(finding.get("condition", "")).replace("_", " ")
+            prob = finding.get("prob")
+            risk = finding.get("risk")
+            parts = [condition]
+            if prob is not None:
+                try:
+                    parts.append(f"{round(float(prob) * 100)} %")
+                except (TypeError, ValueError):
+                    pass
+            if risk:
+                parts.append(f"risque {risk}")
+            lines.append("  - " + " ; ".join(parts))
+        if neuro_risk_level:
+            lines.append(f"Niveau de risque global : {neuro_risk_level}")
+
+    anatomy = anatomy_observations or []
+    if anatomy:
+        lines.append("Observations anatomiques régionales :")
+        for obs in anatomy:
+            region = str(obs.get("label") or obs.get("region_id") or "Région")
+            text = str(obs.get("observation", "")).strip()
+            if not text:
+                continue
+            source = "praticien" if obs.get("source") == "practitioner" else "IA"
+            lines.append(f"  - {region} ({source}) : {text}")
+
+    return "\n".join(lines)
 
 
 # Exemples construits à partir du style réel — voir avertissement en tête de fichier.
@@ -98,8 +145,14 @@ FEW_SHOT_EXAMPLES = [
 ]
 
 
-def build_prompt(facts_text: str) -> str:
-    """Construit le prompt final : exemples few-shot + faits du cas courant."""
+def build_prompt(facts_text: str, clinical_facts: str | None = None) -> str:
+    """Construit le prompt final : exemples few-shot + faits du cas courant.
+
+    ``clinical_facts`` (optionnel) ajoute les détections confirmées et les
+    observations anatomiques au niveau de la prédiction de l'ensemble :
+    le diagnostic du LLM s'appuie sur LES DEUX sources, jamais sur le
+    résultat local seul.
+    """
     parts: List[str] = []
     for i, example in enumerate(FEW_SHOT_EXAMPLES, 1):
         parts.append(f"--- Exemple {i} ---")
@@ -107,5 +160,7 @@ def build_prompt(facts_text: str) -> str:
         parts.append(f"Rapport attendu (JSON) :\n{example['report'].model_dump_json(indent=2)}")
     parts.append("--- Nouveau cas ---")
     parts.append(f"Faits :\n{facts_text}")
+    if clinical_facts:
+        parts.append(f"Contexte clinique complémentaire (à égalité avec la prédiction) :\n{clinical_facts}")
     parts.append("Rapport attendu (JSON) :")
     return "\n\n".join(parts)

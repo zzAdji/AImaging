@@ -29,7 +29,7 @@ from main_predict import predict_with_loaded_models  # noqa: E402
 from radiography_adapter import facts_from_predict_result  # noqa: E402
 from report_schemas import RadiologyReportFields  # noqa: E402
 from report_renderer import PatientContext, render_report_text  # noqa: E402
-from prompt import SYSTEM_INSTRUCTION, build_prompt  # noqa: E402
+from prompt import SYSTEM_INSTRUCTION, build_clinical_facts, build_prompt  # noqa: E402
 from coherence_check import check_coherence  # noqa: E402
 from workspace_protocol import (  # noqa: E402
     ActionPlan,
@@ -225,7 +225,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="HGG AI — Plateforme de diagnostic imagerie", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://0.0.0.0:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://0.0.0.0:5173", "http://192.168.0.120:5173", "http://10.44.189.180:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type"],
@@ -1653,6 +1653,12 @@ class PatientInfo(BaseModel):
 class ReportRequest(BaseModel):
     prediction: dict  # tel que renvoyé par /radiography/predict
     patient: PatientInfo
+    # Contexte clinique complémentaire (à égalité avec la prédiction locale) :
+    # le diagnostic doit provenir des DEUX sources. Champs optionnels : un
+    # client plus ancien qui ne les envoie pas n'est pas cassé.
+    neuro_findings: List[dict] = Field(default_factory=list)
+    neuro_risk_level: str | None = None
+    anatomy_observations: List[dict] = Field(default_factory=list)
 
 
 class ReportResponse(BaseModel):
@@ -1675,7 +1681,12 @@ async def generate_radiography_report(request: ReportRequest) -> ReportResponse:
             detail=f"'prediction' ne correspond pas au format attendu (sortie de /radiography/predict) : {exc}",
         ) from exc
 
-    prompt = build_prompt(facts.to_prompt_facts())
+    clinical_facts = build_clinical_facts(
+        request.neuro_findings,
+        request.neuro_risk_level,
+        request.anatomy_observations,
+    )
+    prompt = build_prompt(facts.to_prompt_facts(), clinical_facts or None)
     try:
         fields = registry.gemini_client.generate_structured(
             system_instruction=SYSTEM_INSTRUCTION, prompt=prompt, response_schema=RadiologyReportFields,

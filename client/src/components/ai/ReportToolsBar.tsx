@@ -47,15 +47,27 @@ import {
   getLocalDefault,
   saveLocalTemplate,
 } from "../../lib/db/templateStore";
+import {
+  exportRadioReport,
+  type RadioReportSourceState,
+} from "../../lib/reports/radioExport";
 
 export function ReportActionsBar({
   modality = "radiography",
   userId = null,
   draft,
+  radioSource,
 }: {
   modality?: ReportModality;
   userId?: string | null;
   draft: string;
+  /**
+   * État workspace partagé : quand il est fourni (radiographie), l'export
+   * passe par le pipeline unique `exportRadioReport` — mêmes données
+   * structurées et même texte que le bouton de téléchargement de la
+   * RightSidebar. Sans lui, comportement minimal historique (draft seul).
+   */
+  radioSource?: RadioReportSourceState;
 }) {
   const [showTemplate, setShowTemplate] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -67,6 +79,14 @@ export function ReportActionsBar({
   );
 
   const handleExport = (kind: "pdf" | "word" | "json") => {
+    /* Pipeline partagé : fichiers identiques à ceux de la RightSidebar, MAIS
+       l'éditeur relaie le texte édité du praticien (preferText) — ce sont ses
+       corrections qui doivent apparaître dans le document exporté. */
+    if (radioSource && modality === "radiography") {
+      exportRadioReport(kind, "radiography", radioSource, draft, template, true);
+      setExportOpen(false);
+      return;
+    }
     const rendered = renderDocument(
       modality,
       draft.trim().length > 0 ? { findings: { draft: draft.slice(0, 4000) } } : {},

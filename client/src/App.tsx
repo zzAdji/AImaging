@@ -164,6 +164,27 @@ async function captureCanvasContext(
   return { captures, warnings };
 }
 
+/* ---------------------------------------------------------------------------
+ * Gardes anti-relance des pipelines automatiques — niveau MODULE,
+ * volontairement HORS du composant Shell. Shell est démonté/remonté à chaque
+ * entrée/sortie d'examen (retour à l'écran des examens) ; des useRef internes
+ * étaient réinitialisés à chaque remontage, ce qui relancait classification,
+ * segmentation CXAS + mesures HybridGNet, détection pathologies et Grad-CAM
+ * à chaque réouverture du MÊME examen. Ces gardes survivent aux remontages ;
+ * leurs clés portent l'id examen (+ image), donc un examen nouveau ou modifié
+ * (nouvelle image) reste analysé normalement.
+ * ------------------------------------------------------------------------- */
+const autoRunGuards = {
+  analysisStartedFor: null as string | null,
+  anatomyStartedFor: null as string | null,
+  openCxrStartedFor: null as string | null,
+  gradcamStartedFor: null as string | null,
+  gradcamShownFor: null as string | null,
+  pathologyStartedFor: null as string | null,
+};
+let anatomyDecisionSignature: string | null = null;
+let anatomyAutoAllowedFlag = true;
+
 function Shell({
   examCtx,
   exams,
@@ -223,14 +244,9 @@ function Shell({
   const [quality, setQuality] = useState(0.9);
   const [saveAsName, setSaveAsName] = useState("");
   const [imageIndex, setImageIndex] = useState(examCtx?.index ?? 0);
-  const autoAnalysisStartedFor = useRef<string | null>(null);
-  const autoAnatomyStartedFor = useRef<string | null>(null);
-  const autoOpenCxrStartedFor = useRef<string | null>(null);
-  const autoGradcamStartedFor = useRef<string | null>(null);
-  const gradcamAutoShownFor = useRef<string | null>(null);
-  const pathologyAutoStartedFor = useRef<string | null>(null);
-  const anatomyAutoDecidedFor = useRef<string | null>(null);
-  const anatomyAutoAllowed = useRef(true);
+  /* Gardes anti-relance : voir le registre module `autoRunGuards` ci-dessus.
+     (Anciennement des useRef — réinitialisés à chaque remontage de Shell,
+     d'où une relance des analyses à chaque réouverture d'examen.) */
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   /* Pipeline de préparation de l'espace de travail : alimente l'overlay noir
@@ -825,14 +841,14 @@ function Shell({
     if (!isRadiographyExam(exam)) return;
     const missing = exam.images.filter(isRadiographyCompatible).filter((image) => !image.prediction);
     if (missing.length === 0) {
-      if (!exam.images.some(isRadiographyCompatible) && autoAnalysisStartedFor.current !== exam.id) {
-        autoAnalysisStartedFor.current = exam.id;
+      if (!exam.images.some(isRadiographyCompatible) && autoRunGuards.analysisStartedFor !== exam.id) {
+        autoRunGuards.analysisStartedFor = exam.id;
       }
       return;
     }
     const signature = `${exam.id}:${missing.map((image) => image.id).join(",")}`;
-    if (autoAnalysisStartedFor.current === signature) return;
-    autoAnalysisStartedFor.current = signature;
+    if (autoRunGuards.analysisStartedFor === signature) return;
+    autoRunGuards.analysisStartedFor = signature;
     window.setTimeout(() => {
       void analyzeExamImages("missing").catch(() => {
         /* Échec silencieux de l'analyse automatique. */
@@ -865,18 +881,18 @@ function Shell({
        prédiction : la chaîne reste alors autorisée pour cet examen. Décision
        prise une seule fois par signature (examen + liste des images). */
     const examSignature = `${exam.id}:${exam.images.map((image) => image.id).join(",")}`;
-    if (anatomyAutoDecidedFor.current !== examSignature) {
-      anatomyAutoDecidedFor.current = examSignature;
+    if (anatomyDecisionSignature !== examSignature) {
+      anatomyDecisionSignature = examSignature;
       const compatible = exam.images.filter(isRadiographyCompatible);
       const evaluated = compatible.filter(
         (image) => image.cxrSort && image.prediction && !isImageRejectedByOpenCxr(image),
       );
-      anatomyAutoAllowed.current = !(compatible.length > 0 && evaluated.length === compatible.length);
+      anatomyAutoAllowedFlag = !(compatible.length > 0 && evaluated.length === compatible.length);
     }
-    if (!anatomyAutoAllowed.current) return;
+    if (!anatomyAutoAllowedFlag) return;
     const guardKey = `${exam.id}:${current.id}`;
-    if (autoAnatomyStartedFor.current === guardKey) return;
-    autoAnatomyStartedFor.current = guardKey;
+    if (autoRunGuards.anatomyStartedFor === guardKey) return;
+    autoRunGuards.anatomyStartedFor = guardKey;
     void (async () => {
       try {
         const segmented = await w.runAnatomyAnalysis(true);
@@ -901,8 +917,8 @@ function Shell({
     if (!isRadiographyExam(exam)) return;
     if (!isRadiographyCompatible(current) || isImageRejectedByOpenCxr(current)) return;
     const guardKey = `pathology:${exam.id}:${current.id}`;
-    if (pathologyAutoStartedFor.current === guardKey) return;
-    pathologyAutoStartedFor.current = guardKey;
+    if (autoRunGuards.pathologyStartedFor === guardKey) return;
+    autoRunGuards.pathologyStartedFor = guardKey;
     void w.runPathologyAnalysis().catch(() => undefined);
   }, [exam, imageIndex, w]);
 
@@ -929,8 +945,8 @@ function Shell({
          change d'identité en permanence) et réactivait l'overlay juste
          après que l'utilisateur l'avait désactivé. */
       const showKey = `gradcam-show:${exam.id}:${current.id}`;
-      if (gradcamAutoShownFor.current !== showKey) {
-        gradcamAutoShownFor.current = showKey;
+      if (autoRunGuards.gradcamShownFor !== showKey) {
+        autoRunGuards.gradcamShownFor = showKey;
         w.setGradcamOn(true);
       }
       return;
@@ -947,8 +963,8 @@ function Shell({
     ) {
       return;
     }
-    if (autoGradcamStartedFor.current === exam.id) return;
-    autoGradcamStartedFor.current = exam.id;
+    if (autoRunGuards.gradcamStartedFor === exam.id) return;
+    autoRunGuards.gradcamStartedFor = exam.id;
     window.setTimeout(() => {
       void (async () => {
         try {
@@ -1120,13 +1136,13 @@ function Shell({
     /* Signature examen + images : l'ajout d'une image relance le tri pour
        elle seule ; un examen déjà trié n'entraîne aucune requête. */
     const signature = `${exam.id}:${exam.images.map((image) => image.id).join(",")}`;
-    if (autoOpenCxrStartedFor.current === signature) return;
-    autoOpenCxrStartedFor.current = signature;
+    if (autoRunGuards.openCxrStartedFor === signature) return;
+    autoRunGuards.openCxrStartedFor = signature;
     void runOpenCxrPipeline();
   }, [exam, runOpenCxrPipeline]);
 
   const retryOpenCxr = useCallback(() => {
-    autoOpenCxrStartedFor.current = null;
+    autoRunGuards.openCxrStartedFor = null;
     void runOpenCxrPipeline();
   }, [runOpenCxrPipeline]);
 

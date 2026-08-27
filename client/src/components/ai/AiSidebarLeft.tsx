@@ -484,7 +484,7 @@ export function AiSidebarLeft({
               className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[11.5px] text-accent transition-colors duration-150 ease-out hover:bg-accent/20"
             >
               <Save size={13} strokeWidth={2.2} />
-              Nouvelle commande
+              Enregistrer
             </button>
           </div>
 

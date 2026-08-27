@@ -2,23 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { Download, Pencil } from "lucide-react";
 import { cn } from "../lib/cn";
 import { downloadDataUrl, exportImageDataUrl } from "../lib/exportImage";
-import {
-  buildRadiographyStructuredData,
-  defaultTemplateData,
-  renderDocument,
-  type ReportModality,
-  type ReportTemplateData,
-} from "../lib/reports/engine";
-import { buildReportClinicalContext } from "../lib/reports/clinicalContext";
-import {
-  buildReportFilename,
-  buildReportJsonExport,
-  buildWordDocument,
-  documentHtml,
-  downloadTextFile,
-  printDocument,
-} from "../lib/reports/pdfExport";
-import { getLocalDefault } from "../lib/db/templateStore";
+import type { ReportModality } from "../lib/reports/engine";
+import { exportRadioReport } from "../lib/reports/radioExport";
+import { mergeFindings } from "../lib/reports/findings";
 import {
   BC_PRESETS,
   WL_PRESETS,
@@ -521,74 +507,12 @@ const SEVERITY_STYLE: Record<string, string> = {
   low: "bg-[#4ade80]/15 text-[#4ade80]",
 };
 
-type MergedSeverity = "low" | "medium" | "high";
-
-interface MergedFinding {
-  key: string;
-  label: string;
-  prob: number;
-  severity: MergedSeverity;
-  /** Source du finding : ensemble local ou backend Neuro (YOLOv8+DenseNet). */
-  source: "ensemble" | "neuro";
-  risk?: string;
-  region?: { x: number; y: number; w: number; h: number };
-}
-
-function riskToSeverity(risk: string): MergedSeverity {
-  if (risk === "CRITICAL" || risk === "HIGH") return "high";
-  if (risk === "MEDIUM") return "medium";
-  return "low";
-}
-
-function normalizeLabel(label: string): string {
-  return label.replace(/_/g, " ").trim().toLowerCase();
-}
-
-/** Fusionne les diagnostics de l'ensemble local et les findings confirmés du
-    backend Neuro (détection YOLOv8 filtrée par DenseNet). Un finding Neuro
-    dont la classe est déjà signalée par l'ensemble local n'est pas dupliqué :
-    l'entrée locale fait foi (elle porte la région du zoom). */
-function mergeFindings(w: ReturnType<typeof useWorkspace>): MergedFinding[] {
-  const merged: MergedFinding[] = w.aiResults.diagnostics.map((d) => ({
-    key: `local-${d.label}`,
-    label: d.label,
-    prob: d.prob,
-    severity: d.severity,
-    source: "ensemble" as const,
-    region: d.region,
-  }));
-  const known = new Set(merged.map((f) => normalizeLabel(f.label)));
-  const result = w.pathologyResult;
-  if (result) {
-    for (const finding of result.confirmed_findings) {
-      const label = finding.condition.replace(/_/g, " ");
-      const norm = normalizeLabel(label);
-      if (known.has(norm)) continue;
-      const box = result.yolo_boxes.find((b) => normalizeLabel(b.class) === norm);
-      merged.push({
-        key: `neuro-${finding.condition}`,
-        label,
-        prob: finding.prob,
-        severity: riskToSeverity(finding.risk),
-        source: "neuro",
-        risk: finding.risk,
-        region: box
-          ? {
-              x: box.xyxy[0],
-              y: box.xyxy[1],
-              w: Math.max(1, box.xyxy[2] - box.xyxy[0]),
-              h: Math.max(1, box.xyxy[3] - box.xyxy[1]),
-            }
-          : undefined,
-      });
-    }
-  }
-  return merged.sort((a, b) => b.prob - a.prob);
-}
+/* Fusion des diagnostics : implémentation partagée dans lib/reports/findings.ts
+   (même source pour l'affichage et l'export du rapport — voir radioExport). */
 
 function DiagnosticsSection() {
   const w = useWorkspace();
-  const findings = mergeFindings(w);
+  const findings = mergeFindings(w.aiResults.diagnostics, w.pathologyResult);
   return (
     <Section id="diagnostics" title="Diagnostics">
       <div data-attr="ai-card-diagnostics">
@@ -637,95 +561,26 @@ function ReportSection() {
   const [exportOpen, setExportOpen] = useState(false);
   const modality: ReportModality = m.modality === "fetal_ultrasound" ? "fetal_ultrasound" : "radiography";
 
+  /* Export via le pipeline partagé (lib/reports/radioExport.ts) : la sidebar
+     et l'éditeur de rapport produisent EXACTEMENT les mêmes fichiers PDF /
+     Word / JSON à partir des mêmes données workspace. */
   const handleExport = (kind: "pdf" | "word" | "json") => {
-    const template =
-      getLocalDefault(modality, null)?.data ??
-      (defaultTemplateData(modality) as ReportTemplateData);
-    /* Infos patient de la carte « Document » : injectées comme variables du
-       template (upsert par clé) pour que les tokens `{{patientName}}` etc. des
-       blocs libres et les cellules d'en-tête PDF/Word portent les vraies
-       valeurs éditées par le praticien — plus jamais les valeurs codées en dur. */
-    const p = w.patientInfo;
-    const patientTokens: Record<string, string> = {
-      patientName: p.name,
-      patientId: p.patientId,
-      age: p.age,
-      sex: p.sex,
-      ageSex: [p.age, p.sex].filter((s) => s.length > 0).join(" / "),
-      examDate: p.studyDate,
-      modality: p.modality,
-      study: p.study,
-    };
-    const existingKeys = new Set(template.variables.map((v) => v.key));
-    const withPatient: ReportTemplateData = {
-      ...template,
-      variables: [
-        ...template.variables.map((v) =>
-          v.key in patientTokens ? { ...v, value: patientTokens[v.key] ?? v.value } : v,
-        ),
-        ...Object.entries(patientTokens)
-          .filter(([key]) => !existingKeys.has(key))
-          .map(([key, value]) => ({
-            key,
-            label: key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()),
-            value,
-            visible: true,
-          })),
-      ],
-    };
-    /* Défaut §1 : le structured_data doit venir des vraies données collectées
-       (champs LLM, diagnostics fusionnés, cohérence, mesures) — jamais du
-       texte brut tronqué. `buildRadiographyStructuredData` (engine.ts) est la
-       source unique consommée par l'aperçu, le PDF, le Word et le JSON. */
-    /* Contexte clinique reconstruit depuis l'état live du workspace :
-       détections Neuro confirmées + observations régionales anatomiques
-       (éditions praticien prioritaires sur les textes IA). */
-    const clinicalCtx = buildReportClinicalContext({
-      pathologyResult: w.pathologyResult,
-      anatomyRegionTexts: w.anatomyRegionTexts,
-      anatomyRegionAnomalies: w.anatomyRegionAnomalies,
-      anatomyRegionOverrides: w.anatomyRegionOverrides,
-    });
-    const structured =
-      modality === "radiography"
-        ? buildRadiographyStructuredData({
-            /* Champs structurés bruts du backend (RadiologyReportFields) ; `{}`
-               tant qu'aucune génération LLM n'a réussi (aucune valeur inventée). */
-            fields: w.aiResults.reportFields ?? {},
-            coherenceIssues: w.aiResults.reportCoherenceIssues,
-            renderedText: w.aiResults.report ?? undefined,
-            ensemblePrediction: mergeFindings(w)[0]?.label ?? null,
-            numModels: w.aiResults.modelCount,
-            neuroFindings: clinicalCtx.neuro_findings,
-            neuroRiskLevel: clinicalCtx.neuro_risk_level,
-            anatomyObservations: clinicalCtx.anatomy_observations,
-            /* TODO(§1) : brancher les mesures réellement posées sur le canvas
-               (LandmarksMeasurementsCard) — ce composant n'expose pas encore
-               ses données au niveau du workspace ; aucune mesure n'est donc
-               inventée ici tant que ce câblage n'existe pas. */
-            measurements: [],
-          })
-        : {
-            findings: { draft: (w.aiResults.report ?? "").slice(0, 4000) },
-            note: "Contenu édité par le praticien.",
-          };
-    const rendered = renderDocument(modality, structured, withPatient);
-    const date = new Date();
-    if (kind === "pdf") {
-      printDocument(documentHtml(rendered));
-    } else if (kind === "word") {
-      downloadTextFile(
-        buildReportFilename(modality, date, "doc"),
-        buildWordDocument(rendered),
-        "application/msword",
-      );
-    } else {
-      downloadTextFile(
-        buildReportFilename(modality, date, "json"),
-        JSON.stringify(buildReportJsonExport(rendered, w.aiResults.report ?? ""), null, 2),
-        "application/json",
-      );
-    }
+    exportRadioReport(
+      kind,
+      modality,
+      {
+        patientInfo: w.patientInfo,
+        diagnostics: w.aiResults.diagnostics,
+        modelCount: w.aiResults.modelCount,
+        reportFields: w.aiResults.reportFields,
+        reportCoherenceIssues: w.aiResults.reportCoherenceIssues,
+        pathologyResult: w.pathologyResult,
+        anatomyRegionTexts: w.anatomyRegionTexts,
+        anatomyRegionAnomalies: w.anatomyRegionAnomalies,
+        anatomyRegionOverrides: w.anatomyRegionOverrides,
+      },
+      w.aiResults.report ?? "",
+    );
     setExportOpen(false);
   };
 

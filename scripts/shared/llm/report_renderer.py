@@ -13,10 +13,7 @@ radiographie) :
 
 Les rapports humains fournis n'ont ni "niveau de confiance" ni
 "recommandation d'orientation" (un medecin ne s'auto-evalue pas en %) —
-ces deux champs, specifiques a l'origine automatisee du rapport, sont
-ajoutes dans une section distincte et clairement etiquetee "Analyse
-assistee par IA", pour ne jamais laisser croire qu'ils proviennent
-directement du praticien.
+le rapport final n'en fait donc pas partie (rapport signable tel quel).
 """
 
 from __future__ import annotations
@@ -55,6 +52,11 @@ def _as_bullets(text: str) -> str:
 def render_report_text(patient: PatientContext, fields: RadiologyReportFields) -> str:
     """Assemble le rapport final en texte structuré.
 
+    Structure stricte : en-tête/identification, RESULTAT, CONCLUSION — ni
+    pied de page, ni signature, ni bloc « Analyse assistée par IA », ni
+    niveau de confiance, ni avertissement. Le rapport doit pouvoir être
+    signé tel quel par le praticien (compte rendu hospitalier classique).
+
     Le rendu visuel final (papier à en-tête HGG, logo, mise en page Word)
     est un sujet séparé — géré par un gabarit de document ou l'interface,
     pas par cette fonction qui ne produit que le CONTENU textuel.
@@ -72,12 +74,7 @@ def render_report_text(patient: PatientContext, fields: RadiologyReportFields) -
         "",
         "CONCLUSION",
         f"❖ {fields.diagnostic_probable}",
-        "",
-        "--- Analyse assistée par intelligence artificielle ---",
-        f"Niveau de confiance : {fields.niveau_confiance}",
-        f"Recommandation : {fields.recommandation_orientation}",
-        "",
-        "Ce document est généré par un système d'aide au diagnostic et ne remplace pas "
-        "l'interprétation d'un professionnel de santé qualifié.",
     ]
+    if fields.recommandation_orientation.strip():
+        lines.append(f"❖ {fields.recommandation_orientation}")
     return "\n".join(lines)

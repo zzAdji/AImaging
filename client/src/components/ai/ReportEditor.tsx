@@ -78,7 +78,20 @@ export function ReportEditorModal({
           placeholder="Éditez le rapport, ou dictéez-le avec la barre de commandes…"
         />
         <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
-          <ReportActionsBar draft={w.reportDraft} />
+          <ReportActionsBar
+            draft={w.reportDraft}
+            radioSource={{
+              patientInfo: w.patientInfo,
+              diagnostics: w.aiResults.diagnostics,
+              modelCount: w.aiResults.modelCount,
+              reportFields: w.aiResults.reportFields,
+              reportCoherenceIssues: w.aiResults.reportCoherenceIssues,
+              pathologyResult: w.pathologyResult,
+              anatomyRegionTexts: w.anatomyRegionTexts,
+              anatomyRegionAnomalies: w.anatomyRegionAnomalies,
+              anatomyRegionOverrides: w.anatomyRegionOverrides,
+            }}
+          />
           <button
             type="button"
             onClick={() => w.setReportEditOpen(false)}

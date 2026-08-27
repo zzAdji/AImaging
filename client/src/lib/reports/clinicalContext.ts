@@ -120,28 +120,26 @@ export function formatAnatomyLines(ctx: ReportClinicalContext): string[] {
 }
 
 /**
- * Enrichit le `rendered_text` du backend avec les sections locales Neuro et
- * anatomique. Appelé côté client après chaque génération réussie : même si
- * le backend ignore encore le contexte, le rapport affiché, persisté et
- * exporté contient toutes les analyses disponibles.
+ * Enrichit le `rendered_text` du backend avec les détections Neuro et les
+ * observations anatomiques, sous forme de PUCES du Résultat (insérées avant
+ * la ligne « CONCLUSION ») — et non comme sections séparées : ces données
+ * sont de même valeur que les observations locales. Appelé côté client après
+ * chaque génération réussie, pour garantir que le rapport contient toutes les
+ * analyses disponibles même si le backend ignore encore le contexte.
  */
 export function appendClinicalSections(renderedText: string, ctx: ReportClinicalContext): string {
   let out = typeof renderedText === "string" ? renderedText.trimEnd() : "";
-  const neuro = formatNeuroFindingsLines(ctx);
-  if (neuro.length > 0) {
-    const riskSuffix =
-      ctx.neuro_risk_level !== null && ctx.neuro_risk_level.length > 0
-        ? ` — niveau de risque ${ctx.neuro_risk_level}`
-        : "";
-    out += `\n\nDétections complémentaires (pipeline Neuro${riskSuffix}) :\n${neuro
-      .map((line) => `- ${line}`)
-      .join("\n")}`;
+  const lines: string[] = [
+    ...formatNeuroFindingsLines(ctx).map((line) => `- ${line}`),
+    ...formatAnatomyLines(ctx).map((line) => `- ${line}`),
+  ];
+  if (lines.length === 0) return out;
+  const block = lines.join("\n");
+  /* Ces détections sont des observations : on les insère dans le Résultat,
+     pas en fin de document (qui se terminerait dans la Conclusion). */
+  const conclusionIndex = out.search(/\n\s*CONCLUSION/i);
+  if (conclusionIndex === -1) {
+    return out ? `${out}\n${block}` : block;
   }
-  const observations = formatAnatomyLines(ctx);
-  if (observations.length > 0) {
-    out += `\n\nObservations anatomiques régionales :\n${observations
-      .map((line) => `- ${line}`)
-      .join("\n")}`;
-  }
-  return out;
+  return out.slice(0, conclusionIndex) + `\n${block}` + out.slice(conclusionIndex);
 }

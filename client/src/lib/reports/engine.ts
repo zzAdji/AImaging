@@ -106,12 +106,7 @@ export interface ReportTemplateData {
 const RADIO_SECTIONS_FR: TemplateSection[] = [
   { id: "header", title: "En-tête", visible: true },
   { id: "overview", title: "Résultat", visible: true },
-  { id: "findings", title: "Remarques", visible: true },
-  { id: "measurements", title: "Mesures", visible: true },
-  { id: "neuro_detections", title: "Détections complémentaires", visible: true },
-  { id: "anatomy_regions", title: "Observations régionales", visible: true },
   { id: "impression", title: "Conclusion", visible: true },
-  { id: "footer", title: "Pied de page", visible: true },
 ];
 
 const FETAL_SECTIONS_FR: TemplateSection[] = [
@@ -125,7 +120,6 @@ const FETAL_SECTIONS_FR: TemplateSection[] = [
   { id: "cervix", title: "Col", visible: true },
   { id: "findings", title: "Findings", visible: true },
   { id: "conclusion", title: "Conclusion", visible: true },
-  { id: "footer", title: "Footer", visible: true },
 ];
 
 /**
@@ -176,11 +170,13 @@ function baseTemplate(sections: TemplateSection[]): ReportTemplateData {
       letterheadLinesLeft: [...DEFAULT_LETTERHEAD_LEFT],
       letterheadLinesRight: [...DEFAULT_LETTERHEAD_RIGHT],
     },
-    footer: { visible: true, text: null, showDate: true, showPagination: true },
+    footer: { visible: false, text: null, showDate: false, showPagination: false },
     sections,
     variables: defaultVariables(),
     customBlocks: [],
-    signature: { visible: true, name: null, role: null, imagePath: null, position: "right" },
+    /* Ni pied de page ni signature : le rapport se limite à
+       en-tête + identification + résultat + conclusion (§ décision produit). */
+    signature: { visible: false, name: null, role: null, imagePath: null, position: "right" },
   };
 }
 
@@ -484,8 +480,12 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
      par le moteur — jamais recopié avec ses tirets et ses titres internes. */
   const parsedDraft = parseDraftSections(str(findings.draft));
 
-  const overview: string[] = [];
-  const conclusionFieldLines: string[] = [];
+  /* Structure VOLONTAIREMENT réduite : le rapport ne comporte que
+     Résultat + Conclusion. Toutes les observations (champs LLM, mesures,
+     détections Neuro, observations anatomiques régionales, remarques de
+     cohérence) sont des PUCES du Résultat — aucune section dédiée. */
+  const resultLines: string[] = [];
+  const conclusionLines: string[] = [];
   let hasStructuredFields = false;
   for (const [key, value] of Object.entries(findings)) {
     /* Clés techniques internes : jamais affichées dans le document. */
@@ -494,70 +494,67 @@ function renderRadiography(data: StringMap, headerFields: Array<{ label: string;
     if (text.length === 0) continue;
     hasStructuredFields = true;
     const label = RADIO_FIELD_LABELS[key] ?? key;
-    /* Diagnostic/confiance/recommandation appartiennent à la Conclusion,
-       pas au Résultat (structure d'un compte rendu hospitalier). */
-    if (key === "diagnostic_probable" || key === "niveau_confiance" || key === "recommandation_orientation") {
-      pushLine(conclusionFieldLines, `${label} : ${text}`);
+    /* Diagnostic/Recommandation appartiennent à la Conclusion. Le niveau de
+       confiance est une métrique IA jamais affichée dans le document signable. */
+    if (key === "diagnostic_probable" || key === "recommandation_orientation") {
+      pushLine(conclusionLines, `${label} : ${text}`);
+    } else if (key === "niveau_confiance") {
+      continue;
     } else {
-      pushLine(overview, `${label} : ${text}`);
+      pushLine(resultLines, `${label} : ${text}`);
     }
   }
   /* Sans champs structurés (export depuis l'éditeur de rapport), le texte IA
      analysé alimente le Résultat ; sinon il serait dupliqué. */
-  if (!hasStructuredFields) overview.push(...parsedDraft.overview);
-  sections.push({ id: "overview", title: "Résultat", lines: overview, visible: true });
+  if (!hasStructuredFields) resultLines.push(...parsedDraft.overview);
 
-  /* Remarques de cohérence uniquement (aucune mention d'assistance ou de
-     modèle : le rapport reste un compte rendu hospitalier classique). */
-  const findingLines: string[] = [];
-  const issues = Array.isArray(ai.coherence_issues) ? (ai.coherence_issues as unknown[]) : [];
-  for (const issue of issues) pushLine(findingLines, `⚠ ${str(issue)}`);
-  sections.push({ id: "findings", title: "Remarques", lines: findingLines, visible: true });
-
-  const measLines: string[] = [];
+  /* Mesures réellement posées → puces dans le Résultat. Une mesure absente
+     reste absente : jamais de « N/A » inventé (§3). */
   for (const m of measurements) {
     const value = num(m.value);
-    /* Une mesure absente reste absente : jamais de « N/A » inventé (§3). */
     if (value === null) continue;
-    pushLine(measLines, `${str(m.label)} : ${value} ${str(m.unit)} (${str(m.source)})`);
+    pushLine(resultLines, `${str(m.label)} : ${value} ${str(m.unit)} (${str(m.source)})`);
   }
-  sections.push({ id: "measurements", title: "Mesures", lines: measLines, visible: true });
 
-  /* Détections complémentaires du pipeline Neuro (YOLOv8 filtré par DenseNet) :
-     section omise tant qu'aucune détection confirmée n'est disponible. */
+  /* Détections Neuro confirmées (YOLOv8 filtré par DenseNet) → puces du
+     Résultat, à ÉGALITÉ avec la prédiction locale : ce n'est plus une
+     section « complémentaire », c'est la même lecture du dossier. */
   const neuro = (data.neuro ?? {}) as Record<string, unknown>;
   const confirmed = Array.isArray(neuro.confirmed) ? (neuro.confirmed as Array<Record<string, unknown>>) : [];
-  const neuroLines: string[] = [];
   for (const f of confirmed) {
     const prob = num(f.prob);
     pushLine(
-      neuroLines,
+      resultLines,
       `${str(f.condition).replace(/_/g, " ")} : ${
         prob !== null ? `${Math.round(prob * 100)} %` : "probabilité non fournie"
       }${str(f.risk).length > 0 ? ` (risque ${str(f.risk)})` : ""}`,
     );
   }
-  sections.push({ id: "neuro_detections", title: "Détections complémentaires", lines: neuroLines, visible: true });
 
-  /* Observations régionales de la carte anatomique : texte praticien,
-     flag anomalie préservés ; section omise si aucune. */
+  /* Observations régionales de la carte anatomique → puces du Résultat,
+     uniquement si la zone en vaut la peine (texte non vide préservé). */
   const regions = Array.isArray(data.anatomy_regions) ? (data.anatomy_regions as Array<Record<string, unknown>>) : [];
-  const regionLines: string[] = [];
   for (const r of regions) {
     if (str(r.observation).length === 0) continue;
     const flag = r.anomaly === true ? " — anomalie signalée" : "";
-    pushLine(regionLines, `${str(r.label)}${flag} : ${str(r.observation)}`);
+    pushLine(resultLines, `${str(r.label)}${flag} : ${str(r.observation)}`);
   }
-  sections.push({ id: "anatomy_regions", title: "Observations régionales", lines: regionLines, visible: true });
 
-  const impressionLines: string[] = [...conclusionFieldLines];
+  /* Remarques de cohérence → puces du Résultat (aucune mention d'assistance
+     ni de modèle : le rapport reste un compte rendu hospitalier classique). */
+  const issues = Array.isArray(ai.coherence_issues) ? (ai.coherence_issues as unknown[]) : [];
+  for (const issue of issues) pushLine(resultLines, `⚠ ${str(issue)}`);
+
+  sections.push({ id: "overview", title: "Résultat", lines: resultLines, visible: true });
+
   /* Sans champs structurés (éditeur de rapport), la Conclusion vient du
      texte IA analysé — le grand titre « Conclusion » existe donc toujours. */
-  if (!hasStructuredFields) impressionLines.push(...parsedDraft.conclusion);
+  if (!hasStructuredFields) conclusionLines.push(...parsedDraft.conclusion);
   const prediction = str(impression.ensemble_prediction);
-  if (prediction.length > 0) pushLine(impressionLines, `Suspicion : ${prediction}`);
-  for (const issue of issues) pushLine(impressionLines, `Limite : ${str(issue)}`);
-  sections.push({ id: "impression", title: "Conclusion", lines: impressionLines, visible: true });
+  /* Diagnostic fusionné : `ensemble_prediction` provient du merge local +
+     Neuro (findings.ts), jamais du résultat local seul. */
+  if (prediction.length > 0) pushLine(conclusionLines, `Suspicion : ${prediction}`);
+  sections.push({ id: "impression", title: "Conclusion", lines: conclusionLines, visible: true });
 
   void headerFields;
   return sections;
